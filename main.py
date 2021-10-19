@@ -109,10 +109,10 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         # clipButton.triggered.connect(lambda: self.cranial_cut(initial_clip=True))
         # regMenu.addAction(clipButton)
         #
-        # # regMenu - show template
-        # FclipButton = Qt.QAction('Final clip', self)
-        # FclipButton.triggered.connect(lambda: self.cranial_cut(initial_clip=False))
-        # regMenu.addAction(FclipButton)
+        # regMenu - show template
+        FclipButton = Qt.QAction('Final clip', self)
+        FclipButton.triggered.connect(lambda: self.cranial_cut(initial_clip=False))
+        regMenu.addAction(FclipButton)
 
 
         # ## CRANIOMETRICS

@@ -59,7 +59,7 @@ class GuiMethods:
 
     @staticmethod
     def call_template(ICV_scaling=1):
-        template_path = Path('../template/clipped_template_ntplane.ply')
+        template_path = Path('./template/clipped_template_ntplane.ply')
         template_mesh = pv.read(template_path)
         template_mesh.points *= ICV_scaling ** (1 / 3) # template_volume = 2339070.752133594
         return template_mesh
