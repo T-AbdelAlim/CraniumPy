@@ -98,67 +98,66 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         reg_Button = Qt.QAction('Register to template', self)
         reg_Button.triggered.connect(lambda: self.register(self.landmarks))
         regMenu.addAction(reg_Button)
-        #
-        # # regMenu - Resample
-        # resampleButton = Qt.QAction('Resample mesh', self)
-        # resampleButton.triggered.connect(lambda: self.resample_repair())
-        # regMenu.addAction(resampleButton)
-        #
-        # # # regMenu - show template
-        # clipButton = Qt.QAction('Initial clip', self)
-        # clipButton.triggered.connect(lambda: self.cranial_cut(initial_clip=True))
-        # regMenu.addAction(clipButton)
-        #
-        # regMenu - show template
-        FclipButton = Qt.QAction('Final clip', self)
+
+        # regMenu - Clip Mesh
+        FclipButton = Qt.QAction('Clip mesh', self)
         FclipButton.triggered.connect(lambda: self.cranial_cut(initial_clip=False))
         regMenu.addAction(FclipButton)
 
 
-        # ## CRANIOMETRICS
-        # # metricsMenu - extract measurements button
-        # extractButton = Qt.QAction('Extract measurements', self)
-        # extractButton.setShortcut('Ctrl+E')
-        # extractButton.triggered.connect(self.craniometrics)
-        # metricsMenu.addAction(extractButton)
-        #
-        #
+        ## CRANIOMETRICS
+        # metricsMenu - extract measurements button
+        extractButton = Qt.QAction('Extract measurements', self)
+        extractButton.setShortcut('Ctrl+E')
+        extractButton.triggered.connect(self.craniometrics)
+        metricsMenu.addAction(extractButton)
+
+
         # ## VIEW
-        # ## regMenu - show registration wrt cranial template
-        # templButton = Qt.QAction('Show registration', self)
-        # templButton.triggered.connect(self.show_registration)
-        # viewMenu.addAction(templButton)
+        ## regMenu - show registration wrt cranial template
+        templButton = Qt.QAction('Show registration', self)
+        templButton.triggered.connect(self.show_registration)
+        viewMenu.addAction(templButton)
 
-        # viewMenu - camera buttons
-        ## regMenu - CPD Registration button
-        # hedgesButton = Qt.QAction('Hide edges', self)
-        # hedgesButton.triggered.connect(self.mesh_edges)
-        # viewMenu.addAction(hedgesButton)
-        #
-        # xyButton = Qt.QAction('XY-plane (top)', self)
-        # xyButton.triggered.connect(lambda: self.plotter.view_xy())
-        # viewMenu.addAction(xyButton)
-        #
-        # xzinvButton = Qt.QAction('XZ-plane (front)', self)
-        # xzinvButton.triggered.connect(lambda: self.plotter.view_xz(True))
-        # viewMenu.addAction(xzinvButton)
-        #
-        # xzButton = Qt.QAction('XZ-plane (rear)', self)
-        # xzButton.triggered.connect(lambda: self.plotter.view_xz())
-        # viewMenu.addAction(xzButton)
-        #
-        # yzinvButton = Qt.QAction('YZ-plane (left)', self)
-        # yzinvButton.triggered.connect(lambda: self.plotter.view_yz(True))
-        # viewMenu.addAction(yzinvButton)
-        #
-        # yzButton = Qt.QAction('YZ-plane (right)', self)
-        # yzButton.triggered.connect(lambda: self.plotter.view_yz())
-        # viewMenu.addAction(yzButton)
-        #
-        # resetviewButton = Qt.QAction('Reset camera', self)
-        # resetviewButton.triggered.connect(lambda: self.plotter.isometric_view())
-        # viewMenu.addAction(resetviewButton)
+        edgesMenu = viewMenu.addMenu('Edges')
+        ## viewMenu - camera buttons
+        edgesButton = Qt.QAction('Show edges', self)
+        edgesButton.triggered.connect(lambda:self.mesh_edges(show=True))
+        edgesMenu.addAction(edgesButton)
 
+        hedgesButton = Qt.QAction('Hide edges', self)
+        hedgesButton.triggered.connect(lambda:self.mesh_edges(show=False))
+        edgesMenu.addAction(hedgesButton)
+
+        viewsMenu = viewMenu.addMenu('Views')
+        xyButton = Qt.QAction('XY-plane (top)', self)
+        xyButton.triggered.connect(lambda: self.plotter.view_xy())
+        viewsMenu.addAction(xyButton)
+
+        xzinvButton = Qt.QAction('XZ-plane (front)', self)
+        xzinvButton.triggered.connect(lambda: self.plotter.view_xz(True))
+        viewsMenu.addAction(xzinvButton)
+
+        xzButton = Qt.QAction('XZ-plane (rear)', self)
+        xzButton.triggered.connect(lambda: self.plotter.view_xz())
+        viewsMenu.addAction(xzButton)
+
+        yzinvButton = Qt.QAction('YZ-plane (left)', self)
+        yzinvButton.triggered.connect(lambda: self.plotter.view_yz(True))
+        viewsMenu.addAction(yzinvButton)
+
+        yzButton = Qt.QAction('YZ-plane (right)', self)
+        yzButton.triggered.connect(lambda: self.plotter.view_yz())
+        viewsMenu.addAction(yzButton)
+
+        resetviewButton = Qt.QAction('Reset camera', self)
+        resetviewButton.triggered.connect(lambda: self.plotter.isometric_view())
+        viewsMenu.addAction(resetviewButton)
+
+        # metricsMenu - insert loaded mesh button
+        ssButton = Qt.QAction('Screenshot', self)
+        ssButton.triggered.connect(self.screenshot)
+        viewMenu.addAction(ssButton)
 
 
 

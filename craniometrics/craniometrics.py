@@ -20,7 +20,7 @@ class CranioMetrics:
     """
 
     def __init__(self, file_path, slice_d=1):
-        file_path = Path(file_path)
+        # file_path = Path(file_path)
         self.file_name = file_path.stem
         self.file_ext = file_path.suffix
         self.pvmesh = pv.read(file_path)

@@ -1,19 +1,19 @@
-import random
-from tkinter.filedialog import askopenfilename
+from tkinter.filedialog import askopenfilename, asksaveasfilename
 import os
 import pyacvd
 import pyvista as pv
 from pymeshfix import _meshfix
-from datetime import datetime
+from pathlib import Path
 from craniometrics.craniometrics import CranioMetrics
 from registration.picking import CoordinatePicking
 from registration.write_ply import write_ply_file
-import numpy as np
-import scipy.stats as stats
-from pathlib import Path
-import pathlib
+
 
 class GuiMethods:
+    def __init__(self):
+        self.mesh_color = 'ivory'
+        self.template_color = 'saddlebrown'
+
 
     # File tab
     def import_mesh(self, resample=False):
@@ -26,30 +26,21 @@ class GuiMethods:
         self.extension = self.file_path.suffix
         self.mesh_file = pv.read(self.file_path)
 
-        try:
-            self.plotter.add_mesh(self.mesh_file, rgba=True, show_edges=True)
-        except:
-            self.plotter.add_mesh(self.mesh_file, color='white', show_edges=True)
+        self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=True)
 
         self.plotter.reset_camera()
         self.plotter.show_grid()
         self.landmarks = [[], [], []]
 
-
     def clean_mesh(self):
         self.plotter.clear()
-        try:
-            self.plotter.add_mesh(self.mesh_file, rgba=True, show_edges=True)
-        except:
-            self.plotter.add_mesh(self.mesh_file, color='white', show_edges=True)
+        self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=True)
 
 
-    def show_edges(self):
+    def mesh_edges(self, show=True):
         self.plotter.clear()
-        try:
-            self.plotter.add_mesh(self.mesh_file, rgba=True, show_edges=True)
-        except:
-            self.plotter.add_mesh(self.mesh_file, color='white', show_edges=True)
+        self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=show)
+
 
     def resample_repair(self, n_vertices=20000, repair=False):
         resampled_path = self.file_path.with_name(self.file_path.stem + '_rs' + self.extension)
@@ -66,23 +57,19 @@ class GuiMethods:
 
     def show_registration(self):
         self.plotter.clear()
-        template_mesh = GuiMethods.call_template(ICV_scaling=self.mesh_file.volume/2339070.752133594)
-        self.plotter.add_mesh(template_mesh, color='red', opacity=0.2, show_edges=True)
+        template_mesh = GuiMethods.call_template(ICV_scaling=self.mesh_file.volume/2339070.75)
+        self.plotter.add_mesh(template_mesh, color=self.template_color, opacity=0.2, show_edges=False)
         try:
-            try:
-                self.plotter.add_mesh(self.mesh_file, rgba=True, show_edges=True, opacity=1)
-            except:
-                self.plotter.add_mesh(self.mesh_file, color='white', show_edges=True, opacity=1)
-            GuiMethods.three_slices(self.mesh_file, self.plotter, 'yellow')
+            self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=False, opacity=0.2)
+            GuiMethods.three_slices(self.mesh_file, self.plotter, self.mesh_color)
 
-            # slight longitudinal correction based on center of mass - translation applied to template
-            CoM_correction = GuiMethods.CoM_correction(self.mesh_file, template_mesh)
-            print(CoM_correction)
-            template_mesh.translate([0, -1*CoM_correction, 0])
-            GuiMethods.three_slices(template_mesh, self.plotter, 'red')
+            ## slight longitudinal correction based on center of mass - translation applied to template
+            # CoM_correction = GuiMethods.CoM_correction(self.mesh_file, template_mesh)
+            # template_mesh.translate([0, -1*CoM_correction, 0])
+            GuiMethods.three_slices(template_mesh, self.plotter, self.template_color)
 
         except AttributeError:
-            GuiMethods.three_slices(template_mesh, self.plotter, 'red')
+            GuiMethods.three_slices(template_mesh, self.plotter, self.template_color)
 
 
     @staticmethod
@@ -106,16 +93,9 @@ class GuiMethods:
         clus.cluster(n_vertices)
         remesh = clus.create_mesh()
         remesh_path = file_path.with_name(file_path.stem + postfix + extension)
-        # remesh.save(remesh_path)
         write_ply_file(remesh, remesh_path)
-        ####
-        # mesh = pv.read(dirpath + '/' + filename)
-        # arr_facen = mesh.point_normals
-        # np.savetxt(dirpath + '/' + filename.replace('ply', 'txt'), arr_facen)
-        # write_ply_file(remesh, 'test.ply')
-        ####
         if repair == True:
-            _meshfix.clean_from_file(remesh_path, remesh_path)
+            _meshfix.clean_from_file(str(remesh_path), str(remesh_path))
 
     # Reg tab
     def coordinate_picking(self, target):
@@ -157,19 +137,16 @@ class GuiMethods:
         self.plotter.clear()  # clears mesh space every time a new mesh is added
         self.file_name = Path(self.file_path).stem
         self.mesh_file = pv.read(self.file_path)
-        # self.plotter.add_mesh(self.mesh_file, color='yellow', opacity=0.5)
-        try:
-            self.plotter.add_mesh(self.mesh_file, rgba=True, opacity=0.5, show_edges=True)
-        except:
-            self.plotter.add_mesh(self.mesh_file, color='white', opacity=0.5, show_edges=True)
+
+        self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, opacity=0.5, show_edges=True)
         self.plotter.reset_camera()
 
         # # show registration
         GuiMethods.three_slices(self.mesh_file, self.plotter, 'yellow')
 
         template_mesh = pv.read(Path("./template/origin_template_ntplane.ply"))
-        self.plotter.add_mesh(template_mesh, color='red', opacity=0.1)
-        GuiMethods.three_slices(template_mesh, self.plotter, 'red')
+        self.plotter.add_mesh(template_mesh, color=self.template_color, opacity=0.1)
+        GuiMethods.three_slices(template_mesh, self.plotter, self.template_color)
 
         # # write initial landmarks to text
         txtpath = str(self.file_path.parent.joinpath('landmarks.txt'))
@@ -182,17 +159,20 @@ class GuiMethods:
         f.write(str(self.landmarks)+"\n")
         f.close()
 
-    @staticmethod
-    def CoM_correction(pv_cranium, template_mesh):
-        # template_mesh = pv.read("./data/template/origin_template_ntplane.stl")
-        AX_templ = template_mesh.slice(normal=[0, 0, 1], origin=[0, 0, 0.1])
-        AX_slice = pv_cranium.slice(normal=[0, 0, 1], origin=[0, 0, 0.1])
-        AX_diff = (AX_templ.center_of_mass()[1] - AX_slice.center_of_mass()[1])# /2
+    # @staticmethod
+    # def CoM_correction(pv_cranium, template_mesh):
+    #     AX_templ = template_mesh.slice(normal=[0, 0, 1], origin=[0, 0, 0.1])
+    #     AX_slice = pv_cranium.slice(normal=[0, 0, 1], origin=[0, 0, 0.1])
+    #     AX_diff = (AX_templ.center_of_mass()[1] - AX_slice.center_of_mass()[1])# /2
+    #
+    #     SAG_templ = template_mesh.slice(normal=[0, 0, 1], origin=[0, 0, 0.1])
+    #     AX_slice = pv_cranium.slice(normal=[0, 0, 1], origin=[0, 0, 0.1])
+    #     AX_diff = (AX_templ.center_of_mass()[1] - AX_slice.center_of_mass()[1])# /2
+    #
+    #     return AX_diff
 
-        return AX_diff
 
-
-    def cranial_cut(self, initial_clip = True):
+    def cranial_cut(self, initial_clip = False):
         if initial_clip == True:
             clip = -20
         else:
@@ -203,28 +183,25 @@ class GuiMethods:
 
         self.mesh_file.clip_box(template_mesh.bounds, invert=False)
         self.mesh_file.clip(normal=[0, 0.6, 1], origin=[0, -50, -60], invert=False)
-        self.mesh_file = self.mesh_file.clip('z', origin=[0, 0, -20], invert=False)
+        self.mesh_file = self.mesh_file.clip('z', origin=[0, 0, -21], invert=False)
 
         if str(self.file_path.stem).endswith('_C'):
-            cranium_path = self.file_path
+            pass
         else:
-            cranium_path = self.file_path.with_name(self.file_path.stem + '_C' + self.extension)
-        self.mesh_file.save(cranium_path)
+            self.file_path = self.file_path.with_name(self.file_path.stem + '_C' + self.extension)
+        self.mesh_file.save(self.file_path)
 
-        GuiMethods.repairsample(cranium_path, n_vertices=20000, repair=True)
+        GuiMethods.repairsample(self.file_path, n_vertices=20000, repair=True)
 
-        self.file_path = cranium_path
         self.mesh_file = pv.read(self.file_path)
         self.mesh_file.clip('z', origin=[0, 0, clip], invert=False).save(self.file_path)
-
+        GuiMethods.repairsample(self.file_path, n_vertices=10000, repair=False)
         self.mesh_file = pv.read(self.file_path)
         # CoM_correction = GuiMethods.CoM_correction(self.mesh_file)
 
         self.plotter.clear()
-        try:
-            self.plotter.add_mesh(self.mesh_file, rgba=True, show_edges=True)
-        except:
-            self.plotter.add_mesh(self.mesh_file, color='white', show_edges=True)
+
+        self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=True)
         # self.mesh_file.translate([0, CoM_correction, 0])
         self.mesh_file.save(self.file_path)
 
@@ -235,34 +212,29 @@ class GuiMethods:
         metrics.extract_dimensions(metrics.slice_height)
         metrics.plot_craniometrics(self.plotter)
 
-    # Dev tab
-    def show_z_slices(self):
-        CranioMetrics(self.file_path).show_slices(self.plotter, axis='z')
-
-    def show_x_slices(self):
-        CranioMetrics(self.file_path).show_slices(self.plotter, axis='x')
-
-    def show_y_slices(self):
-        CranioMetrics(self.file_path).show_slices(self.plotter, axis='y')
-
-    def ins_mesh(self):
+    # View tab
+    def screenshot(self):
         try:
-            self.plotter.add_mesh(self.mesh_file, rgba=True, show_edges=True)
+            screenshot_folder = Path(asksaveasfilename(title="Select file to open",
+                                             filetypes=(("Screenshot", "*.png"),
+                                                        ("all files", "*.*"))))
+            self.plotter.screenshot(screenshot_folder)
         except:
-            self.plotter.add_mesh(self.mesh_file, color='white', show_edges=True)
+            pass
 
-    # def screenshot(self):
-    #     self.plotter.clear()
-    #     self.plotter.background_color = 'white'
-    #     try:
-    #         self.plotter.add_mesh(self.mesh_file, rgba=True, show_edges=True)
-    #     except:
-    #         self.plotter.add_mesh(self.mesh_file, color='white', show_edges=True)
-    #     screenshot_folder = "C:/Users/Tareq/PycharmProjects/PyCraniumWIn/pycranium/data/screenshots/"
-    #     try:
-    #         self.plotter.screenshot(screenshot_folder + self.file_name+'.png')
-    #     except AttributeError:
-    #         self.plotter.screenshot(
-    #             screenshot_folder + str(datetime.now().time()) + '.png')
-    #     self.plotter.background_color = 'darkgrey'
+
+    # # Dev tab
+    # def show_z_slices(self):
+    #     CranioMetrics(self.file_path).show_slices(self.plotter, axis='z')
+    #
+    # def show_x_slices(self):
+    #     CranioMetrics(self.file_path).show_slices(self.plotter, axis='x')
+    #
+    # def show_y_slices(self):
+    #     CranioMetrics(self.file_path).show_slices(self.plotter, axis='y')
+
+
+
+
+
 
