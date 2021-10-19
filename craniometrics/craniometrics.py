@@ -209,7 +209,7 @@ class CranioMetrics:
         the original mesh and in red: HC line and the four optima used to
         calculated the CI.
         """
-        plotter.add_mesh(self.HC_s, color='red')
+        plotter.add_mesh(self.HC_s, color='red', line_width=5)
         plotter.add_points(np.array([self.front_opt, self.occ_opt,
                                      self.lh_opt, self.rh_opt]),
                            render_points_as_spheres=True,

@@ -13,6 +13,7 @@ class GuiMethods:
     def __init__(self):
         self.mesh_color = 'ivory'
         self.template_color = 'saddlebrown'
+        self.template_path = Path('./template/clipped_template_ntplane.ply')
 
 
     # File tab
@@ -37,9 +38,12 @@ class GuiMethods:
         self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=True)
 
 
-    def mesh_edges(self, show=True):
+    def mesh_edges(self, show=True, opacity=1):
         self.plotter.clear()
-        self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=show)
+        if show == False:
+            opacity=0.8
+
+        self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=show, opacity = opacity)
 
 
     def resample_repair(self, n_vertices=20000, repair=False):
@@ -207,10 +211,14 @@ class GuiMethods:
 
 
     # Craniometrics tab
-    def craniometrics(self):
+    def craniometrics(self, slice_only = False):
+        if slice_only==True:
+            self.plotter.clear()
+
         metrics = CranioMetrics(self.file_path)
         metrics.extract_dimensions(metrics.slice_height)
         metrics.plot_craniometrics(self.plotter)
+
 
     # View tab
     def screenshot(self):
