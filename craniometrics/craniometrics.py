@@ -1,7 +1,3 @@
-#!/usr/bin/python
-# -*- coding: utf-8 -*-
-
-# %% Modules and Packages
 
 """
 Created on Mon Jan  6 17:24:35 2020
@@ -12,6 +8,7 @@ import numpy as np
 import pandas as pd
 import pyvista as pv
 from pyvistaqt import BackgroundPlotter
+from pathlib import Path
 
 
 class CranioMetrics:
@@ -22,10 +19,11 @@ class CranioMetrics:
     :param slice_d: Horizontal distance between two consequtive slides
     """
 
-    def __init__(self, file_name, slice_d=1):
-        self.file_name = file_name.split('/')[-1].split('.')[0]
-        self.file_ext = '.' + file_name.split('/')[-1].split('.')[1]
-        self.pvmesh = pv.read(file_name)
+    def __init__(self, file_path, slice_d=1):
+        file_path = Path(file_path)
+        self.file_name = file_path.stem
+        self.file_ext = file_path.suffix
+        self.pvmesh = pv.read(file_path)
 
         d = np.zeros_like(self.pvmesh.points)
         self.array_name = 'coordinates'
@@ -283,7 +281,7 @@ Volume = {} cc '''.format(
 if __name__ == '__main__':
     plotter = BackgroundPlotter()
     plotter.background_color = 'white'
-    template = CranioMetrics("/home/tareq/PycharmProjects/pythonProject/pycranium/data/b130hc530.stl")
+    template = CranioMetrics("../template/template_origin_notused.ply")
     # metrics = CranioMetrics("/home/tareq/PycharmProjects/pythonProject/pycranium/data/A.stl")
     # plotter.add_mesh(metrics.pvmesh, color='white', show_edges =True)
     plotter.add_mesh(template.pvmesh, color='white')

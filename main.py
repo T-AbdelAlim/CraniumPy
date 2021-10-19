@@ -70,41 +70,41 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         fileMenu.addAction(exitButton)
 
         ## REGISTRATION
-        # # regMenu - CPD Registration button
-        # pickButton = Qt.QAction('Enable picking (press P)', self)
-        # pickButton.setShortcut('Ctrl+P')
-        # pickButton.triggered.connect(lambda: self.coordinate_picking(target=None))
-        # regMenu.addAction(pickButton)
-        #
-        # # regMenu - coordinate 1 (nose)
-        # save_c1_Button = Qt.QAction('Save coordinate 1 (nasion)', self)
-        # save_c1_Button.setShortcut('Ctrl+N')
-        # save_c1_Button.triggered.connect(lambda: self.coordinate_picking(target='nose'))
-        # regMenu.addAction(save_c1_Button)
-        #
-        # # regMenu - coordinate 2 (left)
-        # save_c2_Button = Qt.QAction('Save coordinate 2 (LH side)', self)
-        # save_c2_Button.setShortcut('Ctrl+L')
-        # save_c2_Button.triggered.connect(lambda: self.coordinate_picking(target='left'))
-        # regMenu.addAction(save_c2_Button)
-        #
-        # # regMenu - coordinate 3 (right)
-        # save_c3_Button = Qt.QAction('Save coordinate 3 (RH side)', self)
-        # save_c3_Button.setShortcut('Ctrl+R')
-        # save_c3_Button.triggered.connect(lambda: self.coordinate_picking(target='right'))
-        # regMenu.addAction(save_c3_Button)
-        #
-        # # regMenu - register
-        # reg_Button = Qt.QAction('Register to template', self)
-        # reg_Button.triggered.connect(lambda: self.register(self.landmarks))
-        # regMenu.addAction(reg_Button)
+        # regMenu - CPD Registration button
+        pickButton = Qt.QAction('Enable picking (press P)', self)
+        pickButton.setShortcut('Ctrl+P')
+        pickButton.triggered.connect(lambda: self.coordinate_picking(target=None))
+        regMenu.addAction(pickButton)
+
+        # regMenu - coordinate 1 (nose)
+        save_c1_Button = Qt.QAction('Save coordinate 1 (nasion)', self)
+        save_c1_Button.setShortcut('Ctrl+N')
+        save_c1_Button.triggered.connect(lambda: self.coordinate_picking(target='nose'))
+        regMenu.addAction(save_c1_Button)
+
+        # regMenu - coordinate 2 (left)
+        save_c2_Button = Qt.QAction('Save coordinate 2 (LH side)', self)
+        save_c2_Button.setShortcut('Ctrl+L')
+        save_c2_Button.triggered.connect(lambda: self.coordinate_picking(target='left'))
+        regMenu.addAction(save_c2_Button)
+
+        # regMenu - coordinate 3 (right)
+        save_c3_Button = Qt.QAction('Save coordinate 3 (RH side)', self)
+        save_c3_Button.setShortcut('Ctrl+R')
+        save_c3_Button.triggered.connect(lambda: self.coordinate_picking(target='right'))
+        regMenu.addAction(save_c3_Button)
+
+        # regMenu - register
+        reg_Button = Qt.QAction('Register to template', self)
+        reg_Button.triggered.connect(lambda: self.register(self.landmarks))
+        regMenu.addAction(reg_Button)
         #
         # # regMenu - Resample
         # resampleButton = Qt.QAction('Resample mesh', self)
         # resampleButton.triggered.connect(lambda: self.resample_repair())
         # regMenu.addAction(resampleButton)
         #
-        # # regMenu - show template
+        # # # regMenu - show template
         # clipButton = Qt.QAction('Initial clip', self)
         # clipButton.triggered.connect(lambda: self.cranial_cut(initial_clip=True))
         # regMenu.addAction(clipButton)
@@ -113,8 +113,8 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         # FclipButton = Qt.QAction('Final clip', self)
         # FclipButton.triggered.connect(lambda: self.cranial_cut(initial_clip=False))
         # regMenu.addAction(FclipButton)
-        #
-        #
+
+
         # ## CRANIOMETRICS
         # # metricsMenu - extract measurements button
         # extractButton = Qt.QAction('Extract measurements', self)
@@ -122,23 +122,19 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         # extractButton.triggered.connect(self.craniometrics)
         # metricsMenu.addAction(extractButton)
         #
-        # # metricsMenu - insert loaded mesh button
-        # sspButton = Qt.QAction('Show Sphere', self)
-        # sspButton.triggered.connect(self.show_sphere)
-        # metricsMenu.addAction(sspButton)
         #
         # ## VIEW
-        # # regMenu - show registration wrt cranial template
+        # ## regMenu - show registration wrt cranial template
         # templButton = Qt.QAction('Show registration', self)
         # templButton.triggered.connect(self.show_registration)
         # viewMenu.addAction(templButton)
-        #
-        # # viewMenu - camera buttons
-        # regMenu - CPD Registration button
-        hedgesButton = Qt.QAction('Hide edges', self)
-        hedgesButton.triggered.connect(self.mesh_edges)
-        viewMenu.addAction(hedgesButton)
 
+        # viewMenu - camera buttons
+        ## regMenu - CPD Registration button
+        # hedgesButton = Qt.QAction('Hide edges', self)
+        # hedgesButton.triggered.connect(self.mesh_edges)
+        # viewMenu.addAction(hedgesButton)
+        #
         # xyButton = Qt.QAction('XY-plane (top)', self)
         # xyButton.triggered.connect(lambda: self.plotter.view_xy())
         # viewMenu.addAction(xyButton)
@@ -162,12 +158,13 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         # resetviewButton = Qt.QAction('Reset camera', self)
         # resetviewButton.triggered.connect(lambda: self.plotter.isometric_view())
         # viewMenu.addAction(resetviewButton)
-        #
+
 
 
 
 
 if __name__ == '__main__':
+    print('Running CraniumPy')
     root = Tk()
     root.withdraw()  # removes tkwindow from file import
     app = Qt.QApplication(sys.argv)

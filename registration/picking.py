@@ -1,17 +1,13 @@
-import pyacvd
-from pyvistaqt import BackgroundPlotter
 import pyvista as pv
+from pyvistaqt import BackgroundPlotter
 import numpy as np
-import matplotlib.pyplot as plt
-from sklearn.neighbors import NearestNeighbors
-
-from pymeshfix import _meshfix
+from pathlib import Path
 
 class CoordinatePicking:
-    def __init__(self, file_name):
-        self.file_name = file_name.split('/')[-1].split('.')[0]
-        self.file_ext = '.' + file_name.split('/')[-1].split('.')[1]
-        self.pvmesh = pv.read(file_name)
+    def __init__(self, file_path):
+        self.file_name = file_path.stem
+        self.file_ext = file_path.suffix
+        self.pvmesh = pv.read(file_path)
 
         d = np.zeros_like(self.pvmesh.points)
         self.array_name = 'coordinates'
@@ -130,148 +126,3 @@ class CoordinatePicking:
 
         # reset coords
         self.nose_coord = self.left_coord = self.right_coord = []
-
-
-if __name__ == '__main__':
-    #% functions
-    def angle_between(v1, v2):
-        """ Returns the angle in degrees between vectors 'v1' and 'v2'::
-        """
-        v1_u = v1 / np.linalg.norm(v1)  # unit vector
-        v2_u = v2 / np.linalg.norm(v2)
-        angle_rad = np.arccos(np.clip(np.dot(v1_u, v2_u), -1.0, 1.0))
-        angle_degr = angle_rad * (180 / np.pi)
-        return angle_degr
-
-    #% DATA
-    plotter = BackgroundPlotter()
-    template_mesh = pv.read("/home/tareq/Notebooks_AAT/EMC_research/pycranium/data/template/origin_template_ntplane.stl")
-    raw_mesh = CoordinatePicking("/home/tareq/Notebooks_AAT/EMC_research/ICV_CT_correlation/registered_grade_5/dataset/196-22022010/100223132826/100223132826.stl")
-    data_mesh = CoordinatePicking("/home/tareq/Notebooks_AAT/EMC_research/ICV_CT_correlation/registered_grade_5/dataset/196-22022010/100223132826/100223132826_H_AAT2.stl")
-    # template_triangle = np.array([[1E-10, 56, 12], [-61, -28, -6], [61, -28, -6]]) # not aligned on Nasion-tragus plane
-    # (requires rotation around x of -12,37362513427)
-    template_triangle = np.array([[ 1.00000000e-10,  5.72706234e+01, -2.75124192e-01],
-                                  [-6.10000000e+01, -2.86353117e+01,  1.37562096e-01],
-                                  [ 6.10000000e+01, -2.86353117e+01,  1.37562096e-01]])
-
-#####
-
-    # landmarks corresponding to A.stl
-    landmarks = np.array([[71.07735443, 38.32688904, 77.00601196], [ 50.20030594,  51.92822266, -15.58328247], [-19.85119438,  12.4160614 ,  67.62042236]])
-
-#####
-    #%% VISUALIZE
-    plotter.add_points(template_triangle, color='blue', point_size=20, render_points_as_spheres=True)
-    # plotter.add_points(template_centroid, color='yellow', point_size=20, render_points_as_spheres=True)
-    plotter.add_mesh(template_mesh, color='white', show_edges =True, opacity=0.2)
-
-    # plotter.add_points(landmarks, color='green', point_size=20, render_points_as_spheres=True)
-    # plotter.add_points(mesh_centroid, color='black', point_size=20, render_points_as_spheres=True)
-    plotter.add_mesh(data_mesh.pvmesh, color='yellow', show_edges=True, opacity=0.6)
-
-
-## press P (metrics picking = activated)
-    # data_mesh.picking(plotter)
-    # data_mesh.picking(plotter, 'nose')
-    # data_mesh.picking(plotter, 'left')
-    # data_mesh.picking(plotter, 'right')
-
-    # plotter.show_grid()
-
-    # cloud1 = pv.PolyData(landmarks)
-    # surf1 = cloud1.delaunay_2d()
-    # mesh_centroid = surf1.center_of_mass()
-    # plotter.add_mesh(surf1, color = 'blue', opacity=0.5)
-    #
-    # cloud2 = pv.PolyData(template_triangle)
-    # surf2 = cloud2.delaunay_2d()
-    # template_centroid = surf2.center_of_mass()
-    # plotter.add_mesh(surf2, color = 'red', opacity=0.15)
-
-    # data_mesh.reg_to_template(landmarks)
-    # t = data_mesh.translation
-    # zr = data_mesh.z_rotation
-    # yr = data_mesh.y_rotation
-    # xr = data_mesh.x_rotation
-    #
-    # surf1.translate(t)
-    # surf1.rotate_z(zr)
-    # surf1.rotate_y(yr)
-    # surf1.rotate_x(xr)
-    #
-    # data_mesh.pvmesh.translate(t)
-    # data_mesh.pvmesh.rotate_z(zr)
-    # data_mesh.pvmesh.rotate_y(yr)
-    # data_mesh.pvmesh.rotate_x(xr)
-    #
-    # for i in range(3):
-    #     data_mesh.reg_to_template(surf1.points)
-    #     t = data_mesh.translation
-    #     zr = data_mesh.z_rotation
-    #     yr = data_mesh.y_rotation
-    #     xr = data_mesh.x_rotation
-    #
-    #     surf1.translate(t)
-    #     surf1.rotate_z(zr)
-    #     surf1.rotate_y(yr)
-    #     surf1.rotate_x(xr)
-    #
-    #     data_mesh.pvmesh.translate(t)
-    #     data_mesh.pvmesh.rotate_z(zr)
-    #     data_mesh.pvmesh.rotate_y(yr)
-    #     data_mesh.pvmesh.rotate_x(xr)
-
-    # surf1.translate(t)
-    # surf1.rotate_z(zr)
-    # surf1.rotate_y(yr)
-    # surf1.rotate_x(-xr)
-
-
-    # # ### template ###
-    # clipped_templ = template_mesh.clip(normal=[0, 0, 1], origin=[0, 0, template_triangle[0][2]], invert=False)
-    # plotter.add_mesh(clipped_templ, color='red', opacity=0.1)
-    #
-    # AX_templ = clipped_templ.slice(normal=[0, 0, 1], origin=[0, 0, 0])
-    # COR_templ = clipped_templ.slice(normal=[0, 1, 0], origin=[0, 0, 0])
-    # SAG_templ = clipped_templ.slice(normal=[1, 0, 0], origin=[0, 0, 0])
-    #
-    # plotter.add_mesh(AX_templ, color = 'red')
-    # plotter.add_points(AX_templ.center_of_mass(), color = 'red', point_size = 20, render_points_as_spheres=True)
-    # plotter.add_mesh(COR_templ, color = 'red')
-    # plotter.add_points(COR_templ.center_of_mass(), color = 'red', point_size = 20, render_points_as_spheres=True)
-    # plotter.add_mesh(SAG_templ, color = 'red')
-    # plotter.add_points(SAG_templ.center_of_mass(), color = 'red', point_size = 20, render_points_as_spheres=True)
-    #
-    # # #### mesh ####
-    # # clipped along nasion-tragus plane
-    # clipped_mesh = data_mesh.pvmesh.clip(normal=[0, 0, 1], origin=[0, 0, template_triangle[0][2]], invert=False)
-    #
-    # AX_slice = clipped_mesh.slice(normal=[0, 0, 1], origin=[0, 0, 0])
-    # COR_slice = clipped_mesh.slice(normal=[0, 1, 0], origin=[0, 0, 0])
-    # SAG_slice = clipped_mesh.slice(normal=[1, 0, 0], origin=[0, 0, 0])
-    #
-    # plotter.add_mesh(clipped_mesh, color='blue', opacity=0.1)
-    # plotter.add_mesh(AX_slice, color = 'blue')
-    # plotter.add_points(AX_slice.center_of_mass(), color = 'blue', point_size = 20, render_points_as_spheres=True)
-    # plotter.add_mesh(COR_slice, color = 'blue')
-    # plotter.add_points(COR_slice.center_of_mass(), color = 'blue', point_size = 20, render_points_as_spheres=True)
-    # plotter.add_mesh(SAG_slice, color = 'blue')
-    # plotter.add_points(SAG_slice.center_of_mass(), color = 'blue', point_size = 20, render_points_as_spheres=True)
-    #
-    # # # Center of Mass correction (0.5*difference between the two CoMs)
-    # corrected_mesh = data_mesh.pvmesh.clip(normal=[0, 0, 1], origin=[0, 0, template_triangle[0][2]], invert=False)
-    # AX_diff = abs(AX_slice.center_of_mass()[1]-AX_templ.center_of_mass()[1])/2
-    # corrected_mesh.translate([0, AX_diff, 0])
-    # plotter.add_mesh(corrected_mesh, color='yellow', opacity=0.1)
-    #
-    # AX_slice_cor = corrected_mesh.slice(normal=[0, 0, 1], origin=[0, 0, 0])
-    # COR_slice_cor = corrected_mesh.slice(normal=[0, 1, 0], origin=[0, 0, 0])
-    # SAG_slice_cor = corrected_mesh.slice(normal=[1, 0, 0], origin=[0, 0, 0])
-    #
-    # plotter.add_mesh(AX_slice_cor, color = 'yellow')
-    # plotter.add_points(AX_slice_cor.center_of_mass(), color = 'yellow', point_size = 20, render_points_as_spheres=True)
-    # plotter.add_mesh(COR_slice_cor, color = 'yellow')
-    # plotter.add_points(COR_slice_cor.center_of_mass(), color = 'yellow', point_size = 20, render_points_as_spheres=True)
-    # plotter.add_mesh(SAG_slice_cor, color = 'yellow')
-    # plotter.add_points(SAG_slice_cor.center_of_mass(), color = 'yellow', point_size = 20, render_points_as_spheres=True)
-
