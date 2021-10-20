@@ -7,6 +7,9 @@ Based on a single transverse slice (at max head depth), cephalometric measuremen
 - head circumference
 - intracranial volume approximation
 
+![Reconstruction](resources/CraniumPy_info.png)
+
+
 ## Installation and usage
 Project is created with:
 * Python version: 3.8
@@ -34,4 +37,3 @@ Python main.py
 
 5. To get started check out the documentation in  ```/resources/documentation.pdf```
 
-![Reconstruction](resources/CraniumPy_info.png)
