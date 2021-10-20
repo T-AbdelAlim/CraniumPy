@@ -180,6 +180,3 @@ if __name__ == '__main__':
     window.buttons()
     window.show()
     sys.exit(app.exec_())
-
-# pyinstaller main.py --hidden-import vtkmodules --hidden-import vtkmodules.all --hidden-import vtkmodules.util.numpy_support --hidden-import vtkmodules.numpy_interface --hidden-import vtkmodules.numpy_interface.dataset_adapter --hidden-import vtkmodules.qt --hidden-import vttmodules.util --hidden-import vttmodules.vtkCommonCore --hidden-import vttmodules.vtkCommonKitPython --hidden-import vtkmodules.qt.QVTK
-# RenderWindowInteractor  --onefile --clean
