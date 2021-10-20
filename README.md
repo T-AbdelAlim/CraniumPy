@@ -21,9 +21,6 @@ cd CraniumPy
 pip install -r requirements.txt
 ```
 
-5. Run examples --> (results saved in ```/examples/results```)
-```
-python test.py
-```
+5. To get started check out the documentation in  ```/resources/documentation.pdf```
 
-![Reconstruction](resources/bunny_example.png)
+![Reconstruction](resources/CraniumPy_info.png)
