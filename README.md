@@ -14,7 +14,7 @@ Project is created with:
 To run this project:
 1. Create and/or load a virtual environment (optional) 
 ```
-conda create -n yourenvname python=3.8
+conda create -n yourenvname python=3.9
 conda activate yourenvname
 ```
 2. Clone repository
