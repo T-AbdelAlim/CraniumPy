@@ -22,6 +22,8 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         self.frame = Qt.QFrame()
         hlayout = Qt.QHBoxLayout()
 
+        # set the title
+        self.setWindowTitle("CraniumPy")
         # add the pyvista interactor object
         self.plotter = QtInteractor(self.frame)
         self.plotter.add_axes()
@@ -48,7 +50,7 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         mainMenu = self.menuBar()
         fileMenu = mainMenu.addMenu('File')
         regMenu = mainMenu.addMenu('Registration')
-        metricsMenu = mainMenu.addMenu('Craniometrics')
+        metricsMenu = mainMenu.addMenu('Cephalometrics')
         viewMenu = mainMenu.addMenu('View')
 
         # mainMenu - Import mesh button
@@ -107,7 +109,7 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
 
         ## CRANIOMETRICS
         # metricsMenu - extract measurements button
-        extractButton = Qt.QAction('Extract cephalometrics', self)
+        extractButton = Qt.QAction('Extract measurements', self)
         extractButton.setShortcut('Ctrl+E')
         extractButton.triggered.connect(self.craniometrics)
         metricsMenu.addAction(extractButton)
@@ -119,7 +121,6 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
 
         # metricsMenu - extract mesh button
         cleanmeshButton = Qt.QAction('Re-load mesh', self)
-        cleanmeshButton.setShortcut('Ctrl+R')
         cleanmeshButton.triggered.connect(self.clean_mesh)
         metricsMenu.addAction(cleanmeshButton)
 
@@ -171,7 +172,7 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
 
 
 if __name__ == '__main__':
-    print('Running CraniumPy 0.1.0')
+    print('Running CraniumPy 0.1')
     root = Tk()
     root.withdraw()  # removes tkwindow from file import
     app = Qt.QApplication(sys.argv)

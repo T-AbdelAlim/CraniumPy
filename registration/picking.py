@@ -37,7 +37,7 @@ class CoordinatePicking:
             plotter.add_points(self.nose_coord,
                                render_points_as_spheres=True,
                                point_size=20, color='green')
-            plotter.add_text('nasion: {}'.format(str(self.nose_coord)), 'upper_right', font_size=10)
+            plotter.add_text('nasion: {}'.format(str(np.round(self.nose_coord, 1))), 'upper_right', font_size=10)
             return self.nose_coord
 
         elif target == 'left':
@@ -45,7 +45,7 @@ class CoordinatePicking:
             plotter.add_points(self.left_coord,
                                render_points_as_spheres=True,
                                point_size=20, color='green')
-            plotter.add_text('\nLH tragus: {}'.format(str(self.left_coord)), 'upper_right', font_size=10)
+            plotter.add_text('\nLH tragus: {}'.format(str(np.round(self.left_coord,1))), 'upper_right', font_size=10)
             return self.left_coord
 
         elif target == 'right':
@@ -53,7 +53,7 @@ class CoordinatePicking:
             plotter.add_points(self.right_coord,
                                render_points_as_spheres=True,
                                point_size=20, color='green')
-            plotter.add_text('\n\nRH tragus: {}'.format(str(self.right_coord)), 'upper_right', font_size=10)
+            plotter.add_text('\n\nRH tragus: {}'.format(str(np.round(self.right_coord,1))), 'upper_right', font_size=10)
             return self.right_coord
 
         else:
