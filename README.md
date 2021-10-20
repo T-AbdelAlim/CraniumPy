@@ -52,4 +52,4 @@ pyinstaller main.py --hidden-import vtkmodules --hidden-import vtkmodules.all --
 
 3. Move the executable file (main.exe) from ```CraniumPy/dist/main.exe``` to the main directory ```CraniumPy/main.exe```
 
-5. Run main.exe (takes a few seconds to start)
+4. Run main.exe (takes a few seconds to start)
