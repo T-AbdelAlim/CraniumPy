@@ -1,5 +1,5 @@
 """
-Created on Mon Aug  2 08:24:35 2021
+Created on Mon Aug 2, 2021
 @author: TAbdelAlim
 """
 
@@ -273,5 +273,3 @@ ICV approx. = {} cc '''.format(
             return self.right_coord
         else:
             pass
-
-

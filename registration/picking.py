@@ -1,7 +1,11 @@
+"""
+Created on Mon Aug 2, 2021
+@author: TAbdelAlim
+"""
+
 import pyvista as pv
-from pyvistaqt import BackgroundPlotter
 import numpy as np
-from pathlib import Path
+
 
 class CoordinatePicking:
     def __init__(self, file_path):

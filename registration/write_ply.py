@@ -1,7 +1,8 @@
-import os
-import pyvista as pv
+"""
+Created on Mon Aug 2, 2021
+@author: TAbdelAlim
+"""
 
-import numpy as np
 def write_ply_file(mesh, savepath):
     points = mesh.points
     faces = mesh.faces
