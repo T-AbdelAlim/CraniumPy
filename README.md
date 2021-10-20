@@ -37,8 +37,8 @@ Python main.py
 
 5. To get started check out the documentation in  ```/resources/documentation.pdf```
 
-## CraniumPy as an executable
-If you want to run this tool locally from an executable file:
+## Run CraniumPy as an executable (optional)
+If you want to run this tool locally from an executable file (.exe):
 
 1. Install pyinstaller:
 ```
@@ -51,4 +51,5 @@ pyinstaller main.py --hidden-import vtkmodules --hidden-import vtkmodules.all --
 ```
 
 3. Move the executable file (main.exe) from ```CraniumPy/dist/main.exe``` to the main directory ```CraniumPy/main.exe```
-4. Run main.exe (takes a few seconds to start)
+
+5. Run main.exe (takes a few seconds to start)
