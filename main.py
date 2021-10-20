@@ -1,3 +1,8 @@
+"""
+Created on Mon Aug  2 08:24:35 2021
+@author: TAbdelAlim
+"""
+
 import sys
 from PyQt5 import Qt
 from tkinter import Tk
@@ -52,11 +57,6 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         importButton.triggered.connect(self.import_mesh)
         fileMenu.addAction(importButton)
 
-        # metricsMenu - Clear window
-        clrButton = Qt.QAction('Clear window', self)
-        clrButton.triggered.connect(lambda: self.plotter.clear())
-        fileMenu.addAction(clrButton)
-
         # mainMenu - Exit button
         exitButton = Qt.QAction('Exit', self)
         exitButton.setShortcut('Ctrl+Q')
@@ -64,7 +64,7 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         fileMenu.addAction(exitButton)
 
         ## REGISTRATION
-        pickMenu = regMenu.addMenu('1. Landmark Picking')
+        pickMenu = regMenu.addMenu('1. Landmark selection')
         # regMenu - CPD Registration button
         pickButton = Qt.QAction('Enable picking (press P)', self)
         pickButton.setShortcut('Ctrl+P')
@@ -107,31 +107,35 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
 
         ## CRANIOMETRICS
         # metricsMenu - extract measurements button
-        extractButton = Qt.QAction('Cephalometrics', self)
+        extractButton = Qt.QAction('Extract cephalometrics', self)
         extractButton.setShortcut('Ctrl+E')
         extractButton.triggered.connect(self.craniometrics)
         metricsMenu.addAction(extractButton)
 
         # metricsMenu - extract slice only
-        sliceextractButton = Qt.QAction('Extract slice only', self)
+        sliceextractButton = Qt.QAction('Show 2D slice', self)
         sliceextractButton.triggered.connect(lambda:self.craniometrics(slice_only=True))
         metricsMenu.addAction(sliceextractButton)
 
         # metricsMenu - extract mesh button
         cleanmeshButton = Qt.QAction('Re-load mesh', self)
-        cleanmeshButton.setShortcut('Ctrl+C')
+        cleanmeshButton.setShortcut('Ctrl+R')
         cleanmeshButton.triggered.connect(self.clean_mesh)
         metricsMenu.addAction(cleanmeshButton)
 
-        # # metricsMenu - extract template_slice
-        # sliceextractButton = Qt.QAction('Extract template slice', self)
-        # sliceextractButton.triggered.connect(lambda:self.craniometrics(slice_only=True))
-        # metricsMenu.addAction(sliceextractButton)
+        # ## VIEW
+        gridMenu = viewMenu.addMenu('Measurement grid')
+        sgridButton = Qt.QAction('Show grid', self)
+        sgridButton.triggered.connect(lambda: self.plotter.show_grid(grid=True))
+        gridMenu.addAction(sgridButton)
 
-
+        hgridButton = Qt.QAction('Hide grid', self)
+        hgridButton.triggered.connect(lambda: self.plotter.show_grid(grid=False,  show_xaxis=False, show_yaxis=False,
+                                                                     show_zaxis=False))
+        gridMenu.addAction(hgridButton)
 
         # ## VIEW
-        viewsMenu = viewMenu.addMenu('Views')
+        viewsMenu = viewMenu.addMenu('Camera View')
         xyButton = Qt.QAction('XY-plane (top)', self)
         xyButton.triggered.connect(lambda: self.plotter.view_xy())
         viewsMenu.addAction(xyButton)
@@ -157,19 +161,9 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         viewsMenu.addAction(resetviewButton)
 
 
-        edgesMenu = viewMenu.addMenu('Edges')
-        ## viewMenu - camera buttons
-        edgesButton = Qt.QAction('Show edges', self)
-        edgesButton.triggered.connect(lambda:self.mesh_edges(show=True))
-        edgesMenu.addAction(edgesButton)
-
-        hedgesButton = Qt.QAction('Hide edges', self)
-        hedgesButton.triggered.connect(lambda:self.mesh_edges(show=False))
-        edgesMenu.addAction(hedgesButton)
-
-
-        # metricsMenu - insert loaded mesh button
+        # ## viewsMenu - Screenshot
         ssButton = Qt.QAction('Screenshot', self)
+        ssButton.setShortcut('Ctrl+S')
         ssButton.triggered.connect(self.screenshot)
         viewMenu.addAction(ssButton)
 
@@ -177,7 +171,7 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
 
 
 if __name__ == '__main__':
-    print('Running CraniumPy')
+    print('Running CraniumPy 0.1.0')
     root = Tk()
     root.withdraw()  # removes tkwindow from file import
     app = Qt.QApplication(sys.argv)

@@ -1,14 +1,12 @@
-
 """
-Created on Mon Jan  6 17:24:35 2020
+Created on Mon Aug  2 08:24:35 2021
 @author: TAbdelAlim
 """
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pyvista as pv
-from pyvistaqt import BackgroundPlotter
-from pathlib import Path
 
 
 class CranioMetrics:
@@ -54,7 +52,7 @@ class CranioMetrics:
 
         :param slice_d: Horizontal distance between two consequtive slides
         :return: Height and index of the slice where max depth is found and
-        breadth <170mm to correct for ears.
+        breadth <180mm to correct for ears.
 
         """
 
@@ -220,15 +218,14 @@ depth = {} mm
 breadth = {} mm
 CI = {}
 HC = {} cm 
-Volume = {} cc '''.format(
+ICV approx. = {} cc '''.format(
             self.file_name,
             self.slice_d,
             round(np.float64(self.depth), 2),
             round(np.float64(self.breadth), 2),
             self.CI,
             self.HC,
-            # round(np.float64(self.pvmesh.volume/1000), 2),
-            round((((self.pvmesh.volume / 1000) - 54.256) / 1.423), 2),
+            round((((self.pvmesh.volume / 1000) + 46.4349) / 1.4566), 2),
         ), font_size=10, color='white')
 
     def plot_HC_slice(self):
@@ -278,19 +275,3 @@ Volume = {} cc '''.format(
             pass
 
 
-if __name__ == '__main__':
-    plotter = BackgroundPlotter()
-    plotter.background_color = 'white'
-    template = CranioMetrics("../template/template_origin_notused.ply")
-    # metrics = CranioMetrics("/home/tareq/PycharmProjects/pythonProject/pycranium/data/A.stl")
-    # plotter.add_mesh(metrics.pvmesh, color='white', show_edges =True)
-    plotter.add_mesh(template.pvmesh, color='white')
-    # metrics.extract_dimensions(metrics.slice_height)
-    # metrics.show_slices(plotter)
-    # metrics.plot_craniometrics(plotter)
-    # metrics.picking(plotter)
-
-    # metrics.picking(plotter, 'nose')
-    # metrics.picking(plotter, 'left')
-    # metrics.picking(plotter, 'right')
-    # metrics.surf_triangle(plotter)
