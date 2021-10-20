@@ -50,6 +50,4 @@ pip install pyinstaller
 pyinstaller main.py --hidden-import vtkmodules --hidden-import vtkmodules.all --hidden-import vtkmodules.util.numpy_support --hidden-import vtkmodules.numpy_interface --hidden-import vtkmodules.numpy_interface.dataset_adapter --hidden-import vtkmodules.qt --hidden-import vttmodules.util --hidden-import vttmodules.vtkCommonCore --hidden-import vttmodules.vtkCommonKitPython --hidden-import vtkmodules.qt.QVTKRenderWindowInteractor  --onefile --clean
 ```
 
-3. Move the executable file (main.exe) from ```CraniumPy/dist/main.exe``` to the main directory ```CraniumPy/main.exe```
-
-4. Run main.exe (takes a few seconds to start)
+3. Move the executable file (main.exe) from ```CraniumPy/dist/main.exe``` to the main directory ```CraniumPy/main.exe``` and run main.exe from here (takes a few seconds to start)
