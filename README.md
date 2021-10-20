@@ -1,5 +1,11 @@
 # CraniumPy
-
+CraniumPy is a simple tool that can be used to register 3D meshes for cranial analysis. In its current state, a raw 3D mesh (.ply, .obj, .stl) can be imported and visualized. Three anatomical landmarks were carefully selected (Nasion, LH tragus, RH tragus) and used for registration based on an average normal template (https://dined3d.io.tudelft.nl/en/mannequin/tool). 
+Based on a single transverse slice (at max head depth), cephalometric measurements are automatically extracted and plotted on the 3D model. These measurements include:
+- head depth
+- breadth
+- cephalic index
+- head circumference
+- intracranial volume approximation
 
 ## Installation and usage
 Project is created with:
@@ -19,6 +25,11 @@ cd CraniumPy
 4. Install requirements
 ```
 pip install -r requirements.txt
+```
+
+5. Run tool
+```
+Python main.py
 ```
 
 5. To get started check out the documentation in  ```/resources/documentation.pdf```
