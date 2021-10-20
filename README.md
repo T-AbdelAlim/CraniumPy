@@ -9,12 +9,12 @@ Based on a single transverse slice (at max head depth), cephalometric measuremen
 
 ## Installation and usage
 Project is created with:
-* Python version: 3.9
+* Python version: 3.8
 
 To run this project:
 1. Create and/or load a virtual environment (optional) 
 ```
-conda create -n yourenvname python=3.9
+conda create -n yourenvname python=3.8
 conda activate yourenvname
 ```
 2. Clone repository
