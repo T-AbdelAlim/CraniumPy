@@ -153,7 +153,7 @@ class GuiMethods:
         self.plotter.reset_camera()
 
         # # show registration
-        GuiMethods.three_slices(self.mesh_file, self.plotter, 'yellow')
+        GuiMethods.three_slices(self.mesh_file, self.plotter, self.mesh_color)
 
         template_mesh = pv.read(Path("./template/origin_template_ntplane.ply"))
         self.plotter.add_mesh(template_mesh, color=self.template_color, opacity=0.1)
