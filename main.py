@@ -161,7 +161,6 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         resetviewButton.triggered.connect(lambda: self.plotter.isometric_view())
         viewsMenu.addAction(resetviewButton)
 
-
         # ## viewsMenu - Screenshot
         ssButton = Qt.QAction('Screenshot', self)
         ssButton.setShortcut('Ctrl+S')
