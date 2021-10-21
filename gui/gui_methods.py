@@ -67,9 +67,9 @@ class GuiMethods:
     def show_registration(self):
         self.plotter.clear()
         template_mesh = GuiMethods.call_template(ICV_scaling=self.mesh_file.volume/2339070.75)
-        self.plotter.add_mesh(template_mesh, color=self.template_color, opacity=0.2, show_edges=False)
+        self.plotter.add_mesh(template_mesh, color=self.template_color, opacity=0.2, show_edges=False, label='template')
         try:
-            self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=False, opacity=0.2)
+            self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=False, opacity=0.2, label='mesh')
             GuiMethods.three_slices(self.mesh_file, self.plotter, self.mesh_color)
 
             ## slight longitudinal correction based on center of mass - translation applied to template
@@ -80,6 +80,7 @@ class GuiMethods:
         except AttributeError:
             GuiMethods.three_slices(template_mesh, self.plotter, self.template_color)
 
+        self.plotter.add_legend()
 
     @staticmethod
     def three_slices(mesh_file, plotter, color='yellow'):
