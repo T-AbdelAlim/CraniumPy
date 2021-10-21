@@ -151,7 +151,7 @@ class GuiMethods:
         if str(self.file_path).endswith('_rg'+ self.extension) or str(self.file_path).endswith('_C'+ self.extension):
             self.mesh_file.save(str(self.file_path).replace(self.extension, ".ply"))
         else:
-            self.mesh_file.save(self.file_path.with_name(self.file_path.stem+'_rg'+self.file_path.suffix))
+            self.mesh_file.save(self.file_path.with_name(self.file_path.stem+'_rg.ply'))
             self.file_path = self.file_path.with_name(self.file_path.stem+'_rg.ply')
 
         # # replace old with new registered mesh
