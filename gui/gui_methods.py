@@ -25,18 +25,19 @@ class GuiMethods:
     def import_mesh(self, resample=False):
         self.plotter.clear()  # clears mesh space every time a new mesh is added
         self.file_path = Path(askopenfilename(title="Select file to open",
-                                         filetypes=(("Mesh files", "*.ply"),
+                                         filetypes=(("Mesh files", ("*.ply","*.obj", "*.stl")),
                                                     ("all files", "*.*"))))
+        try:
+            self.file_name = self.file_path.name #returns name.suffix
+            self.extension = self.file_path.suffix
+            self.mesh_file = pv.read(self.file_path)
+            self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=True)
 
-        self.file_name = self.file_path.name #returns name.suffix
-        self.extension = self.file_path.suffix
-        self.mesh_file = pv.read(self.file_path)
-
-        self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=True)
-
-        self.plotter.reset_camera()
-        self.plotter.show_grid()
-        self.landmarks = [[], [], []]
+            self.plotter.reset_camera()
+            self.plotter.show_grid()
+            self.landmarks = [[], [], []]
+        except:
+            pass
 
     def clean_mesh(self):
         self.plotter.clear()
@@ -52,7 +53,7 @@ class GuiMethods:
 
 
     def resample_repair(self, n_vertices=20000, repair=False):
-        resampled_path = self.file_path.with_name(self.file_path.stem + '_rs' + self.extension)
+        resampled_path = self.file_path.with_name(self.file_path.stem + '_rs.ply') #+ self.extension for source ext
         GuiMethods.repairsample(self.file_path, postfix='_rs', n_vertices=n_vertices, repair=repair)
         self.file_path = resampled_path
 
@@ -148,10 +149,10 @@ class GuiMethods:
             self.mesh_file.rotate_x(metrics.x_rotation)
 
         if str(self.file_path).endswith('_rg'+ self.extension) or str(self.file_path).endswith('_C'+ self.extension):
-            self.mesh_file.save(self.file_path)
+            self.mesh_file.save(str(self.file_path).replace(self.extension, ".ply"))
         else:
             self.mesh_file.save(self.file_path.with_name(self.file_path.stem+'_rg'+self.file_path.suffix))
-            self.file_path = self.file_path.with_name(self.file_path.stem+'_rg'+self.file_path.suffix)
+            self.file_path = self.file_path.with_name(self.file_path.stem+'_rg.ply')
 
         # # replace old with new registered mesh
         self.plotter.clear()  # clears mesh space every time a new mesh is added
@@ -209,7 +210,7 @@ class GuiMethods:
         if str(self.file_path.stem).endswith('_C'):
             pass
         else:
-            self.file_path = self.file_path.with_name(self.file_path.stem + '_C' + self.extension)
+            self.file_path = self.file_path.with_name(self.file_path.stem + '_C.ply') #+ self.extension for source extension
         self.mesh_file.save(self.file_path)
 
         GuiMethods.repairsample(self.file_path, n_vertices=20000, repair=True)

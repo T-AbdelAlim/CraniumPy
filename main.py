@@ -125,17 +125,6 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         metricsMenu.addAction(cleanmeshButton)
 
         # ## VIEW
-        gridMenu = viewMenu.addMenu('Measurement grid')
-        sgridButton = Qt.QAction('Show grid', self)
-        sgridButton.triggered.connect(lambda: self.plotter.show_grid(grid=True))
-        gridMenu.addAction(sgridButton)
-
-        hgridButton = Qt.QAction('Hide grid', self)
-        hgridButton.triggered.connect(lambda: self.plotter.show_grid(grid=False,  show_xaxis=False, show_yaxis=False,
-                                                                     show_zaxis=False))
-        gridMenu.addAction(hgridButton)
-
-        # ## VIEW
         viewsMenu = viewMenu.addMenu('Camera View')
         xyButton = Qt.QAction('XY-plane (top)', self)
         xyButton.triggered.connect(lambda: self.plotter.view_xy())
@@ -160,6 +149,17 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         resetviewButton = Qt.QAction('Reset camera', self)
         resetviewButton.triggered.connect(lambda: self.plotter.isometric_view())
         viewsMenu.addAction(resetviewButton)
+
+        # ## VIEW
+        gridMenu = viewMenu.addMenu('Measurement grid')
+        sgridButton = Qt.QAction('Show grid', self)
+        sgridButton.triggered.connect(lambda: self.plotter.show_grid(grid=True))
+        gridMenu.addAction(sgridButton)
+
+        hgridButton = Qt.QAction('Hide grid', self)
+        hgridButton.triggered.connect(lambda: self.plotter.show_grid(grid=False,  show_xaxis=False, show_yaxis=False,
+                                                                     show_zaxis=False))
+        gridMenu.addAction(hgridButton)
 
         # ## viewsMenu - Screenshot
         ssButton = Qt.QAction('Screenshot', self)
