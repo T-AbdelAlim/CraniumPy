@@ -66,7 +66,6 @@ class GuiMethods:
 
     def show_registration(self):
         self.plotter.clear()
-        self.plotter.remove_legend()
         template_mesh = GuiMethods.call_template(ICV_scaling=self.mesh_file.volume/2339070.75)
         self.plotter.add_mesh(template_mesh, color=self.template_color, opacity=0.2, show_edges=False)
         try:
@@ -81,7 +80,7 @@ class GuiMethods:
         except AttributeError:
             GuiMethods.three_slices(template_mesh, self.plotter, self.template_color)
 
-        self.plotter.add_legend(labels=[['template',self.template_color],['mesh',self.mesh_color]])
+        self.plotter.add_legend(labels=[['template',self.template_color],['mesh',self.mesh_color]], face='circle')
 
     @staticmethod
     def three_slices(mesh_file, plotter, color='yellow'):
@@ -168,7 +167,7 @@ class GuiMethods:
         template_mesh = pv.read(Path("./template/origin_template_ntplane.ply"))
         self.plotter.add_mesh(template_mesh, color=self.template_color, opacity=0.1)
         GuiMethods.three_slices(template_mesh, self.plotter, self.template_color)
-        self.plotter.add_legend(labels=[['template', self.template_color], ['mesh', self.mesh_color]])
+        self.plotter.add_legend(labels=[['template', self.template_color], ['mesh', self.mesh_color]], face='circle')
 
         # # write initial landmarks to text
         txtpath = str(self.file_path.parent.joinpath('landmarks.txt'))
