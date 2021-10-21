@@ -99,14 +99,24 @@ class GuiMethods:
 
     @staticmethod
     def repairsample(file_path, n_vertices, postfix = '', repair=False, extension=".ply"):
-        clus = pyacvd.Clustering(pv.read(file_path))
-        clus.subdivide(3)
-        clus.cluster(n_vertices)
-        remesh = clus.create_mesh()
+        pvmesh = pv.read(file_path)
+
+        if pvmesh.n_points <= 100000:
+            clus = pyacvd.Clustering(pvmesh)
+            clus.subdivide(3)
+            clus.cluster(n_vertices)
+            remesh = clus.create_mesh()
+
+        elif pvmesh.n_points > 100000:
+            print('Mesh contains too many vertices ({}). Mesh is not resampled.'.format(pvmesh.n_points))
+            remesh = pvmesh # original mesh
+
         remesh_path = file_path.with_name(file_path.stem + postfix + extension)
         write_ply_file(remesh, remesh_path)
+
         if repair == True:
             _meshfix.clean_from_file(str(remesh_path), str(remesh_path))
+
 
     # Reg tab
     def coordinate_picking(self, target):
