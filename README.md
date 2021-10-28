@@ -44,7 +44,7 @@ Python main.py
 
 5. To get started check out the documentation in  ```/resources/documentation.pdf```
 
-## CraniumPy executebale
+## CraniumPy executebale (Windows)
 If you want to run this tool locally from an executable file (.exe):
 
 1. Install pyinstaller:
