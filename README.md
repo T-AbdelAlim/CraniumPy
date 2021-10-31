@@ -1,4 +1,15 @@
 # CraniumPy
+
+
+  * [Description](#description)
+  * [Usage](#usage)
+  * [Installation](#installation)
+  * [CraniumPy executebale](#craniumpy-executebale)
+  * [Citation](#citation)
+  * [Author](#author)
+
+
+## Description
 [![DOI](https://zenodo.org/badge/418914708.svg)](https://zenodo.org/badge/latestdoi/418914708)
 
 CraniumPy is a simple tool that can be used to register 3D meshes for cranial analysis using three landmarks. In its current state, a raw 3D mesh (.ply, .obj, .stl) can be imported and visualized. After registration, cephalometric measurements can be automatically extracted. These measurements include:
@@ -10,18 +21,14 @@ CraniumPy is a simple tool that can be used to register 3D meshes for cranial an
 
 ![Reconstruction](resources/CraniumPy_info.png)
 
-## Contents
-  * [Usage](#usage)
-  * [Installation](#installation)
-  * [CraniumPy executebale](#craniumpy-executebale)
-  * [Citation](#citation)
-  * [Author](#author)
-
 ## Usage
 Three anatomical landmarks  selected (Nasion, LH tragus, RH tragus) that need to be located by the user for registration. The mesh is then registered to an average normal template (https://dined3d.io.tudelft.nl/en/mannequin/tool). 
+
 Based on a single transverse slice (at maximum head depth), cephalometric measurements are automatically extracted and plotted on the 3D model. 
 
 Check the [step-by-step guide](/resources/documentation.pdf) to get started.
+
+The example mesh ```resources/test_mesh/test_mesh.ply``` can be used to explore the functionality of this tool. 
 
 ## Installation
 Project is created with:
@@ -29,10 +36,13 @@ Project is created with:
 
 To run this project:
 1. Create and/or load a virtual environment (optional):
+
 ```
 conda create -n yourenvname python=3.8
 conda activate yourenvname
 ```
+If you are unfamiliar with virtual environments, check [miniconda](https://docs.conda.io/en/latest/miniconda.html).
+
 2. Clone repository:
 ```
 git clone https://github.com/T-AbdelAlim/CraniumPy.git
@@ -67,7 +77,11 @@ pyinstaller main.py --hidden-import vtkmodules --hidden-import vtkmodules.all --
 ## Citation
 If you use CraniumPy, please cite:
 
+```
 Abdel-Alim, T. (2021). CraniumPy [Computer software]. https://doi.org/10.5281/zenodo.5634154
+```
+
+
 ## Author
 Tareq Abdel-Alim (Department of Neurosurgery and Radiology, Erasmus MC, Rotterdam, the Netherlands)
 
