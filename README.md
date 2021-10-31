@@ -1,4 +1,5 @@
 # CraniumPy
+[![DOI](https://zenodo.org/badge/418914708.svg)](https://zenodo.org/badge/latestdoi/418914708)
 
 CraniumPy is a simple tool that can be used to register 3D meshes for cranial analysis using three landmarks. In its current state, a raw 3D mesh (.ply, .obj, .stl) can be imported and visualized. After registration, cephalometric measurements can be automatically extracted. These measurements include:
 - head depth
@@ -66,8 +67,7 @@ pyinstaller main.py --hidden-import vtkmodules --hidden-import vtkmodules.all --
 ## Citation
 If you use CraniumPy, please cite:
 
-Abdel-Alim, T. (2021). CraniumPy [Computer software]. https://doi.org/10.xxxx/zenodo.xxxx
-
+Abdel-Alim, T. (2021). CraniumPy [Computer software]. https://doi.org/10.5281/zenodo.5634154
 ## Author
 Tareq Abdel-Alim (Department of Neurosurgery and Radiology, Erasmus MC, Rotterdam, the Netherlands)
 
