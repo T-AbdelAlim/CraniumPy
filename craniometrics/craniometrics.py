@@ -211,20 +211,20 @@ class CranioMetrics:
                            render_points_as_spheres=True,
                            point_size=20, color='red')
         plotter.add_text('''file = {}.stl
-slice distance = {} mm
-depth = {} mm
-breadth = {} mm
-CI = {}
-HC = {} cm 
-ICV approx. = {} cc '''.format(
+OFC (depth) = {} mm
+BPD (breadth) = {} mm
+Cephalic Index = {}
+Circumference = {} cm 
+Mesh Volume. = {} cc '''.format(
             self.file_name,
-            self.slice_d,
             round(np.float64(self.depth), 2),
             round(np.float64(self.breadth), 2),
             self.CI,
             self.HC,
-            round((((self.pvmesh.volume / 1000) + 46.4349) / 1.4566), 2),
+            round((self.pvmesh.volume / 1000), 2),
         ), font_size=10, color='white')
+
+# ICV correlation based on CT: round((((self.pvmesh.volume / 1000) + 46.4349) / 1.4566), 2)
 
     def plot_HC_slice(self):
         self.extract_dimensions(self.slice_height)
