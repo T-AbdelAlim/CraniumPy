@@ -1,7 +1,6 @@
 # CraniumPy
 
-CraniumPy is a simple tool that can be used to register 3D meshes for cranial analysis. In its current state, a raw 3D mesh (.ply, .obj, .stl) can be imported and visualized. Three anatomical landmarks were carefully selected (Nasion, LH tragus, RH tragus) that need to be located by the user for registration. The mesh is then registered to an average normal template (https://dined3d.io.tudelft.nl/en/mannequin/tool). 
-Based on a single transverse slice (at max head depth), cephalometric measurements are automatically extracted and plotted on the 3D model. These measurements include:
+CraniumPy is a simple tool that can be used to register 3D meshes for cranial analysis using three landmarks. In its current state, a raw 3D mesh (.ply, .obj, .stl) can be imported and visualized. After registration, cephalometric measurements can be automatically extracted. These measurements include:
 - head depth
 - head breadth
 - cephalic index
@@ -11,13 +10,19 @@ Based on a single transverse slice (at max head depth), cephalometric measuremen
 ![Reconstruction](resources/CraniumPy_info.png)
 
 ## Contents
-  * [Installation and usage](#installation-and-usage)
+  * [Usage](#usage)
+  * [Installation](#installation)
   * [CraniumPy executebale](#craniumpy-executebale)
   * [Citation](#citation)
-  * [Licence](#licence)
   * [Author](#author)
 
-## Installation and usage
+## Usage
+Three anatomical landmarks  selected (Nasion, LH tragus, RH tragus) that need to be located by the user for registration. The mesh is then registered to an average normal template (https://dined3d.io.tudelft.nl/en/mannequin/tool). 
+Based on a single transverse slice (at maximum head depth), cephalometric measurements are automatically extracted and plotted on the 3D model. 
+
+Check the [step-by-step guide](/resources/documentation.pdf) to get started.
+
+## Installation
 Project is created with:
 * Python version: 3.8
 
@@ -42,10 +47,8 @@ pip install -r requirements.txt
 Python main.py
 ```
 
-5. To get started check out the documentation in  ```/resources/documentation.pdf```
-
-## CraniumPy executebale (Windows)
-If you want to run this tool locally from an executable file (.exe):
+## CraniumPy executebale
+If you want to run this tool locally (on Windows) from an executable file (.exe):
 
 1. Install pyinstaller:
 ```
@@ -63,9 +66,6 @@ pyinstaller main.py --hidden-import vtkmodules --hidden-import vtkmodules.all --
 ## Citation
 If you use CraniumPy, please cite:
 ...
-
-## Licence
-This project is licensed under ...
 
 ## Author
 Tareq Abdel-Alim (Department of Neurosurgery and Radiology, Erasmus MC, Rotterdam, the Netherlands)
