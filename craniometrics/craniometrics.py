@@ -215,7 +215,7 @@ OFC (depth) = {} mm
 BPD (breadth) = {} mm
 Cephalic Index = {}
 Circumference = {} cm 
-Mesh Volume. = {} cc '''.format(
+Mesh volume. = {} cc '''.format(
             self.file_name,
             round(np.float64(self.depth), 2),
             round(np.float64(self.breadth), 2),
