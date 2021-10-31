@@ -171,7 +171,7 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
 if __name__ == '__main__':
     print('Running CraniumPy')
     root = Tk()
-    root.withdraw()  # removes tkwindow from file import
+    root.withdraw()  #removes tkwindow from file import
     app = Qt.QApplication(sys.argv)
     window = MainWindow()
     window.buttons()

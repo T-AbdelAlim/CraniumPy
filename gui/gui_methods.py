@@ -73,10 +73,6 @@ class GuiMethods:
         try:
             self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=False, opacity=0.2)
             GuiMethods.three_slices(self.mesh_file, self.plotter, self.mesh_color)
-
-            ## slight longitudinal correction based on center of mass - translation applied to template
-            # CoM_correction = GuiMethods.CoM_correction(self.mesh_file, template_mesh)
-            # template_mesh.translate([0, -1*CoM_correction, 0])
             GuiMethods.three_slices(template_mesh, self.plotter, self.template_color)
 
         except AttributeError:
@@ -184,18 +180,6 @@ class GuiMethods:
         f.write(str(self.landmarks)+"\n")
         f.close()
 
-    # @staticmethod
-    # def CoM_correction(pv_cranium, template_mesh):
-    #     AX_templ = template_mesh.slice(normal=[0, 0, 1], origin=[0, 0, 0.1])
-    #     AX_slice = pv_cranium.slice(normal=[0, 0, 1], origin=[0, 0, 0.1])
-    #     AX_diff = (AX_templ.center_of_mass()[1] - AX_slice.center_of_mass()[1])# /2
-    #
-    #     SAG_templ = template_mesh.slice(normal=[0, 0, 1], origin=[0, 0, 0.1])
-    #     AX_slice = pv_cranium.slice(normal=[0, 0, 1], origin=[0, 0, 0.1])
-    #     AX_diff = (AX_templ.center_of_mass()[1] - AX_slice.center_of_mass()[1])# /2
-    #
-    #     return AX_diff
-
 
     def cranial_cut(self, initial_clip = False):
         if initial_clip == True:
@@ -213,25 +197,19 @@ class GuiMethods:
         if str(self.file_path.stem).endswith('_C'):
             pass
         else:
-            self.file_path = self.file_path.with_name(self.file_path.stem + '_C.ply') #+ self.extension for source extension
-        #self.mesh_file.save(self.file_path)
+            self.file_path = self.file_path.with_name(self.file_path.stem + '_C.ply')
         write_ply_file(self.mesh_file, self.file_path)
 
 
         GuiMethods.repairsample(self.file_path, n_vertices=20000, repair=True)
 
         self.mesh_file = pv.read(self.file_path)
-        #self.mesh_file.clip('z', origin=[0, 0, clip], invert=False)#.save(self.file_path)
         write_ply_file(self.mesh_file.clip('z', origin=[0, 0, clip], invert=False), self.file_path)
         GuiMethods.repairsample(self.file_path, n_vertices=10000, repair=False)
         self.mesh_file = pv.read(self.file_path)
-        # CoM_correction = GuiMethods.CoM_correction(self.mesh_file)
-
         self.plotter.clear()
 
         self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=True)
-        # self.mesh_file.translate([0, CoM_correction, 0])
-        #self.mesh_file.save(self.file_path)
         write_ply_file(self.mesh_file, self.file_path)
 
 
@@ -255,16 +233,6 @@ class GuiMethods:
         except:
             pass
 
-
-    # # Dev tab
-    # def show_z_slices(self):
-    #     CranioMetrics(self.file_path).show_slices(self.plotter, axis='z')
-    #
-    # def show_x_slices(self):
-    #     CranioMetrics(self.file_path).show_slices(self.plotter, axis='x')
-    #
-    # def show_y_slices(self):
-    #     CranioMetrics(self.file_path).show_slices(self.plotter, axis='y')
 
 
 
