@@ -83,8 +83,6 @@ class CranioMetrics:
                 'z': int(mb[4]),
             }, ignore_index=True)
 
-        ############################
-
         # index and z-height at which max depth is found
         self.slice_index = np.where(self.slice_df['depth']
                                     == self.slice_df.depth.max())[0][0]
