@@ -55,7 +55,7 @@ pip install -r requirements.txt
 
 5. Run tool:
 ```
-Python main.py
+python main.py
 ```
 
 ## CraniumPy executebale
