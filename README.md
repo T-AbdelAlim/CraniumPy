@@ -65,7 +65,7 @@ pyinstaller main.py --hidden-import vtkmodules --hidden-import vtkmodules.all --
 
 ## Citation
 If you use CraniumPy, please cite:
-...
+Abdel-Alim, T. (2021). CraniumPy [Computer software]. https://doi.org/10.xxxx/zenodo.xxxx
 
 ## Author
 Tareq Abdel-Alim (Department of Neurosurgery and Radiology, Erasmus MC, Rotterdam, the Netherlands)
