@@ -168,8 +168,6 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         viewMenu.addAction(ssButton)
 
 
-
-
 if __name__ == '__main__':
     print('Running CraniumPy')
     root = Tk()
@@ -179,3 +177,4 @@ if __name__ == '__main__':
     window.buttons()
     window.show()
     sys.exit(app.exec_())
+

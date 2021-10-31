@@ -24,6 +24,7 @@ class GuiMethods:
     # File tab
     def import_mesh(self, resample=False):
         self.plotter.clear()  # clears mesh space every time a new mesh is added
+
         self.file_path = Path(askopenfilename(title="Select file to open",
                                          filetypes=(("Mesh files", ("*.ply","*.obj", "*.stl")),
                                                     ("all files", "*.*"))))
@@ -149,9 +150,11 @@ class GuiMethods:
             self.mesh_file.rotate_x(metrics.x_rotation)
 
         if str(self.file_path).endswith('_rg'+ self.extension) or str(self.file_path).endswith('_C'+ self.extension):
-            self.mesh_file.save(str(self.file_path).replace(self.extension, ".ply"))
+            #self.mesh_file.save(str(self.file_path).replace(self.extension, ".ply"))
+            write_ply_file(self.mesh_file, str(self.file_path).replace(self.extension, ".ply"))
         else:
-            self.mesh_file.save(self.file_path.with_name(self.file_path.stem+'_rg.ply'))
+            #self.mesh_file.save(self.file_path.with_name(self.file_path.stem+'_rg.ply'))
+            write_ply_file(self.mesh_file, self.file_path.with_name(self.file_path.stem+'_rg.ply'))
             self.file_path = self.file_path.with_name(self.file_path.stem+'_rg.ply')
 
         # # replace old with new registered mesh
@@ -211,12 +214,15 @@ class GuiMethods:
             pass
         else:
             self.file_path = self.file_path.with_name(self.file_path.stem + '_C.ply') #+ self.extension for source extension
-        self.mesh_file.save(self.file_path)
+        #self.mesh_file.save(self.file_path)
+        write_ply_file(self.mesh_file, self.file_path)
+
 
         GuiMethods.repairsample(self.file_path, n_vertices=20000, repair=True)
 
         self.mesh_file = pv.read(self.file_path)
-        self.mesh_file.clip('z', origin=[0, 0, clip], invert=False).save(self.file_path)
+        #self.mesh_file.clip('z', origin=[0, 0, clip], invert=False)#.save(self.file_path)
+        write_ply_file(self.mesh_file.clip('z', origin=[0, 0, clip], invert=False), self.file_path)
         GuiMethods.repairsample(self.file_path, n_vertices=10000, repair=False)
         self.mesh_file = pv.read(self.file_path)
         # CoM_correction = GuiMethods.CoM_correction(self.mesh_file)
@@ -225,7 +231,8 @@ class GuiMethods:
 
         self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=True)
         # self.mesh_file.translate([0, CoM_correction, 0])
-        self.mesh_file.save(self.file_path)
+        #self.mesh_file.save(self.file_path)
+        write_ply_file(self.mesh_file, self.file_path)
 
 
     # Craniometrics tab
@@ -258,6 +265,8 @@ class GuiMethods:
     #
     # def show_y_slices(self):
     #     CranioMetrics(self.file_path).show_slices(self.plotter, axis='y')
+
+
 
 
 
