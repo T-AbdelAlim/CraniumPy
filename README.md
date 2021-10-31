@@ -29,10 +29,13 @@ Project is created with:
 
 To run this project:
 1. Create and/or load a virtual environment (optional):
+
 ```
 conda create -n yourenvname python=3.8
 conda activate yourenvname
 ```
+If you are unfamiliar with virtual environments, check [miniconda](https://docs.conda.io/en/latest/miniconda.html).
+
 2. Clone repository:
 ```
 git clone https://github.com/T-AbdelAlim/CraniumPy.git
