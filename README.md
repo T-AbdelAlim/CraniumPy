@@ -19,9 +19,12 @@ CraniumPy is a simple tool that can be used to register 3D meshes for cranial an
 
 ## Usage
 Three anatomical landmarks  selected (Nasion, LH tragus, RH tragus) that need to be located by the user for registration. The mesh is then registered to an average normal template (https://dined3d.io.tudelft.nl/en/mannequin/tool). 
+
 Based on a single transverse slice (at maximum head depth), cephalometric measurements are automatically extracted and plotted on the 3D model. 
 
 Check the [step-by-step guide](/resources/documentation.pdf) to get started.
+
+The example mesh ```resources/test_mesh/test_mesh.ply``` can be used to explore the functionality of this tool. 
 
 ## Installation
 Project is created with:
