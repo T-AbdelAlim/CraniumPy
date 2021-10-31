@@ -13,11 +13,11 @@
 [![DOI](https://zenodo.org/badge/418914708.svg)](https://zenodo.org/badge/latestdoi/418914708)
 
 CraniumPy is a simple tool that can be used to register 3D meshes for cranial analysis using three landmarks. In its current state, a raw 3D mesh (.ply, .obj, .stl) can be imported and visualized. After registration, cephalometric measurements can be automatically extracted. These measurements include:
-- head depth
-- head breadth
-- cephalic index
-- head circumference
-- intracranial volume approximation
+- occipotofrontal diameter (OFC) / head depth
+- biparietal diameter (BPD) / head breadth
+- cephalic index (CI) 
+- head circumference (HC) 
+- mesh volume (can be used for intracranial volume approximation) 
 
 ![Reconstruction](resources/CraniumPy_info.png)
 
