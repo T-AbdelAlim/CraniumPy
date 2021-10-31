@@ -1,6 +1,5 @@
 """
 Created on Mon Aug 2, 2021
-@author: TAbdelAlim
 """
 
 def write_ply_file(mesh, savepath):
