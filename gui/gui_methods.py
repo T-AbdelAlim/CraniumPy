@@ -70,6 +70,7 @@ class GuiMethods:
         self.plotter.clear()
         template_mesh = GuiMethods.call_template(ICV_scaling=self.mesh_file.volume/2339070.75)
         self.plotter.add_mesh(template_mesh, color=self.template_color, opacity=0.2, show_edges=False)
+
         try:
             self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=False, opacity=0.2)
             GuiMethods.three_slices(self.mesh_file, self.plotter, self.mesh_color)
@@ -82,9 +83,9 @@ class GuiMethods:
 
     @staticmethod
     def three_slices(mesh_file, plotter, color='yellow'):
-        AX_slice = mesh_file.slice(normal=[0, 0, 1], origin=[0, 0, 1])
-        COR_slice = mesh_file.slice(normal=[0, 1, 0], origin=[0, 0, 1])
-        SAG_slice = mesh_file.slice(normal=[1, 0, 0], origin=[0, 0, 1])
+        AX_slice = mesh_file.slice(normal=[0, 0, 1], origin=[0, 0, 2])
+        COR_slice = mesh_file.slice(normal=[0, 1, 0], origin=[0, 0, 2])
+        SAG_slice = mesh_file.slice(normal=[1, 0, 0], origin=[0, 0, 2])
 
         plotter.add_mesh(AX_slice, color=color)
         plotter.add_points(AX_slice.center_of_mass(), color=color, point_size=20, render_points_as_spheres=True)
