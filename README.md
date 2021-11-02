@@ -26,9 +26,12 @@ Three anatomical landmarks (Nasion, LH tragus, RH tragus) need to be located by 
 
 Based on a single transverse slice (at maximum head depth), cephalometric measurements are automatically extracted and plotted on the 3D model. 
 
-Check the [step-by-step guide](/resources/documentation.pdf) to get started.
+Check the [step-by-step guide](/resources/documentation.pdf) to get started. 
 
 The example mesh ```resources/test_mesh/test_mesh.ply``` can be used to explore the functionality of this tool. 
+
+*NOTE: Step 3. (Clip, Repair, Resample) is computationally heavy (due to the resampling step) and can take a while depending on your setup. Clicking the screen may cause it to freeze.*
+
 
 ## Installation
 Project is created with:
