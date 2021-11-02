@@ -89,9 +89,10 @@ class CranioMetrics:
 
 
         # check if the ears are not in the slice (excessive breadth > 170mm)
-        # else go to next slice
-
-        while self.slice_df.breadth.iloc[self.slice_index] >= 180:
+        # else go to next slice (max 100 slice searches)
+        count_b = 0
+        while self.slice_df.breadth.iloc[self.slice_index] >= 180 and count_b <=100:
+            count_b += 1
             self.slice_index += self.slice_d
             self.slice_df.breadth.iloc[self.slice_index]
 
@@ -163,7 +164,6 @@ class CranioMetrics:
             self.slice_index = np.where(self.slice_df['z']
                                         == slice_height)[0][0]
         else:
-
             slice_height += self.slice_d
             self.extract_dimensions(slice_height)
 
