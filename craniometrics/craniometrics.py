@@ -252,7 +252,9 @@ Mesh volume. = {} cc '''.format(
                                render_points_as_spheres=True,
                                point_size=20, color='green')
             plotter.add_text('nasion: {}'.format(str(self.nose_coord)), 'upper_right', font_size=10)
+
             return self.nose_coord
+
         elif target == 'left':
             self.left_coord = plotter.picked_point
             plotter.add_points(self.left_coord,
