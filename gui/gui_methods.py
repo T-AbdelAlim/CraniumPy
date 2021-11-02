@@ -68,18 +68,24 @@ class GuiMethods:
 
     def show_registration(self):
         self.plotter.clear()
-        template_mesh = GuiMethods.call_template(ICV_scaling=self.mesh_file.volume/2339070.75)
-        self.plotter.add_mesh(template_mesh, color=self.template_color, opacity=0.2, show_edges=False)
 
         try:
+            template_mesh = GuiMethods.call_template(ICV_scaling=self.mesh_file.volume / 2339070.75)
+            self.plotter.add_mesh(template_mesh, color=self.template_color, opacity=0.2, show_edges=False)
+            GuiMethods.three_slices(template_mesh, self.plotter, self.template_color)
+
             self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=False, opacity=0.2)
             GuiMethods.three_slices(self.mesh_file, self.plotter, self.mesh_color)
-            GuiMethods.three_slices(template_mesh, self.plotter, self.template_color)
+
+            self.plotter.add_legend(labels=[['template', self.template_color], ['mesh', self.mesh_color]],
+                                    face='circle')
 
         except AttributeError:
+            template_mesh = GuiMethods.call_template()
+            self.plotter.add_mesh(template_mesh, color=self.template_color, opacity=0.2, show_edges=False)
             GuiMethods.three_slices(template_mesh, self.plotter, self.template_color)
 
-        self.plotter.add_legend(labels=[['template',self.template_color],['mesh',self.mesh_color]], face='circle')
+            self.plotter.add_legend(labels=[['template',self.template_color]], face='circle')
 
     @staticmethod
     def three_slices(mesh_file, plotter, color='yellow'):

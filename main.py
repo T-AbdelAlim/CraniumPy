@@ -66,7 +66,7 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         fileMenu.addAction(exitButton)
 
         ## REGISTRATION
-        pickMenu = regMenu.addMenu('1. Landmark selection')
+        pickMenu = regMenu.addMenu('Step 1. Landmark selection')
         # regMenu - CPD Registration button
         pickButton = Qt.QAction('Enable picking (press P)', self)
         pickButton.setShortcut('Ctrl+P')
@@ -92,17 +92,17 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         pickMenu.addAction(save_c3_Button)
 
         # regMenu - register
-        reg_Button = Qt.QAction('2. Register to template', self)
+        reg_Button = Qt.QAction('Step 2. Register to template', self)
         reg_Button.triggered.connect(lambda: self.register(self.landmarks))
         regMenu.addAction(reg_Button)
 
         # regMenu - Clip Mesh
-        FclipButton = Qt.QAction('3. Clip, Repair, Resample', self)
+        FclipButton = Qt.QAction('Step 3. Clip, Repair, Resample', self)
         FclipButton.triggered.connect(lambda: self.cranial_cut(initial_clip=False))
         regMenu.addAction(FclipButton)
 
         ## regMenu - show registration wrt cranial template
-        templButton = Qt.QAction('4. Show registration', self)
+        templButton = Qt.QAction('Step 4. Show registration', self)
         templButton.triggered.connect(self.show_registration)
         regMenu.addAction(templButton)
 
