@@ -6,7 +6,7 @@ authors:
   orcid: "https://orcid.org/0000-0003-4215-4406"
 
 title: "CraniumPy"
-version: 0.1.0
-doi: 10.5281/zenodo.5634277
-date-released: 31-10-2021
+version: v0.1.1
+doi: 10.5281/zenodo.5638624
+date-released: 02-11-2021
 url: "https://github.com/T-AbdelAlim/CraniumPy"
