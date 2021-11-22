@@ -103,17 +103,17 @@ class GuiMethods:
 
     @staticmethod
     def repairsample(file_path, n_vertices, postfix = '', repair=False, extension=".ply"):
-        pvmesh = pv.read(file_path)
+        remesh = pv.read(file_path)
 
-        if pvmesh.n_points <= 100000:
-            clus = pyacvd.Clustering(pvmesh)
+        if remesh.n_points <= 100000:
+            clus = pyacvd.Clustering(remesh)
             clus.subdivide(3)
             clus.cluster(n_vertices)
             remesh = clus.create_mesh()
 
-        elif pvmesh.n_points > 100000:
-            print('Mesh contains too many vertices ({}). Mesh is not resampled.'.format(pvmesh.n_points))
-            remesh = pvmesh # original mesh
+        elif remesh.n_points > 100000:
+            print('Mesh contains too many vertices ({}). Mesh is not resampled.'.format(remesh.n_points))
+
 
         remesh_path = file_path.with_name(file_path.stem + postfix + extension)
         write_ply_file(remesh, remesh_path)
@@ -188,7 +188,7 @@ class GuiMethods:
         f.close()
 
 
-    def cranial_cut(self, initial_clip = False):
+    def cranial_cut(self, initial_clip = False, resample = False):
         if initial_clip == True:
             clip = -20
         else:
@@ -212,7 +212,9 @@ class GuiMethods:
 
         self.mesh_file = pv.read(self.file_path)
         write_ply_file(self.mesh_file.clip('z', origin=[0, 0, clip], invert=False), self.file_path)
+
         GuiMethods.repairsample(self.file_path, n_vertices=10000, repair=False)
+
         self.mesh_file = pv.read(self.file_path)
         self.plotter.clear()
 
