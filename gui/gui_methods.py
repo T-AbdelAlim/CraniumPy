@@ -138,6 +138,7 @@ class GuiMethods:
 
     def register(self, landmarks, n_iterations = 50, CoM_translation=True):
         metrics = CoordinatePicking(self.file_path)
+
         # first iteration based on selected landmarks
         metrics.reg_to_template(landmarks)
         self.mesh_file.translate(metrics.translation)
@@ -169,7 +170,7 @@ class GuiMethods:
         self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, opacity=0.5, show_edges=True)
         self.plotter.reset_camera()
 
-        # # show registration
+        ## show registration
         GuiMethods.three_slices(self.mesh_file, self.plotter, self.mesh_color)
 
         template_mesh = pv.read(Path("./template/origin_template_ntplane.ply"))
@@ -196,7 +197,6 @@ class GuiMethods:
 
     # Translation
     def com_translation(self):
-        print(self.file_path)
         temp_metric = CranioMetrics(self.file_path)
         temp_metric.extract_dimensions(temp_metric.slice_height)
         trans_y = temp_metric.HC_s.center_of_mass()[1]
@@ -207,7 +207,7 @@ class GuiMethods:
         else:
             write_ply_file(self.mesh_file, self.file_path.with_name(self.file_path.stem+'_rg.ply'))
             self.file_path = self.file_path.with_name(self.file_path.stem+'_rg.ply')
-        print("saved")
+
 
     def cranial_cut(self, initial_clip = False, resample = False):
         if initial_clip == True:
