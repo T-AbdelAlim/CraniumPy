@@ -136,7 +136,7 @@ class GuiMethods:
         if len(self.landmarks[0]) == len(self.landmarks[1]) == len(self.landmarks[2]) == 3:
             return self.landmarks
 
-    def register(self, landmarks, n_iterations = 50):
+    def register(self, landmarks, n_iterations = 50, CoM_translation=True):
         metrics = CoordinatePicking(self.file_path)
         # first iteration based on selected landmarks
         metrics.reg_to_template(landmarks)
@@ -144,6 +144,7 @@ class GuiMethods:
         self.mesh_file.rotate_z(metrics.z_rotation)
         self.mesh_file.rotate_y(metrics.y_rotation)
         self.mesh_file.rotate_x(metrics.x_rotation)
+
 
         for i in range(n_iterations):
             metrics.reg_to_template(metrics.lm_surf.points)
@@ -187,6 +188,26 @@ class GuiMethods:
         f.write(str(self.landmarks)+"\n")
         f.close()
 
+        if CoM_translation == True:
+            # if False: the centroid of the 3 landmarks is used as the origin in the frame of reference.
+            # if True: the mesh is translated along the y-axis (front-back) based on the center of mass of the HC slice
+            self.com_translation()
+
+
+    # Translation
+    def com_translation(self):
+        print(self.file_path)
+        temp_metric = CranioMetrics(self.file_path)
+        temp_metric.extract_dimensions(temp_metric.slice_height)
+        trans_y = temp_metric.HC_s.center_of_mass()[1]
+        self.mesh_file.translate([0, -trans_y, 0])
+
+        if str(self.file_path).endswith('_rg'+ self.extension) or str(self.file_path).endswith('_C'+ self.extension):
+            write_ply_file(self.mesh_file, str(self.file_path).replace(self.extension, ".ply"))
+        else:
+            write_ply_file(self.mesh_file, self.file_path.with_name(self.file_path.stem+'_rg.ply'))
+            self.file_path = self.file_path.with_name(self.file_path.stem+'_rg.ply')
+        print("saved")
 
     def cranial_cut(self, initial_clip = False, resample = False):
         if initial_clip == True:

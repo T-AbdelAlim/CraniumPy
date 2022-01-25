@@ -4,7 +4,7 @@ Created on Mon Aug 2, 2021
 """
 
 import sys
-from PyQt5 import Qt
+from PyQt5 import Qt, QtCore
 from tkinter import Tk
 from pyvistaqt import QtInteractor
 from gui.gui_methods import GuiMethods
@@ -93,7 +93,7 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
 
         # regMenu - register
         reg_Button = Qt.QAction('Step 2. Register to template', self)
-        reg_Button.triggered.connect(lambda: self.register(self.landmarks))
+        reg_Button.triggered.connect(lambda: self.register(self.landmarks, CoM_translation=True))
         regMenu.addAction(reg_Button)
 
         # regMenu - Clip Mesh
@@ -105,7 +105,6 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         templButton = Qt.QAction('Step 4. Show registration', self)
         templButton.triggered.connect(self.show_registration)
         regMenu.addAction(templButton)
-
 
         ## CRANIOMETRICS
         # metricsMenu - extract measurements button
