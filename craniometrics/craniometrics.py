@@ -211,10 +211,10 @@ class CranioMetrics:
                            render_points_as_spheres=True,
                            point_size=20, color='red')
         plotter.add_text('''file = {}.stl
-OFC (depth) = {} mm
+OFD (depth) = {} mm
 BPD (breadth) = {} mm
 Cephalic Index = {}
-Circumference = {} cm 
+Circumference = {} cm
 Mesh volume. = {} cc '''.format(
             self.file_name,
             round(np.float64(self.depth), 2),
