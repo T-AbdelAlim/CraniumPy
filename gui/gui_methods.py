@@ -18,7 +18,7 @@ class GuiMethods:
     def __init__(self):
         self.mesh_color = 'ivory'
         self.template_color = 'saddlebrown'
-        self.template_path = Path('./template/clipped_template_ntplane.ply')
+        self.template_path = Path('./template/clipped_template_ntplane_com.ply')
 
 
     # File tab
@@ -61,7 +61,7 @@ class GuiMethods:
 
     @staticmethod
     def call_template(ICV_scaling=1):
-        template_path = Path('./template/clipped_template_ntplane.ply')
+        template_path = Path('./template/clipped_template_ntplane_com.ply')
         template_mesh = pv.read(template_path)
         template_mesh.points *= ICV_scaling ** (1 / 3) # template_volume = 2339070.752133594
         return template_mesh
@@ -162,6 +162,12 @@ class GuiMethods:
             write_ply_file(self.mesh_file, self.file_path.with_name(self.file_path.stem+'_rg.ply'))
             self.file_path = self.file_path.with_name(self.file_path.stem+'_rg.ply')
 
+
+        if CoM_translation == True:
+            # if False: the centroid of the 3 landmarks is used as the origin in the frame of reference.
+            # if True: the mesh is translated along the y-axis (front-back) based on the center of mass of the HC slice
+            self.com_translation()
+
         # # replace old with new registered mesh
         self.plotter.clear()  # clears mesh space every time a new mesh is added
         self.file_name = Path(self.file_path).stem
@@ -173,13 +179,13 @@ class GuiMethods:
         ## show registration
         GuiMethods.three_slices(self.mesh_file, self.plotter, self.mesh_color)
 
-        template_mesh = pv.read(Path("./template/origin_template_ntplane.ply"))
+        template_mesh = pv.read(Path("./template/origin_template_ntplane_com.ply"))
         self.plotter.add_mesh(template_mesh, color=self.template_color, opacity=0.1)
         GuiMethods.three_slices(template_mesh, self.plotter, self.template_color)
         self.plotter.add_legend(labels=[['template', self.template_color], ['mesh', self.mesh_color]], face='circle')
 
         # # write initial landmarks to text
-        txtpath = str(self.file_path.parent.joinpath('landmarks.txt'))
+        txtpath = str(self.file_path.parent.joinpath(self.file_name+'_landmarks.txt'))
         if os.path.exists(txtpath):
             mode = "a"
         else:
@@ -189,15 +195,12 @@ class GuiMethods:
         f.write(str(self.landmarks)+"\n")
         f.close()
 
-        if CoM_translation == True:
-            # if False: the centroid of the 3 landmarks is used as the origin in the frame of reference.
-            # if True: the mesh is translated along the y-axis (front-back) based on the center of mass of the HC slice
-            self.com_translation()
+
 
 
     # Translation
     def com_translation(self):
-        temp_metric = CranioMetrics(self.file_path)
+        temp_metric = CranioMetrics(self.file_path) # temporary metric of the mesh
         temp_metric.extract_dimensions(temp_metric.slice_height)
         trans_y = temp_metric.HC_s.center_of_mass()[1]
         self.mesh_file.translate([0, -trans_y, 0])
@@ -208,6 +211,7 @@ class GuiMethods:
             write_ply_file(self.mesh_file, self.file_path.with_name(self.file_path.stem+'_rg.ply'))
             self.file_path = self.file_path.with_name(self.file_path.stem+'_rg.ply')
 
+        print(trans_y)
 
     def cranial_cut(self, initial_clip = False, resample = False):
         if initial_clip == True:
