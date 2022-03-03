@@ -82,6 +82,13 @@ pyinstaller CraniumPy.py --hidden-import vtkmodules --hidden-import vtkmodules.a
 
 3. Move the executable file (CraniumPy.exe) from ```CraniumPy/dist/CraniumPy.exe``` to the main directory ```CraniumPy/CraniumPy.exe``` and run CraniumPy.exe from here to ensure proper callbacks to templates.
 
+## Known issues
+
+- CraniumPy closes if less than 3 landmarks are selected before registration. Steps need to be follow carefully as described in the step-by-step guide
+- Registration step 3. (Clip, Repair, Resample) takes a few seconds and freezes the user interface until all the calculations are performed, which may create the suspicion that the programme crashed ("windows not responding"). This is not the case. The user interface will unfreeze after the calculations are completed and will return the final mesh.
+
+
+
 ## Citation
 If you use this software, I would appreciate if you cite:
 
