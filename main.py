@@ -115,7 +115,7 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
 
         # metricsMenu - extract slice only
         sliceextractButton = Qt.QAction('Show 2D slice', self)
-        sliceextractButton.triggered.connect(lambda:self.craniometrics(slice_only=True))
+        sliceextractButton.triggered.connect(lambda: self.craniometrics(slice_only=True))
         metricsMenu.addAction(sliceextractButton)
 
         # metricsMenu - extract mesh button
