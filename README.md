@@ -32,6 +32,10 @@ The example mesh ```resources/test_mesh/test_mesh.ply``` can be used to explore 
 
 *NOTE: Step 3. (Clip, Repair, Resample) is computationally heavy (due to the resampling step) and can take a while depending on your setup. Clicking the screen may cause it to freeze.*
 
+## CraniumPy executebale (Windows)
+If you want to run this tool locally (on Windows) from an executable file (.exe):
+
+Simply run the executable file (CraniumPy.exe) to start the program (takes a few seconds to start). You do not need to install any requirements or dependencies. 
 
 ## Installation
 Project is created with:
@@ -58,27 +62,28 @@ pip install -r requirements.txt
 
 5. Run tool:
 ```
-python main.py
+python CraniumPy.py
 ```
 
-## CraniumPy executebale
-If you want to run this tool locally (on Windows) from an executable file (.exe):
+
+
+## Building the executebale using pyinstaller
+If you are interested in building the executble yourself after you made some changes the code, follow these steps:
 
 1. Install pyinstaller:
 ```
-pip install pyinstaller
+pip install pyinstaller==4.5.1
 ```
 
 2. From the CraniumPy main directory run:
 ```
-pyinstaller main.py --hidden-import vtkmodules --hidden-import vtkmodules.all --hidden-import vtkmodules.util.numpy_support --hidden-import vtkmodules.numpy_interface --hidden-import vtkmodules.numpy_interface.dataset_adapter --hidden-import vtkmodules.qt --hidden-import vttmodules.util --hidden-import vttmodules.vtkCommonCore --hidden-import vttmodules.vtkCommonKitPython --hidden-import vtkmodules.qt.QVTKRenderWindowInteractor  --onefile --clean
+pyinstaller CraniumPy.py --hidden-import vtkmodules --hidden-import vtkmodules.all --hidden-import vtkmodules.util.numpy_support --hidden-import vtkmodules.numpy_interface --hidden-import vtkmodules.numpy_interface.dataset_adapter --hidden-import vtkmodules.qt --hidden-import vttmodules.util --hidden-import vttmodules.vtkCommonCore --hidden-import vttmodules.vtkCommonKitPython --hidden-import vtkmodules.qt.QVTKRenderWindowInteractor  --onefile --icon=resources/CraniumPy_logo.ico --clean
 ```
 
-3. Move the executable file (main.exe) from ```CraniumPy/dist/main.exe``` to the main directory ```CraniumPy/main.exe``` and run main.exe from here (takes a few seconds to start)
-
+3. Move the executable file (CraniumPy.exe) from ```CraniumPy/dist/CraniumPy.exe``` to the main directory ```CraniumPy/CraniumPy.exe``` and run CraniumPy.exe from here to ensure proper callbacks to templates.
 
 ## Citation
-If you use CraniumPy, please cite:
+If you use this software, I would appreciate if you cite:
 
 ```
 Abdel-Alim, T. (2021). CraniumPy [Computer software]. https://doi.org/10.5281/zenodo.5903377
