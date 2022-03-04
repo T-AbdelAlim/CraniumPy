@@ -3,7 +3,7 @@
 
   * [Description](#description)
   * [Usage](#usage)
-  * [CraniumPy executebale](#craniumpy-executebale)
+  * [CraniumPy executable](#craniumpy-executable)
   * [Installation](#installation)
   * [Citation](#citation)
   * [Author](#author)
@@ -32,10 +32,12 @@ The example mesh ```resources/test_mesh/test_mesh.ply``` can be used to explore 
 
 *NOTE: Step 3. (Clip, Repair, Resample) is computationally heavy (due to the resampling step) and can take a while depending on your setup. Clicking the screen may cause it to freeze.*
 
-## CraniumPy executebale
-If you want to run this tool locally (on Windows) from an executable file (.exe):
+## CraniumPy executable
+If you want to simply run this tool locally (on Windows) from an executable file (.exe), download the folder _CraniumPy v0.2.1_ from the following link:
+[CraniumPy (v0.2.1) Download](https://drive.google.com/drive/folders/1IEGc9CSUtmwWYe6YLG0aSDek_XD9aJEV?usp=sharing).
 
 Simply run the executable file (CraniumPy.exe) to start the program (takes a few seconds to start). You do not need to install any requirements or dependencies. 
+The folder contains the templates (for visualizing the registration), step-by-step documentation, and a test_mesh (arbitrary orientation and some artifacts) to experiment with.
 
 ## Installation
 Project is created with:
