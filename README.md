@@ -96,6 +96,8 @@ If you use this software, I would appreciate if you cite:
 Abdel-Alim, T. (2021). CraniumPy [Computer software]. https://doi.org/10.5281/zenodo.6327088
 ```
 
+This code makes use of some excellent features implemented in the PyVista module (https://docs.pyvista.org/). Credit should be given to the original authors: https://joss.theoj.org/papers/10.21105/joss.01450
+
 
 ## Author
 Tareq Abdel-Alim (Department of Neurosurgery and Radiology, Erasmus MC, Rotterdam, the Netherlands)
