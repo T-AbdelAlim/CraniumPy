@@ -4,9 +4,10 @@ Created on Mon Aug 2, 2021
 """
 
 from tkinter.filedialog import askopenfilename, asksaveasfilename
-import os
+import os, datetime
 import pyacvd
 import pyvista as pv
+import numpy as np
 from pymeshfix import _meshfix
 from pathlib import Path
 from craniometrics.craniometrics import CranioMetrics
@@ -105,13 +106,13 @@ class GuiMethods:
     def repairsample(file_path, n_vertices, postfix = '', repair=False, extension=".ply"):
         remesh = pv.read(file_path)
 
-        if remesh.n_points <= 100000:
+        if remesh.n_points <= 150000:
             clus = pyacvd.Clustering(remesh)
             clus.subdivide(3)
             clus.cluster(n_vertices)
             remesh = clus.create_mesh()
 
-        elif remesh.n_points > 100000:
+        elif remesh.n_points > 150000:
             print('Mesh contains too many vertices ({}). Mesh is not resampled.'.format(remesh.n_points))
 
 
@@ -157,6 +158,8 @@ class GuiMethods:
         if str(self.file_path).endswith('_rg'+ self.extension) or str(self.file_path).endswith('_C'+ self.extension):
             #self.mesh_file.save(str(self.file_path).replace(self.extension, ".ply"))
             write_ply_file(self.mesh_file, str(self.file_path).replace(self.extension, ".ply"))
+        elif str(self.file_path).endswith('_rg.ply') or str(self.file_path).endswith('_C.ply'):
+            write_ply_file(self.mesh_file, str(self.file_path))
         else:
             #self.mesh_file.save(self.file_path.with_name(self.file_path.stem+'_rg.ply'))
             write_ply_file(self.mesh_file, self.file_path.with_name(self.file_path.stem+'_rg.ply'))
@@ -172,6 +175,7 @@ class GuiMethods:
         self.plotter.clear()  # clears mesh space every time a new mesh is added
         self.file_name = Path(self.file_path).stem
         self.mesh_file = pv.read(self.file_path)
+        self.newpos_landmarks = metrics.lm_surf.points
 
         self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, opacity=0.5, show_edges=True)
         self.plotter.reset_camera()
@@ -184,6 +188,7 @@ class GuiMethods:
         GuiMethods.three_slices(template_mesh, self.plotter, self.template_color)
         self.plotter.add_legend(labels=[['template', self.template_color], ['mesh', self.mesh_color]], face='circle')
 
+
         # # write initial landmarks to text
         txtpath = str(self.file_path.parent.joinpath(self.file_name+'_landmarks.txt'))
         if os.path.exists(txtpath):
@@ -192,10 +197,13 @@ class GuiMethods:
             mode = "w+"
 
         f = open(txtpath, mode)
+        f.write("\n"+"\n" + 'Registration ' + str(datetime.datetime.now()) + "\n")
+        f.write('Initial position landmarks:' + "\n")
         f.write(str(self.landmarks)+"\n")
+        f.write('Finial position landmarks:' + "\n")
+        new_lndmks = str([np.array(self.newpos_landmarks[0]), np.array(self.newpos_landmarks[1]), np.array(self.newpos_landmarks[2])])
+        f.write(str(new_lndmks))
         f.close()
-
-
 
 
     # Translation
@@ -207,6 +215,8 @@ class GuiMethods:
 
         if str(self.file_path).endswith('_rg'+ self.extension) or str(self.file_path).endswith('_C'+ self.extension):
             write_ply_file(self.mesh_file, str(self.file_path).replace(self.extension, ".ply"))
+        elif str(self.file_path).endswith('_rg.ply') or str(self.file_path).endswith('_C.ply'):
+            write_ply_file(self.mesh_file, str(self.file_path))
         else:
             write_ply_file(self.mesh_file, self.file_path.with_name(self.file_path.stem+'_rg.ply'))
             self.file_path = self.file_path.with_name(self.file_path.stem+'_rg.ply')
