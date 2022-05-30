@@ -34,7 +34,7 @@ The example mesh ```resources/test_mesh/test_mesh.ply``` can be used to explore 
 
 ## CraniumPy executable
 If you want to simply run this tool locally (on Windows) from an executable file (.exe), download the folder _CraniumPy v0.2.1_ from the following link:
-[CraniumPy (v0.2.1) Download](https://drive.google.com/drive/folders/1IEGc9CSUtmwWYe6YLG0aSDek_XD9aJEV?usp=sharing).
+[CraniumPy (v0.2.2) Download](https://drive.google.com/drive/folders/1IEGc9CSUtmwWYe6YLG0aSDek_XD9aJEV?usp=sharing).
 
 Simply run the executable file (CraniumPy.exe) to start the program (takes a few seconds to start). You do not need to install any requirements or dependencies. 
 The folder contains the templates (for visualizing the registration), step-by-step documentation, and a test_mesh (arbitrary orientation and some artifacts) to experiment with.
