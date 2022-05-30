@@ -33,7 +33,7 @@ The example mesh ```resources/test_mesh/test_mesh.ply``` can be used to explore 
 *NOTE: Step 3. (Clip, Repair, Resample) is computationally heavy (due to the resampling step) and can take a while depending on your setup. Clicking the screen may cause it to freeze.*
 
 ## CraniumPy executable
-If you want to simply run this tool locally (on Windows) from an executable file (.exe), download the folder _CraniumPy v0.2.1_ from the following link:
+If you want to simply run this tool locally (on Windows) from an executable file (.exe), download the folder _CraniumPy v0.2.2_ from the following link:
 [CraniumPy (v0.2.2) Download](https://drive.google.com/drive/folders/1IEGc9CSUtmwWYe6YLG0aSDek_XD9aJEV?usp=sharing).
 
 Simply run the executable file (CraniumPy.exe) to start the program (takes a few seconds to start). You do not need to install any requirements or dependencies. 
