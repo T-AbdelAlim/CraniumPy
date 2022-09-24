@@ -84,7 +84,7 @@ pyinstaller CraniumPy.py --hidden-import vtkmodules --hidden-import vtkmodules.a
 
 ## Known issues
 
-- CraniumPy closes if less than 3 landmarks are selected before registration. Steps need to be follow carefully as described in the step-by-step guide
+- CraniumPy closes if less than 3 landmarks are selected before registration. Steps need to be followed carefully as described in the step-by-step guide
 - Registration step 3. (Clip, Repair, Resample) takes a few seconds and freezes the user interface until all the calculations are performed, which may create the suspicion that the programme crashed ("windows not responding"). This is not the case. The user interface will unfreeze after the calculations are completed and will return the final mesh.
 
 
