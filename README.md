@@ -96,7 +96,8 @@ If you use this software, I would appreciate if you cite:
 Abdel-Alim, T. (2021). CraniumPy [Computer software]. https://doi.org/10.5281/zenodo.6594389
 ```
 
-This code makes use of some excellent features implemented in the PyVista module (https://docs.pyvista.org/). Credit should be given to the original authors: https://joss.theoj.org/papers/10.21105/joss.01450
+This code makes use of some excellent features implemented in the PyVista module (https://docs.pyvista.org/) and PyMeshFix (https://pymeshfix.pyvista.org/).
+Credit should be given to the original authors.
 
 
 ## Author
