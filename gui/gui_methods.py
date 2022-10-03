@@ -123,6 +123,16 @@ class GuiMethods:
             _meshfix.clean_from_file(str(remesh_path), str(remesh_path))
 
 
+    # save mesh
+    def save_mesh(self):
+        if str(self.file_path).endswith('_rt.ply'):
+            write_ply_file(self.mesh_file, str(self.file_path))
+
+        else:
+            write_ply_file(self.mesh_file, str(self.file_path).replace(self.extension, "_rt.ply"))
+            self.file_path = self.file_path.with_name(self.file_path.stem+'_rt.ply')
+
+
     # Reg tab
     def coordinate_picking(self, target):
         metrics = CoordinatePicking(self.file_path)
@@ -156,12 +166,10 @@ class GuiMethods:
             self.mesh_file.rotate_x(metrics.x_rotation)
 
         if str(self.file_path).endswith('_rg'+ self.extension) or str(self.file_path).endswith('_C'+ self.extension):
-            #self.mesh_file.save(str(self.file_path).replace(self.extension, ".ply"))
             write_ply_file(self.mesh_file, str(self.file_path).replace(self.extension, ".ply"))
         elif str(self.file_path).endswith('_rg.ply') or str(self.file_path).endswith('_C.ply'):
             write_ply_file(self.mesh_file, str(self.file_path))
         else:
-            #self.mesh_file.save(self.file_path.with_name(self.file_path.stem+'_rg.ply'))
             write_ply_file(self.mesh_file, self.file_path.with_name(self.file_path.stem+'_rg.ply'))
             self.file_path = self.file_path.with_name(self.file_path.stem+'_rg.ply')
 
@@ -209,19 +217,19 @@ class GuiMethods:
     def rotate_mesh(self, axis='x'):
         if axis == 'x':
             try:
-                self.mesh_file.rotate_x(30)
+                self.mesh_file.rotate_x(10)
             except:
                 pass
 
         if axis == 'y':
             try:
-                self.mesh_file.rotate_y(30)
+                self.mesh_file.rotate_y(5)
             except:
                 pass
 
         if axis == 'z':
             try:
-                self.mesh_file.rotate_z(30)
+                self.mesh_file.rotate_z(2)
             except:
                 pass
     # Translation
