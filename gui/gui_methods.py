@@ -123,16 +123,6 @@ class GuiMethods:
             _meshfix.clean_from_file(str(remesh_path), str(remesh_path))
 
 
-    # save mesh
-    def save_mesh(self):
-        if str(self.file_path).endswith('_rt.ply'):
-            write_ply_file(self.mesh_file, str(self.file_path))
-
-        else:
-            write_ply_file(self.mesh_file, str(self.file_path).replace(self.extension, "_rt.ply"))
-            self.file_path = self.file_path.with_name(self.file_path.stem+'_rt.ply')
-
-
     # Reg tab
     def coordinate_picking(self, target):
         metrics = CoordinatePicking(self.file_path)
@@ -214,24 +204,6 @@ class GuiMethods:
         f.close()
 
 
-    def rotate_mesh(self, axis='x'):
-        if axis == 'x':
-            try:
-                self.mesh_file.rotate_x(5)
-            except:
-                pass
-
-        if axis == 'y':
-            try:
-                self.mesh_file.rotate_y(5)
-            except:
-                pass
-
-        if axis == 'z':
-            try:
-                self.mesh_file.rotate_z(5)
-            except:
-                pass
     # Translation
     def com_translation(self):
         temp_metric = CranioMetrics(self.file_path) # temporary metric of the mesh
