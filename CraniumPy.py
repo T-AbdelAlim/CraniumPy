@@ -59,6 +59,24 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         importButton.triggered.connect(self.import_mesh)
         fileMenu.addAction(importButton)
 
+        # mainMenu - Rotate mesh
+        X_rot_button = Qt.QAction('Rotate mesh X-axis (+30)', self)
+        X_rot_button.setShortcut('Ctrl+X')
+        X_rot_button.triggered.connect(lambda: self.rotate_mesh(axis='x'))
+        fileMenu.addAction(X_rot_button)
+
+        # mainMenu - Rotate mesh
+        Y_rot_button = Qt.QAction('Rotate mesh Y-axis (+30)', self)
+        Y_rot_button.setShortcut('Ctrl+Y')
+        Y_rot_button.triggered.connect(lambda: self.rotate_mesh(axis='y'))
+        fileMenu.addAction(Y_rot_button)
+
+        # mainMenu - Rotate mesh
+        Z_rot_button = Qt.QAction('Rotate mesh Z-axis (+30)', self)
+        Z_rot_button.setShortcut('Ctrl+Z')
+        Z_rot_button.triggered.connect(lambda: self.rotate_mesh(axis='z'))
+        fileMenu.addAction(Z_rot_button)
+
         # mainMenu - Exit button
         exitButton = Qt.QAction('Exit', self)
         exitButton.setShortcut('Ctrl+Q')
