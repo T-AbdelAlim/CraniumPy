@@ -50,7 +50,6 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         # Basic menubar
         mainMenu = self.menuBar()
         fileMenu = mainMenu.addMenu('File')
-        meshMenu = mainMenu.addMenu('Mesh orientation')
         regMenu = mainMenu.addMenu('Registration')
         metricsMenu = mainMenu.addMenu('Cephalometrics')
         viewMenu = mainMenu.addMenu('View')
@@ -61,29 +60,6 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         importButton.triggered.connect(self.import_mesh)
         fileMenu.addAction(importButton)
 
-        # meshMenu - Rotate mesh X
-        rotateMenu = meshMenu.addMenu('Rotate')
-        X_rot_button = Qt.QAction('Rotate mesh X-axis (+30)', self)
-        X_rot_button.setShortcut('Ctrl+X')
-        X_rot_button.triggered.connect(lambda: self.rotate_mesh(axis='x'))
-        rotateMenu.addAction(X_rot_button)
-
-        # meshMenu - Rotate mesh Y
-        Y_rot_button = Qt.QAction('Rotate mesh Y-axis (+30)', self)
-        Y_rot_button.setShortcut('Ctrl+Y')
-        Y_rot_button.triggered.connect(lambda: self.rotate_mesh(axis='y'))
-        rotateMenu.addAction(Y_rot_button)
-
-        # meshMenu - Rotate mesh Z
-        Z_rot_button = Qt.QAction('Rotate mesh Z-axis (+30)', self)
-        Z_rot_button.setShortcut('Ctrl+Z')
-        Z_rot_button.triggered.connect(lambda: self.rotate_mesh(axis='z'))
-        rotateMenu.addAction(Z_rot_button)
-
-        # meshMenu - Save orientation
-        save_button = Qt.QAction('Save mesh orientation *rt.ply', self)
-        save_button.triggered.connect(lambda: self.save_mesh())
-        meshMenu.addAction(save_button)
 
         # mainMenu - Exit button
         exitButton = Qt.QAction('Exit', self)
