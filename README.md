@@ -10,7 +10,7 @@
 
 
 ## Description
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.6327088.svg)](https://doi.org/10.5281/zenodo.6327088)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.6594389.svg)](https://doi.org/10.5281/zenodo.6594389)
 
 CraniumPy is a simple tool that can be used to register 3D meshes for cranial analysis using three landmarks. In its current state, a raw 3D mesh (.ply, .obj, .stl) can be imported and visualized. After registration, cephalometric measurements can be automatically extracted. These measurements include:
 - occipotofrontal diameter (OFC) / head depth
@@ -33,8 +33,8 @@ The example mesh ```resources/test_mesh/test_mesh.ply``` can be used to explore 
 *NOTE: Step 3. (Clip, Repair, Resample) is computationally heavy (due to the resampling step) and can take a while depending on your setup. Clicking the screen may cause it to freeze.*
 
 ## CraniumPy executable
-If you want to simply run this tool locally (on Windows) from an executable file (.exe), download the folder _CraniumPy v0.2.1_ from the following link:
-[CraniumPy (v0.2.1) Download](https://drive.google.com/drive/folders/1IEGc9CSUtmwWYe6YLG0aSDek_XD9aJEV?usp=sharing).
+If you want to simply run this tool locally (on Windows) from an executable file (.exe), download the folder _CraniumPy v0.2.2_ from the following link:
+[CraniumPy (v0.2.2) Download](https://drive.google.com/drive/folders/1IEGc9CSUtmwWYe6YLG0aSDek_XD9aJEV?usp=sharing).
 
 Simply run the executable file (CraniumPy.exe) to start the program (takes a few seconds to start). You do not need to install any requirements or dependencies. 
 The folder contains the templates (for visualizing the registration), step-by-step documentation, and a test_mesh (arbitrary orientation and some artifacts) to experiment with.
@@ -84,7 +84,7 @@ pyinstaller CraniumPy.py --hidden-import vtkmodules --hidden-import vtkmodules.a
 
 ## Known issues
 
-- CraniumPy closes if less than 3 landmarks are selected before registration. Steps need to be follow carefully as described in the step-by-step guide
+- CraniumPy closes if less than 3 landmarks are selected before registration. Steps need to be followed carefully as described in the step-by-step guide
 - Registration step 3. (Clip, Repair, Resample) takes a few seconds and freezes the user interface until all the calculations are performed, which may create the suspicion that the programme crashed ("windows not responding"). This is not the case. The user interface will unfreeze after the calculations are completed and will return the final mesh.
 
 
@@ -93,10 +93,11 @@ pyinstaller CraniumPy.py --hidden-import vtkmodules --hidden-import vtkmodules.a
 If you use this software, I would appreciate if you cite:
 
 ```
-Abdel-Alim, T. (2021). CraniumPy [Computer software]. https://doi.org/10.5281/zenodo.6327088
+Abdel-Alim, T. (2021). CraniumPy [Computer software]. https://doi.org/10.5281/zenodo.6594389
 ```
 
-This code makes use of some excellent features implemented in the PyVista module (https://docs.pyvista.org/). Credit should be given to the original authors: https://joss.theoj.org/papers/10.21105/joss.01450
+This code makes use of some excellent features implemented in the PyVista module (https://docs.pyvista.org/) and PyMeshFix (https://pymeshfix.pyvista.org/).
+Credit should be given to the original authors.
 
 
 ## Author
