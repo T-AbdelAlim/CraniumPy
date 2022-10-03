@@ -27,6 +27,7 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         # add the pyvista interactor object
         self.plotter = QtInteractor(self.frame)
         self.plotter.add_axes()
+        self.plotter.view_xz(-1)
         hlayout.addWidget(self.plotter.interactor)
 
         self.frame.setLayout(hlayout)

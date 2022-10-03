@@ -25,7 +25,7 @@ class GuiMethods:
     # File tab
     def import_mesh(self, resample=False):
         self.plotter.clear()  # clears mesh space every time a new mesh is added
-
+        self.plotter.view_xz(-1)
         self.file_path = Path(askopenfilename(title="Select file to open",
                                          filetypes=(("Mesh files", ("*.ply","*.obj", "*.stl")),
                                                     ("all files", "*.*"))))
@@ -217,7 +217,7 @@ class GuiMethods:
     def rotate_mesh(self, axis='x'):
         if axis == 'x':
             try:
-                self.mesh_file.rotate_x(10)
+                self.mesh_file.rotate_x(5)
             except:
                 pass
 
@@ -229,7 +229,7 @@ class GuiMethods:
 
         if axis == 'z':
             try:
-                self.mesh_file.rotate_z(2)
+                self.mesh_file.rotate_z(5)
             except:
                 pass
     # Translation
