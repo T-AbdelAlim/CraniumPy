@@ -206,6 +206,24 @@ class GuiMethods:
         f.close()
 
 
+    def rotate_mesh(self, axis='x'):
+        if axis == 'x':
+            try:
+                self.mesh_file.rotate_x(30)
+            except:
+                pass
+
+        if axis == 'y':
+            try:
+                self.mesh_file.rotate_y(30)
+            except:
+                pass
+
+        if axis == 'z':
+            try:
+                self.mesh_file.rotate_z(30)
+            except:
+                pass
     # Translation
     def com_translation(self):
         temp_metric = CranioMetrics(self.file_path) # temporary metric of the mesh
@@ -264,7 +282,7 @@ class GuiMethods:
 
         metrics = CranioMetrics(self.file_path)
         metrics.extract_dimensions(metrics.slice_height)
-        metrics.plot_craniometrics(self.plotter)
+        metrics.plot_craniometrics(self.plotter, n_axes=1) #n_axes = 1 -> only extracts axial slice
 
 
     # View tab

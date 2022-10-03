@@ -196,7 +196,7 @@ class CranioMetrics:
             'lh_opt': self.lh_opt,
         }, ignore_index=True)
 
-    def plot_craniometrics(self, plotter):
+    def plot_craniometrics(self, plotter, n_axes = 1):
         """
         plotting of the extracted extracted craniometrics
 
@@ -205,7 +205,13 @@ class CranioMetrics:
         the original mesh and in red: HC line and the four optima used to
         calculated the CI.
         """
-        plotter.add_mesh(self.HC_s, color='red', line_width=5)
+        plotter.add_mesh(self.HC_s, color='red', line_width=15)
+        if n_axes == 3: # visualize the 3 orthogonal axes instead of just the OFD slice
+            temp1 = self.pvmesh.slice(normal=[0, 1, 0], origin=[0, 0, 0])
+            temp2 = self.pvmesh.slice(normal=[1, 0, 0], origin=[0, 0, 0])
+            plotter.add_mesh(temp1, color='red', line_width=15)
+            plotter.add_mesh(temp2, color='red', line_width=15)
+
         plotter.add_points(np.array([self.front_opt, self.occ_opt,
                                      self.lh_opt, self.rh_opt]),
                            render_points_as_spheres=True,
