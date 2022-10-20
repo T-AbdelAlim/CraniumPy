@@ -51,7 +51,8 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         mainMenu = self.menuBar()
         fileMenu = mainMenu.addMenu('File')
         regMenu = mainMenu.addMenu('Registration')
-        metricsMenu = mainMenu.addMenu('Cephalometrics')
+        metricsMenu = mainMenu.addMenu('Cranium')
+        # trigMenu = mainMenu.addMenu('Frontal bone')
         viewMenu = mainMenu.addMenu('View')
 
         # mainMenu - Import mesh button
@@ -103,12 +104,13 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         FclipButton.triggered.connect(lambda: self.cranial_cut(initial_clip=False))
         regMenu.addAction(FclipButton)
 
-        ## regMenu - show registration wrt cranial template
-        templButton = Qt.QAction('Step 4. Show registration', self)
-        templButton.triggered.connect(self.show_registration)
-        regMenu.addAction(templButton)
 
-        ## CRANIOMETRICS
+        ## CRANIOMETRICS (cranium)
+        ## metricsMenu - show registration wrt cranial template
+        templButton = Qt.QAction('Show registration', self)
+        templButton.triggered.connect(self.show_registration)
+        metricsMenu.addAction(templButton)
+
         # metricsMenu - extract measurements button
         extractButton = Qt.QAction('Extract measurements', self)
         extractButton.setShortcut('Ctrl+E')
