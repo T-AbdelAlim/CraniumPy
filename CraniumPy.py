@@ -57,14 +57,12 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
 
         # mainMenu - Import mesh button
         importButton = Qt.QAction('Import mesh (.ply)', self)
-        importButton.setShortcut('Ctrl+I')
         importButton.triggered.connect(self.import_mesh)
         fileMenu.addAction(importButton)
 
 
         # mainMenu - Exit button
         exitButton = Qt.QAction('Exit', self)
-        exitButton.setShortcut('Ctrl+Q')
         exitButton.triggered.connect(self.close)
         fileMenu.addAction(exitButton)
 
@@ -114,7 +112,6 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         ## CRANIOMETRICS (cranium)
         # metricsMenu - extract measurements button
         extractButton = Qt.QAction('Extract measurements', self)
-        extractButton.setShortcut('Ctrl+E')
         extractButton.triggered.connect(self.craniometrics)
         metricsMenu.addAction(extractButton)
 
@@ -161,7 +158,7 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         gridMenu.addAction(sgridButton)
 
         hgridButton = Qt.QAction('Hide grid', self)
-        hgridButton.triggered.connect(lambda: self.plotter.show_grid(grid=False,  show_xaxis=False, show_yaxis=False,
+        hgridButton.triggered.connect(lambda: self.plotter.show_grid(grid=False, show_xaxis=False, show_yaxis=False,
                                                                      show_zaxis=False))
         gridMenu.addAction(hgridButton)
 
