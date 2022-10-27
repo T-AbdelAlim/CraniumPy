@@ -147,7 +147,7 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         yzButton.triggered.connect(lambda: self.plotter.view_yz())
         viewsMenu.addAction(yzButton)
 
-        resetviewButton = Qt.QAction('Reset camera', self)
+        resetviewButton = Qt.QAction('Isometric', self)
         resetviewButton.triggered.connect(lambda: self.plotter.isometric_view())
         viewsMenu.addAction(resetviewButton)
 

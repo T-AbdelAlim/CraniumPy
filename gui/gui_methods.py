@@ -43,8 +43,11 @@ class GuiMethods:
             pass
 
     def clean_mesh(self):
-        self.plotter.clear()
-        self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=True)
+        try:
+            self.plotter.clear()
+            self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=True)
+        except:
+            pass
 
 
     def mesh_edges(self, show=True, opacity=1):
@@ -125,17 +128,20 @@ class GuiMethods:
 
     # Reg tab
     def coordinate_picking(self, target):
-        metrics = CoordinatePicking(self.file_path)
-        metrics.picking(self.plotter, target)
-        if target == 'nose':
-            self.landmarks[0] = metrics.nose_coord
-        elif target == 'left':
-            self.landmarks[1] = metrics.left_coord
-        elif target == 'right':
-            self.landmarks[2] = metrics.right_coord
+        try:
+            metrics = CoordinatePicking(self.file_path)
+            metrics.picking(self.plotter, target)
+            if target == 'nose':
+                self.landmarks[0] = metrics.nose_coord
+            elif target == 'left':
+                self.landmarks[1] = metrics.left_coord
+            elif target == 'right':
+                self.landmarks[2] = metrics.right_coord
 
-        if len(self.landmarks[0]) == len(self.landmarks[1]) == len(self.landmarks[2]) == 3:
-            return self.landmarks
+            if len(self.landmarks[0]) == len(self.landmarks[1]) == len(self.landmarks[2]) == 3:
+                return self.landmarks
+        except:
+            pass
 
     def register(self, landmarks, n_iterations = 50, CoM_translation=True):
         metrics = CoordinatePicking(self.file_path)
@@ -225,49 +231,54 @@ class GuiMethods:
         print(trans_y)
 
     def cranial_cut(self, initial_clip = False, resample = False):
-        if initial_clip == True:
-            clip = -20
-        else:
-            clip = 0
+        try:
+            if initial_clip == True:
+                clip = -20
+            else:
+                clip = 0
 
-        template_mesh = GuiMethods.call_template(ICV_scaling=self.mesh_file.volume/2339070.752133594)
-        template_mesh.points *= 1.2
+            template_mesh = GuiMethods.call_template(ICV_scaling=self.mesh_file.volume/2339070.752133594)
+            template_mesh.points *= 1.2
 
-        self.mesh_file.clip_box(template_mesh.bounds, invert=False)
-        self.mesh_file.clip(normal=[0, 0.6, 1], origin=[0, -50, -60], invert=False)
-        self.mesh_file = self.mesh_file.clip('z', origin=[0, 0, -21], invert=False)
+            self.mesh_file.clip_box(template_mesh.bounds, invert=False)
+            self.mesh_file.clip(normal=[0, 0.6, 1], origin=[0, -50, -60], invert=False)
+            self.mesh_file = self.mesh_file.clip('z', origin=[0, 0, -21], invert=False)
 
-        if str(self.file_path.stem).endswith('_C'):
+            if str(self.file_path.stem).endswith('_C'):
+                pass
+            else:
+                self.file_path = self.file_path.with_name(self.file_path.stem + '_C.ply')
+            write_ply_file(self.mesh_file, self.file_path)
+
+
+            GuiMethods.repairsample(self.file_path, n_vertices=20000, repair=True)
+
+            self.mesh_file = pv.read(self.file_path)
+            # self.mesh_file = self.mesh_file.clip('y', origin=[0, 0, 0], invert=False)
+            write_ply_file(self.mesh_file.clip('z', origin=[0, 0, clip], invert=False), self.file_path)
+
+
+            GuiMethods.repairsample(self.file_path, n_vertices=10000, repair=False)
+
+            self.mesh_file = pv.read(self.file_path)
+            self.plotter.clear()
+
+            self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=True)
+            write_ply_file(self.mesh_file, self.file_path)
+        except:
             pass
-        else:
-            self.file_path = self.file_path.with_name(self.file_path.stem + '_C.ply')
-        write_ply_file(self.mesh_file, self.file_path)
-
-
-        GuiMethods.repairsample(self.file_path, n_vertices=20000, repair=True)
-
-        self.mesh_file = pv.read(self.file_path)
-        # self.mesh_file = self.mesh_file.clip('y', origin=[0, 0, 0], invert=False)
-        write_ply_file(self.mesh_file.clip('z', origin=[0, 0, clip], invert=False), self.file_path)
-
-
-        GuiMethods.repairsample(self.file_path, n_vertices=10000, repair=False)
-
-        self.mesh_file = pv.read(self.file_path)
-        self.plotter.clear()
-
-        self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=True)
-        write_ply_file(self.mesh_file, self.file_path)
-
 
     # Craniometrics tab
     def craniometrics(self, slice_only = False):
-        if slice_only==True:
-            self.plotter.clear()
+        try:
+            if slice_only==True:
+                self.plotter.clear()
 
-        metrics = CranioMetrics(self.file_path)
-        metrics.extract_dimensions(metrics.slice_height)
-        metrics.plot_craniometrics(self.plotter, n_axes=1) #n_axes = 1 -> only extracts axial slice
+            metrics = CranioMetrics(self.file_path)
+            metrics.extract_dimensions(metrics.slice_height)
+            metrics.plot_craniometrics(self.plotter, n_axes=1) #n_axes = 1 -> only extracts axial slice
+        except:
+            pass
 
 
     # View tab
