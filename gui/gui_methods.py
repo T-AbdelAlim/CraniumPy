@@ -13,6 +13,7 @@ from pathlib import Path
 from craniometrics.craniometrics import CranioMetrics
 from registration.picking import CoordinatePicking
 from registration.write_ply import write_ply_file
+import json
 
 
 class GuiMethods:
@@ -186,22 +187,25 @@ class GuiMethods:
         self.plotter.add_legend(labels=[['template', self.template_color], ['mesh', self.mesh_color]], face='circle')
 
 
-        # # write initial landmarks to text
-        txtpath = str(self.file_path.parent.joinpath(self.file_name+'_landmarks.txt'))
-        if os.path.exists(txtpath):
+        # Landmarks as json --> Read: t = pd.read_json("filename_landmarks.json", lines=True)
+        dictionary = {
+            "datetime": str(datetime.datetime.now().strftime("%Y-%m-%d/%H:%M:%S")),
+            "initial_xpos": [self.landmarks[0][0], self.landmarks[0][1],self.landmarks[0][2]],
+            "initial_ypos": [self.landmarks[1][0], self.landmarks[1][1], self.landmarks[1][2]],
+            "initial_zpos": [self.landmarks[2][0], self.landmarks[2][1], self.landmarks[2][2]],
+            "new_xpos": [self.newpos_landmarks[0][0], self.newpos_landmarks[0][1], self.newpos_landmarks[0][2]],
+            "new_ypos": [self.newpos_landmarks[1][0], self.newpos_landmarks[1][1],self.newpos_landmarks[1][2]],
+            "new_zpos": [self.newpos_landmarks[2][0], self.newpos_landmarks[2][1], self.newpos_landmarks[2][2]]
+        }
+
+        jsonpath = str(self.file_path.parent.joinpath(self.file_name + '_landmarks.json'))
+        if os.path.exists(jsonpath):
             mode = "a"
         else:
             mode = "w+"
-
-        f = open(txtpath, mode)
-        f.write("\n"+"\n" + 'Registration ' + str(datetime.datetime.now()) + "\n")
-        f.write('Initial position landmarks:' + "\n")
-        f.write(str(self.landmarks)+"\n")
-        f.write('Finial position landmarks:' + "\n")
-        new_lndmks = str([np.array(self.newpos_landmarks[0]), np.array(self.newpos_landmarks[1]), np.array(self.newpos_landmarks[2])])
-        f.write(str(new_lndmks))
-        f.close()
-
+        with open(jsonpath, mode) as outfile:
+            json.dump(dictionary, outfile)
+            outfile.write('\n')
 
     # Translation
     def com_translation(self):
