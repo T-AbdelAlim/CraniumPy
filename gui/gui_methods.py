@@ -76,17 +76,21 @@ class GuiMethods:
 
         try:
             template_mesh = GuiMethods.call_template(ICV_scaling=self.mesh_file.volume / 2339070.75)
+            template_mesh.flip_z(point=[0,0,0], transform_all_input_vectors=True)
+            template_mesh.rotate_x(angle=90, transform_all_input_vectors=True)
+
             self.plotter.add_mesh(template_mesh, color=self.template_color, opacity=0.2, show_edges=False)
-            GuiMethods.three_slices(template_mesh, self.plotter, self.template_color)
+            # GuiMethods.three_slices(template_mesh, self.plotter, self.template_color)
 
             self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=False, opacity=0.2)
-            GuiMethods.three_slices(self.mesh_file, self.plotter, self.mesh_color)
+            # GuiMethods.three_slices(self.mesh_file, self.plotter, self.mesh_color)
 
             self.plotter.add_legend(labels=[['template', self.template_color], ['mesh', self.mesh_color]],
                                     face='circle')
 
         except:
             template_mesh = GuiMethods.call_template()
+
             self.plotter.add_mesh(template_mesh, color=self.template_color, opacity=0.2, show_edges=False)
             GuiMethods.three_slices(template_mesh, self.plotter, self.template_color)
             self.plotter.add_legend(labels=[['template',self.template_color]], face='circle')
@@ -149,17 +153,21 @@ class GuiMethods:
         # first iteration based on selected landmarks
         metrics.reg_to_template(landmarks)
         self.mesh_file.translate(metrics.translation)
-        self.mesh_file.rotate_z(metrics.z_rotation)
-        self.mesh_file.rotate_y(metrics.y_rotation)
-        self.mesh_file.rotate_x(metrics.x_rotation)
+        self.mesh_file.rotate_z(metrics.z_rotation, transform_all_input_vectors=True)
+        self.mesh_file.rotate_y(metrics.y_rotation, transform_all_input_vectors=True)
+        self.mesh_file.rotate_x(metrics.x_rotation, transform_all_input_vectors=True)
 
 
         for i in range(n_iterations):
             metrics.reg_to_template(metrics.lm_surf.points)
             self.mesh_file.translate(metrics.translation)
-            self.mesh_file.rotate_z(metrics.z_rotation)
-            self.mesh_file.rotate_y(metrics.y_rotation)
-            self.mesh_file.rotate_x(metrics.x_rotation)
+            self.mesh_file.rotate_z(metrics.z_rotation, transform_all_input_vectors=True)
+            self.mesh_file.rotate_y(metrics.y_rotation, transform_all_input_vectors=True)
+            self.mesh_file.rotate_x(metrics.x_rotation, transform_all_input_vectors=True)
+
+        self.mesh_file.rotate_x(angle=90, transform_all_input_vectors=True)
+        self.mesh_file.flip_y(point=[0,0,0], transform_all_input_vectors=True)
+
 
         if str(self.file_path).endswith('_rg'+ self.extension) or str(self.file_path).endswith('_C'+ self.extension):
             write_ply_file(self.mesh_file, str(self.file_path).replace(self.extension, ".ply"))
@@ -194,6 +202,7 @@ class GuiMethods:
 
 
         # Landmarks as json --> Read: t = pd.read_json("filename_landmarks.json", lines=True)
+        ## xpos == nasion coordinates, ypos == left tragus coordinates, z_pos == right tragus coordinates
         dictionary = {
             "datetime": str(datetime.datetime.now().strftime("%Y-%m-%d/%H:%M:%S")),
             "initial_xpos": [self.landmarks[0][0], self.landmarks[0][1],self.landmarks[0][2]],
@@ -217,8 +226,11 @@ class GuiMethods:
     def com_translation(self):
         temp_metric = CranioMetrics(self.file_path) # temporary metric of the mesh
         temp_metric.extract_dimensions(temp_metric.slice_height)
-        trans_y = temp_metric.HC_s.center_of_mass()[1]
-        self.mesh_file.translate([0, -trans_y, 0])
+        # trans_y = temp_metric.HC_s.center_of_mass()[1]
+        # self.mesh_file.translate([0, -trans_y, 0])
+
+        trans_z = temp_metric.HC_s.center_of_mass()[1]
+        self.mesh_file.translate([0, 0, -trans_z])
 
         if str(self.file_path).endswith('_rg'+ self.extension) or str(self.file_path).endswith('_C'+ self.extension):
             write_ply_file(self.mesh_file, str(self.file_path).replace(self.extension, ".ply"))
@@ -228,7 +240,6 @@ class GuiMethods:
             write_ply_file(self.mesh_file, self.file_path.with_name(self.file_path.stem+'_rg.ply'))
             self.file_path = self.file_path.with_name(self.file_path.stem+'_rg.ply')
 
-        print(trans_y)
 
     def cranial_cut(self, initial_clip = False, resample = False):
         try:
@@ -241,8 +252,10 @@ class GuiMethods:
             template_mesh.points *= 1.2
 
             self.mesh_file.clip_box(template_mesh.bounds, invert=False)
-            self.mesh_file.clip(normal=[0, 0.6, 1], origin=[0, -50, -60], invert=False)
-            self.mesh_file = self.mesh_file.clip('z', origin=[0, 0, -21], invert=False)
+            # self.mesh_file.clip(normal=[0, 0.6, 1], origin=[0, -50, -60], invert=False)
+            # self.mesh_file = self.mesh_file.clip('z', origin=[0, 0, -21], invert=False)
+            self.mesh_file.clip(normal=[0, 0.6, 1], origin=[0, -60, -50], invert=False)
+            self.mesh_file = self.mesh_file.clip('y', origin=[0,-21, 0], invert=False)
 
             if str(self.file_path.stem).endswith('_C'):
                 pass
@@ -254,9 +267,9 @@ class GuiMethods:
             GuiMethods.repairsample(self.file_path, n_vertices=20000, repair=True)
 
             self.mesh_file = pv.read(self.file_path)
-            # self.mesh_file = self.mesh_file.clip('y', origin=[0, 0, 0], invert=False)
-            write_ply_file(self.mesh_file.clip('z', origin=[0, 0, clip], invert=False), self.file_path)
 
+            # write_ply_file(self.mesh_file.clip('z', origin=[0, 0, clip], invert=False), self.file_path)
+            write_ply_file(self.mesh_file.clip('y', origin=[0, clip, 0], invert=False), self.file_path)
 
             GuiMethods.repairsample(self.file_path, n_vertices=10000, repair=False)
 
