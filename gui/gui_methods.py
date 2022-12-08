@@ -26,7 +26,7 @@ class GuiMethods:
     # File tab
     def import_mesh(self, resample=False):
         self.plotter.clear()  # clears mesh space every time a new mesh is added
-        self.plotter.view_xz(-1)
+        self.plotter.view_xy()
         self.file_path = Path(askopenfilename(title="Select file to open",
                                          filetypes=(("Mesh files", ("*.ply","*.obj", "*.stl")),
                                                     ("all files", "*.*"))))
@@ -66,7 +66,7 @@ class GuiMethods:
 
     @staticmethod
     def call_template(ICV_scaling=1):
-        template_path = Path('./template/clipped_template_ntplane_com.ply')
+        template_path = Path('./template/clipped_template_xy.ply') #'./template/clipped_template_ntplane_com.ply'
         template_mesh = pv.read(template_path)
         template_mesh.points *= ICV_scaling ** (1 / 3) # template_volume = 2339070.752133594
         return template_mesh
@@ -76,8 +76,8 @@ class GuiMethods:
 
         try:
             template_mesh = GuiMethods.call_template(ICV_scaling=self.mesh_file.volume / 2339070.75)
-            template_mesh.flip_z(point=[0,0,0], transform_all_input_vectors=True)
-            template_mesh.rotate_x(angle=90, transform_all_input_vectors=True)
+            # template_mesh.rotate_x(angle=90, transform_all_input_vectors=True)
+            # template_mesh.flip_y(point=[0,0,0], transform_all_input_vectors=True)
 
             self.plotter.add_mesh(template_mesh, color=self.template_color, opacity=0.2, show_edges=False)
             # GuiMethods.three_slices(template_mesh, self.plotter, self.template_color)
@@ -195,7 +195,10 @@ class GuiMethods:
         ## show registration
         GuiMethods.three_slices(self.mesh_file, self.plotter, self.mesh_color)
 
-        template_mesh = pv.read(Path("./template/origin_template_ntplane_com.ply"))
+        template_mesh = pv.read(Path("./template/template_xy.ply"))
+        # template_mesh.rotate_x(angle=90, transform_all_input_vectors=True)
+        # template_mesh.flip_y(point=[0,0,0], transform_all_input_vectors=True)
+
         self.plotter.add_mesh(template_mesh, color=self.template_color, opacity=0.1)
         GuiMethods.three_slices(template_mesh, self.plotter, self.template_color)
         self.plotter.add_legend(labels=[['template', self.template_color], ['mesh', self.mesh_color]], face='circle')
@@ -230,7 +233,8 @@ class GuiMethods:
         # self.mesh_file.translate([0, -trans_y, 0])
 
         trans_z = temp_metric.HC_s.center_of_mass()[1]
-        self.mesh_file.translate([0, 0, -trans_z])
+        print(trans_z)
+        # self.mesh_file.translate([0, 0, -trans_z])
 
         if str(self.file_path).endswith('_rg'+ self.extension) or str(self.file_path).endswith('_C'+ self.extension):
             write_ply_file(self.mesh_file, str(self.file_path).replace(self.extension, ".ply"))
