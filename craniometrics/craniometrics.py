@@ -143,12 +143,11 @@ class CranioMetrics:
             return dist
 
         HC_slice = self.pvmesh.slice(normal=[0, 1, 0], origin=[0, slice_height, 0])
-        # HC_slice = self.pvmesh.slice(normal=[0, 0, 1], origin=[0, 0,
-        #                                                        slice_height])
+
         HCP = HC_slice.points
         polar = []
         for i in range(len(HCP)):
-            polar.append(cart2pol(HCP[i][0], HCP[i][1]))
+            polar.append(cart2pol(HCP[i][0], HCP[i][2]))
 
         self.polar_df = pd.DataFrame(polar, columns=['rho', 'phi'
                                                      ]).sort_values('phi').reset_index(drop=True)
@@ -160,13 +159,13 @@ class CranioMetrics:
 
             HC_estimate = HC_estimate + dist_polar(p.rho, p.phi,
                                                    n_p.rho, n_p.phi)
+
             self.HC = np.round(HC_estimate / 10, 1)
 
         if self.HC <= 60:
             self.slice_index = np.where(self.slice_df['y']
                                         == slice_height)[0][0]
-            # self.slice_index = np.where(self.slice_df['z']
-            #                             == slice_height)[0][0]
+
         else:
             slice_height += self.slice_d
             self.extract_dimensions(slice_height)
