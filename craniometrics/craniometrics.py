@@ -62,25 +62,26 @@ class CranioMetrics:
             'breadth',
             'x_min',
             'x_max',
-            'y_min',
-            'y_max',
-            'z',
+            'y',
+            'z_min',
+            'z_max',
         ])
 
         # create slices and calculate bounds/optima for every slice
-        for i in range(0, self.z_bounds[1], slice_d):
+        for i in range(0, self.y_bounds[1], slice_d):
             self.slice_d = slice_d
-            self.mesh_s = self.pvmesh.slice(normal=[0, 0, 1], origin=[0, 0, i])
+            self.mesh_s = self.pvmesh.slice(normal=[0, 1, 0], origin=[0, i, 0])
 
             mb = self.mesh_s.bounds
+
             self.slice_df = self.slice_df.append({
-                'depth': np.round(mb[3] - mb[2], 2),
+                'depth': np.round(mb[5] - mb[4], 2),
                 'breadth': np.round(mb[1] - mb[0], 2),
-                'x_min': mb[0],
-                'x_max': mb[1],
-                'y_min': mb[2],
-                'y_max': mb[3],
-                'z': int(mb[4]),
+                'x_min': mb[0], #left
+                'x_max': mb[1], #right
+                'y': mb[2], #slice number (height of slice = 1 so mb[2] = mb[3] = slice height
+                'z_min': mb[4], #rear
+                'z_max': mb[5] #front
             }, ignore_index=True)
 
         # index and z-height at which max depth is found
@@ -96,10 +97,10 @@ class CranioMetrics:
             self.slice_index += self.slice_d
             self.slice_df.breadth.iloc[self.slice_index]
 
-        self.slice_height = self.slice_df.iloc[self.slice_index].z
+        self.slice_height = self.slice_df.iloc[self.slice_index].y
         self.breadth = self.slice_df.iloc[self.slice_index].breadth
 
-    def show_slices(self, plotter, axis='z'):
+    def show_slices(self, plotter, axis='y'):
         # create slices and calculate bounds/optima for every slice
         if axis == 'x':
             for i in range(self.x_bounds[0], self.x_bounds[1], self.slice_d):
@@ -121,7 +122,7 @@ class CranioMetrics:
         extract_dimensions(self.slice_height) extracts the basic measures from
         the mesh (depth, breadth, CI, HC).
 
-        :param slice_height: Z-value of the slice at which max depth is found
+        :param slice_height: Y-value of the slice at which max depth is found
         (self.slice_height) and at which the measures are extracted
         :return: Cranial depth, breadth, CI, HC, xyz coordinates of bounds
         """
@@ -141,8 +142,9 @@ class CranioMetrics:
                            * np.cos(phi1 - phi2))
             return dist
 
-        HC_slice = self.pvmesh.slice(normal=[0, 0, 1], origin=[0, 0,
-                                                               slice_height])
+        HC_slice = self.pvmesh.slice(normal=[0, 1, 0], origin=[0, slice_height, 0])
+        # HC_slice = self.pvmesh.slice(normal=[0, 0, 1], origin=[0, 0,
+        #                                                        slice_height])
         HCP = HC_slice.points
         polar = []
         for i in range(len(HCP)):
@@ -161,17 +163,21 @@ class CranioMetrics:
             self.HC = np.round(HC_estimate / 10, 1)
 
         if self.HC <= 60:
-            self.slice_index = np.where(self.slice_df['z']
+            self.slice_index = np.where(self.slice_df['y']
                                         == slice_height)[0][0]
+            # self.slice_index = np.where(self.slice_df['z']
+            #                             == slice_height)[0][0]
         else:
             slice_height += self.slice_d
             self.extract_dimensions(slice_height)
 
-        self.HC_s = self.pvmesh.slice(normal=[0, 0, 1], origin=[0, 0,
-                                                                self.slice_height])
+        self.HC_s = self.pvmesh.slice(normal=[0, 1, 0], origin=[0, self.slice_height, 0])
+
+        # self.HC_s = self.pvmesh.slice(normal=[0, 0, 1], origin=[0, 0,
+        #                                                         self.slice_height])
 
         hb = self.HC_s.bounds
-        self.depth = np.round(hb[3] - hb[2], 2)
+        self.depth = np.round(hb[5] - hb[4], 2)
         self.breadth = np.round(hb[1] - hb[0], 2)
         self.CI = np.round(100 * (self.breadth / self.depth), 1)
 
@@ -181,10 +187,10 @@ class CranioMetrics:
         rh_opt_index = np.where(self.HC_s.points[:, 0] == hb[1])
         self.rh_opt = self.HC_s.points[rh_opt_index][0]
 
-        occ_opt_index = np.where(self.HC_s.points[:, 1] == hb[2])
+        occ_opt_index = np.where(self.HC_s.points[:, 2] == hb[4])
         self.occ_opt = self.HC_s.points[occ_opt_index][0]
 
-        front_opt_index = np.where(self.HC_s.points[:, 1] == hb[3])
+        front_opt_index = np.where(self.HC_s.points[:, 2] == hb[5])
         self.front_opt = self.HC_s.points[front_opt_index][0]
 
         self.optima_df = pd.DataFrame(columns=['front_opt', 'occ_opt',
@@ -206,8 +212,9 @@ class CranioMetrics:
         calculated the CI.
         """
         plotter.add_mesh(self.HC_s, color='red', line_width=12)
+
         if n_axes == 3: # visualize the 3 orthogonal axes instead of just the OFD slice
-            temp1 = self.pvmesh.slice(normal=[0, 1, 0], origin=[0, 0, 0])
+            temp1 = self.pvmesh.slice(normal=[0, 0, 1], origin=[0, 0, 0])
             temp2 = self.pvmesh.slice(normal=[1, 0, 0], origin=[0, 0, 0])
             plotter.add_mesh(temp1, color='red', line_width=12)
             plotter.add_mesh(temp2, color='red', line_width=12)
