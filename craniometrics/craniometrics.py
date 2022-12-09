@@ -77,22 +77,21 @@ class CranioMetrics:
             self.slice_df = self.slice_df.append({
                 'depth': np.round(mb[5] - mb[4], 2),
                 'breadth': np.round(mb[1] - mb[0], 2),
-                'x_min': mb[0], #left
-                'x_max': mb[1], #right
-                'y': mb[2], #slice number (height of slice = 1 so mb[2] = mb[3] = slice height
-                'z_min': mb[4], #rear
-                'z_max': mb[5] #front
+                'x_min': mb[0],  # left
+                'x_max': mb[1],  # right
+                'y': mb[2],  # slice number (height of slice = 1 so mb[2] = mb[3] = slice height
+                'z_min': mb[4],  # rear
+                'z_max': mb[5]  # front
             }, ignore_index=True)
 
         # index and z-height at which max depth is found
         self.slice_index = np.where(self.slice_df['depth']
                                     == self.slice_df.depth.max())[0][0]
 
-
         # check if the ears are not in the slice (excessive breadth > 170mm)
         # else go to next slice (max 100 slice searches)
         count_b = 0
-        while self.slice_df.breadth.iloc[self.slice_index] >= 180 and count_b <=100:
+        while self.slice_df.breadth.iloc[self.slice_index] >= 180 and count_b <= 100:
             count_b += 1
             self.slice_index += self.slice_d
             self.slice_df.breadth.iloc[self.slice_index]
@@ -201,7 +200,7 @@ class CranioMetrics:
             'lh_opt': self.lh_opt,
         }, ignore_index=True)
 
-    def plot_craniometrics(self, plotter, n_axes = 1):
+    def plot_craniometrics(self, plotter, n_axes=1, slice_only=True):
         """
         plotting of the extracted extracted craniometrics
 
@@ -211,8 +210,9 @@ class CranioMetrics:
         calculated the CI.
         """
         plotter.add_mesh(self.HC_s, color='red', line_width=12)
-
-        if n_axes == 3: # visualize the 3 orthogonal axes instead of just the OFD slice
+        if slice_only:
+            plotter.view_xz(True)
+        if n_axes == 3:  # visualize the 3 orthogonal axes instead of just the OFD slice
             temp1 = self.pvmesh.slice(normal=[0, 0, 1], origin=[0, 0, 0])
             temp2 = self.pvmesh.slice(normal=[1, 0, 0], origin=[0, 0, 0])
             plotter.add_mesh(temp1, color='red', line_width=12)
@@ -221,7 +221,10 @@ class CranioMetrics:
         plotter.add_points(np.array([self.front_opt, self.occ_opt,
                                      self.lh_opt, self.rh_opt]),
                            render_points_as_spheres=True,
-                           point_size=20, color='red')
+                           point_size=20, color='k')
+        plotter.add_points(np.array([self.HC_s.center_of_mass()[0], self.slice_height, self.HC_s.center_of_mass()[2]]),
+                           render_points_as_spheres=True, color='r', point_size=15)
+
         plotter.add_text('''file = {}.stl
 OFD (depth) = {} mm
 BPD (breadth) = {} mm
@@ -236,7 +239,7 @@ Mesh volume = {} cc '''.format(
             round((self.pvmesh.volume / 1000), 2),
         ), font_size=10, color='white')
 
-# ICV correlation based on CT: round((((self.pvmesh.volume / 1000) + 46.4349) / 1.4566), 2)
+    # ICV correlation based on CT: round((((self.pvmesh.volume / 1000) + 46.4349) / 1.4566), 2)
 
     def plot_HC_slice(self):
         self.extract_dimensions(self.slice_height)
@@ -285,4 +288,3 @@ Mesh volume = {} cc '''.format(
             return self.right_coord
         else:
             pass
-
