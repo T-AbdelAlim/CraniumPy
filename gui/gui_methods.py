@@ -195,26 +195,27 @@ class GuiMethods:
         GuiMethods.three_slices(template_mesh, self.plotter, self.template_color)
         self.plotter.add_legend(labels=[['template', self.template_color], ['mesh', self.mesh_color]], face='circle')
 
-        # Landmarks as json --> Read: t = pd.read_json("filename_landmarks.json", lines=True)
-        ## xpos == nasion coordinates, ypos == left tragus coordinates, z_pos == right tragus coordinates
-        dictionary = {
-            "datetime": str(datetime.datetime.now().strftime("%Y-%m-%d/%H:%M:%S")),
-            "initial_xpos": [self.landmarks[0][0], self.landmarks[0][1], self.landmarks[0][2]],
-            "initial_ypos": [self.landmarks[1][0], self.landmarks[1][1], self.landmarks[1][2]],
-            "initial_zpos": [self.landmarks[2][0], self.landmarks[2][1], self.landmarks[2][2]],
-            "new_xpos": [self.newpos_landmarks[0][0], self.newpos_landmarks[0][1], self.newpos_landmarks[0][2]],
-            "new_ypos": [self.newpos_landmarks[1][0], self.newpos_landmarks[1][1], self.newpos_landmarks[1][2]],
-            "new_zpos": [self.newpos_landmarks[2][0], self.newpos_landmarks[2][1], self.newpos_landmarks[2][2]]
-        }
-
-        jsonpath = str(self.file_path.parent.joinpath(self.file_name + '_landmarks.json'))
-        if os.path.exists(jsonpath):
-            mode = "a"
-        else:
-            mode = "w+"
-        with open(jsonpath, mode) as outfile:
-            json.dump(dictionary, outfile)
-            outfile.write('\n')
+        # # Landmarks as json --> Read: t = pd.read_json("filename_landmarks.json", lines=True)
+        # ## xpos == nasion coordinates, ypos == left tragus coordinates, z_pos == right tragus coordinates
+        # dictionary = {
+        #     "datetime": str(datetime.datetime.now().strftime("%Y-%m-%d/%H:%M:%S")),
+        #     "CoM": str(self.CoM_translation),
+        #     "initial_xpos": [self.landmarks[0][0], self.landmarks[0][1], self.landmarks[0][2]],
+        #     "initial_ypos": [self.landmarks[1][0], self.landmarks[1][1], self.landmarks[1][2]],
+        #     "initial_zpos": [self.landmarks[2][0], self.landmarks[2][1], self.landmarks[2][2]],
+        #     "new_xpos": [self.newpos_landmarks[0][0], self.newpos_landmarks[0][1], self.newpos_landmarks[0][2]],
+        #     "new_ypos": [self.newpos_landmarks[1][0], self.newpos_landmarks[1][1], self.newpos_landmarks[1][2]],
+        #     "new_zpos": [self.newpos_landmarks[2][0], self.newpos_landmarks[2][1], self.newpos_landmarks[2][2]]
+        # }
+        #
+        # jsonpath = str(self.file_path.parent.joinpath(self.file_name + '_landmarks.json'))
+        # if os.path.exists(jsonpath):
+        #     mode = "a"
+        # else:
+        #     mode = "w+"
+        # with open(jsonpath, mode) as outfile:
+        #     json.dump(dictionary, outfile)
+        #     outfile.write('\n')
 
     # Translation
     def com_translation(self):
