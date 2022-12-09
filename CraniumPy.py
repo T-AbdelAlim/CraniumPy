@@ -60,7 +60,6 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         importButton.triggered.connect(self.import_mesh)
         fileMenu.addAction(importButton)
 
-
         # mainMenu - Exit button
         exitButton = Qt.QAction('Exit', self)
         exitButton.triggered.connect(self.close)
@@ -94,7 +93,7 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
 
         # regMenu - register
         reg_Button = Qt.QAction('(2) Register to template', self)
-        reg_Button.triggered.connect(lambda: self.register(self.landmarks, CoM_translation=True))
+        reg_Button.triggered.connect(lambda: self.register(self.landmarks))
         regMenu.addAction(reg_Button)
 
         # regMenu - Clip Mesh
@@ -106,8 +105,6 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         templButton = Qt.QAction('(4) Show registration', self)
         templButton.triggered.connect(self.show_registration)
         regMenu.addAction(templButton)
-
-
 
         ## CRANIOMETRICS (cranium)
         # metricsMenu - extract measurements button
@@ -127,24 +124,24 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
 
         # ## VIEW
         viewsMenu = viewMenu.addMenu('Camera View')
-        xyButton = Qt.QAction('XY-plane (top)', self)
+        xyButton = Qt.QAction('XY-plane (front)', self)
         xyButton.triggered.connect(lambda: self.plotter.view_xy())
         viewsMenu.addAction(xyButton)
 
-        xzinvButton = Qt.QAction('XZ-plane (front)', self)
+        xzinvButton = Qt.QAction('XZ-plane (top)', self)
         xzinvButton.triggered.connect(lambda: self.plotter.view_xz(True))
         viewsMenu.addAction(xzinvButton)
 
         xzButton = Qt.QAction('XZ-plane (rear)', self)
-        xzButton.triggered.connect(lambda: self.plotter.view_xz())
+        xzButton.triggered.connect(lambda: self.plotter.view_xy(True))
         viewsMenu.addAction(xzButton)
 
         yzinvButton = Qt.QAction('YZ-plane (left)', self)
-        yzinvButton.triggered.connect(lambda: self.plotter.view_yz(True))
+        yzinvButton.triggered.connect(lambda: self.plotter.view_zy(True))
         viewsMenu.addAction(yzinvButton)
 
         yzButton = Qt.QAction('YZ-plane (right)', self)
-        yzButton.triggered.connect(lambda: self.plotter.view_yz())
+        yzButton.triggered.connect(lambda: self.plotter.view_zy())
         viewsMenu.addAction(yzButton)
 
         resetviewButton = Qt.QAction('Isometric', self)
@@ -172,10 +169,9 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
 if __name__ == '__main__':
     print('Running CraniumPy 0.2.5')
     root = Tk()
-    root.withdraw()  #removes tkwindow from file import
+    root.withdraw()  # removes tkwindow from file import
     app = Qt.QApplication(sys.argv)
     window = MainWindow()
     window.buttons()
     window.show()
     sys.exit(app.exec_())
-

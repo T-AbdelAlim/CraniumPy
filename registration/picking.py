@@ -25,12 +25,10 @@ class CoordinatePicking:
                                             mesh.points[pid])]
         self.coord = mesh.points[pid]
 
-
     def picking(self, plotter, target=None):
         plotter.enable_point_picking(callback=self.callback, show_message=False,
-                                    color='red', point_size=20,
-                                    use_mesh=True, show_point=True, render_points_as_spheres=True)
-
+                                     color='red', point_size=20,
+                                     use_mesh=True, show_point=True, render_points_as_spheres=True)
 
         if target == 'nose':
             self.nose_coord = plotter.picked_point
@@ -45,7 +43,7 @@ class CoordinatePicking:
             plotter.add_points(self.left_coord,
                                render_points_as_spheres=True,
                                point_size=20, color='green')
-            plotter.add_text('\nLH tragus: {}'.format(str(np.round(self.left_coord,1))), 'upper_right', font_size=10)
+            plotter.add_text('\nLH tragus: {}'.format(str(np.round(self.left_coord, 1))), 'upper_right', font_size=10)
             return self.left_coord
 
         elif target == 'right':
@@ -53,7 +51,8 @@ class CoordinatePicking:
             plotter.add_points(self.right_coord,
                                render_points_as_spheres=True,
                                point_size=20, color='green')
-            plotter.add_text('\n\nRH tragus: {}'.format(str(np.round(self.right_coord,1))), 'upper_right', font_size=10)
+            plotter.add_text('\n\nRH tragus: {}'.format(str(np.round(self.right_coord, 1))), 'upper_right',
+                             font_size=10)
             return self.right_coord
 
         else:
@@ -92,11 +91,11 @@ class CoordinatePicking:
         templ_surface = pv.PolyData(templ_triangle).delaunay_2d()
         templ_centroid = templ_surface.center_of_mass()
 
-        #calculate translation (centroid to centroid)
+        # calculate translation (centroid to centroid)
         landmark_vertices = np.array(landmarks)
 
         # avg_trag_x = np.abs(landmarks[1][0]) + np.abs(landmarks[2][0])/2
-        self.lm_surf = pv.PolyData(landmark_vertices).delaunay_2d() #landmark surface
+        self.lm_surf = pv.PolyData(landmark_vertices).delaunay_2d()  # landmark surface
 
         # translation
         self.translation = templ_centroid - np.array(self.lm_surf.center_of_mass())
@@ -106,21 +105,23 @@ class CoordinatePicking:
         nasion_centroid_templ = np.array(templ_triangle[0]) - np.array(templ_centroid)
         nasion_centroid_mesh = np.array(self.lm_surf.points[0]) - np.array(self.lm_surf.center_of_mass())
 
-        if self.lm_surf.points[2][1] > templ_surface.points[2][1]: #rh tragus higher in y = - rotation_z (cw - topview)
+        if self.lm_surf.points[2][1] > templ_surface.points[2][
+            1]:  # rh tragus higher in y = - rotation_z (cw - topview)
             self.z_rotation = -1 * angle_between(nasion_centroid_mesh, nasion_centroid_templ)
         else:
             self.z_rotation = angle_between(nasion_centroid_mesh, nasion_centroid_templ)
         self.lm_surf.rotate_z(self.z_rotation)
 
         # y rotation
-        if self.lm_surf.points[2][2] > templ_surface.points[2][2]: #rh tragus higher in z = + rotation_y (ccw - frontview)
+        if self.lm_surf.points[2][2] > templ_surface.points[2][
+            2]:  # rh tragus higher in z = + rotation_y (ccw - frontview)
             self.y_rotation = angle_between(self.lm_surf.face_normals[0], templ_surface.face_normals[0])
         else:
             self.y_rotation = -1 * angle_between(self.lm_surf.face_normals[0], templ_surface.face_normals[0])
         self.lm_surf.rotate_y(self.y_rotation)
 
         # x rotation
-        if self.lm_surf.points[0][2] > templ_surface.points[0][2]: # nasion above = -rotation_x (cw - view rh tragus)
+        if self.lm_surf.points[0][2] > templ_surface.points[0][2]:  # nasion above = -rotation_x (cw - view rh tragus)
             self.x_rotation = -1 * angle_between(self.lm_surf.face_normals[0], templ_surface.face_normals[0])
         else:
             self.x_rotation = angle_between(self.lm_surf.face_normals[0], templ_surface.face_normals[0])
