@@ -10,19 +10,19 @@
 
 
 ## Description
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.6594389.svg)](https://doi.org/10.5281/zenodo.6594389)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.7259315.svg)](https://doi.org/10.5281/zenodo.7259315)
 
 CraniumPy is a simple tool that can be used to register 3D meshes for cranial analysis using three landmarks. In its current state, a raw 3D mesh (.ply, .obj, .stl) can be imported and visualized. After registration, cephalometric measurements can be automatically extracted. These measurements include:
 - occipotofrontal diameter (OFC) / head depth
 - biparietal diameter (BPD) / head breadth
 - cephalic index (CI) 
 - head circumference (HC) 
-- mesh volume (can be used for intracranial volume approximation) 
+- mesh volume (can be used for intracranial volume approximation)
 
 ![Reconstruction](resources/CraniumPy_info.png)
 
 ## Usage
-Three anatomical landmarks (Nasion, LH tragus, RH tragus) need to be located by the user for registration. The mesh is then registered to an average normal template (https://dined3d.io.tudelft.nl/en/mannequin/tool). 
+Three anatomical landmarks (Nasion, LH tragus, RH tragus) need to be located by the user for registration. The mesh is then registered to an average normal template (https://dined3d.io.tudelft.nl/en/mannequin/tool) and the landmark positions (xyz) are stored in place (filename_landmarks.json).
 
 Based on a single transverse slice (at maximum head depth), cephalometric measurements are automatically extracted and plotted on the 3D model. 
 
@@ -33,8 +33,8 @@ The example mesh ```resources/test_mesh/test_mesh.ply``` can be used to explore 
 *NOTE: Step 3. (Clip, Repair, Resample) is computationally heavy (due to the resampling step) and can take a while depending on your setup. Clicking the screen may cause it to freeze.*
 
 ## CraniumPy executable
-If you want to simply run this tool locally (on Windows) from an executable file (.exe), download the folder _CraniumPy v0.2.2_ from the following link:
-[CraniumPy (v0.2.2) Download](https://drive.google.com/drive/folders/1IEGc9CSUtmwWYe6YLG0aSDek_XD9aJEV?usp=sharing).
+If you want to simply run this tool locally (on Windows) from an executable file (.exe), download the folder _CraniumPy v0.2.4_ from the following link:
+[CraniumPy (v0.2.4) Download](https://drive.google.com/drive/folders/1IEGc9CSUtmwWYe6YLG0aSDek_XD9aJEV?usp=sharing).
 
 Simply run the executable file (CraniumPy.exe) to start the program (takes a few seconds to start). You do not need to install any requirements or dependencies. 
 The folder contains the templates (for visualizing the registration), step-by-step documentation, and a test_mesh (arbitrary orientation and some artifacts) to experiment with.
@@ -93,7 +93,7 @@ pyinstaller CraniumPy.py --hidden-import vtkmodules --hidden-import vtkmodules.a
 If you use this software, I would appreciate if you cite:
 
 ```
-Abdel-Alim, T. (2021). CraniumPy [Computer software]. https://doi.org/10.5281/zenodo.6594389
+Abdel-Alim, T. (2021). CraniumPy [Computer software]. https://doi.org/10.5281/zenodo.7259315
 ```
 
 This code makes use of some excellent features implemented in the PyVista module (https://docs.pyvista.org/) and PyMeshFix (https://pymeshfix.pyvista.org/).
