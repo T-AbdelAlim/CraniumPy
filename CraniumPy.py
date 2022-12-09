@@ -124,28 +124,28 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
 
         # ## VIEW
         viewsMenu = viewMenu.addMenu('Camera View')
-        xyButton = Qt.QAction('XY-plane (front)', self)
+        xyButton = Qt.QAction(' XY plane (front)', self)
         xyButton.triggered.connect(lambda: self.plotter.view_xy())
         viewsMenu.addAction(xyButton)
 
-        xzinvButton = Qt.QAction('XZ-plane (top)', self)
+        xzinvButton = Qt.QAction('-XZ plane (top)', self)
         xzinvButton.triggered.connect(lambda: self.plotter.view_xz(True))
         viewsMenu.addAction(xzinvButton)
 
-        xzButton = Qt.QAction('XZ-plane (rear)', self)
+        xzButton = Qt.QAction('-XY plane (rear)', self)
         xzButton.triggered.connect(lambda: self.plotter.view_xy(True))
         viewsMenu.addAction(xzButton)
 
-        yzinvButton = Qt.QAction('YZ-plane (left)', self)
-        yzinvButton.triggered.connect(lambda: self.plotter.view_zy(True))
-        viewsMenu.addAction(yzinvButton)
-
-        yzButton = Qt.QAction('YZ-plane (right)', self)
+        yzButton = Qt.QAction(' ZY plane (right)', self)
         yzButton.triggered.connect(lambda: self.plotter.view_zy())
         viewsMenu.addAction(yzButton)
 
-        resetviewButton = Qt.QAction('Isometric', self)
-        resetviewButton.triggered.connect(lambda: self.plotter.isometric_view())
+        yzinvButton = Qt.QAction('-ZY plane (left)', self)
+        yzinvButton.triggered.connect(lambda: self.plotter.view_zy(True))
+        viewsMenu.addAction(yzinvButton)
+
+        resetviewButton = Qt.QAction(' XZ plane (bottom)', self)
+        resetviewButton.triggered.connect(lambda: self.plotter.view_xz())
         viewsMenu.addAction(resetviewButton)
 
         # ## VIEW
