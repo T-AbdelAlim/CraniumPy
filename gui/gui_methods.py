@@ -223,10 +223,12 @@ class GuiMethods:
         }
 
         jsonpath = str(self.file_path.parent.joinpath(self.file_name + '_landmarks.json'))
-        if os.path.exists(jsonpath):
-            mode = "a"
-        else:
-            mode = "w+"
+        ## uncomment if you wish to append registration to existing .json file instead of overwriting the file.
+        # if os.path.exists(jsonpath):
+        #     mode = "a"
+        # else:
+        #     mode = "w+"
+        mode = "w+"
         with open(jsonpath, mode) as outfile:
             json.dump(dictionary, outfile)
             outfile.write('\n')
