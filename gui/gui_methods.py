@@ -152,6 +152,7 @@ class GuiMethods:
         self.mesh_file.rotate_y(metrics.y_rotation, transform_all_input_vectors=True)
         self.mesh_file.rotate_x(metrics.x_rotation, transform_all_input_vectors=True)
 
+
         for i in range(n_iterations):
             metrics.reg_to_template(metrics.lm_surf.points)
             self.mesh_file.translate(metrics.translation)
@@ -159,8 +160,11 @@ class GuiMethods:
             self.mesh_file.rotate_y(metrics.y_rotation, transform_all_input_vectors=True)
             self.mesh_file.rotate_x(metrics.x_rotation, transform_all_input_vectors=True)
 
+
         self.mesh_file.rotate_x(angle=90, transform_all_input_vectors=True)
         self.mesh_file.flip_y(point=[0, 0, 0], transform_all_input_vectors=True)
+        metrics.lm_surf.rotate_x(angle=90, transform_all_input_vectors=True)
+        metrics.lm_surf.flip_y(point=[0, 0, 0], transform_all_input_vectors=True)
 
         if str(self.file_path).endswith('_rg' + self.extension) or str(self.file_path).endswith('_C' + self.extension):
             write_ply_file(self.mesh_file, str(self.file_path).replace(self.extension, ".ply"))
@@ -176,6 +180,7 @@ class GuiMethods:
             # if True: the mesh is translated along the y-axis (front-back) based on the center of mass of the HC slice
             self.com_translation()
             template_path = Path("./template/template_xy_com.ply")
+            metrics.lm_surf.translate(self.CoM_value)
 
         # # replace old with new registered mesh
         self.plotter.clear()  # clears mesh space every time a new mesh is added
@@ -184,6 +189,8 @@ class GuiMethods:
         self.newpos_landmarks = metrics.lm_surf.points
 
         self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, opacity=0.5, show_edges=True)
+        self.plotter.add_points(self.newpos_landmarks, render_points_as_spheres=True, color='green', point_size=20,
+                                opacity=0.5)
         self.plotter.reset_camera()
 
         ## show registration
@@ -195,35 +202,42 @@ class GuiMethods:
         GuiMethods.three_slices(template_mesh, self.plotter, self.template_color)
         self.plotter.add_legend(labels=[['template', self.template_color], ['mesh', self.mesh_color]], face='circle')
 
-        # # Landmarks as json --> Read: t = pd.read_json("filename_landmarks.json", lines=True)
-        # ## xpos == nasion coordinates, ypos == left tragus coordinates, z_pos == right tragus coordinates
-        # dictionary = {
-        #     "datetime": str(datetime.datetime.now().strftime("%Y-%m-%d/%H:%M:%S")),
-        #     "CoM": str(self.CoM_translation),
-        #     "initial_xpos": [self.landmarks[0][0], self.landmarks[0][1], self.landmarks[0][2]],
-        #     "initial_ypos": [self.landmarks[1][0], self.landmarks[1][1], self.landmarks[1][2]],
-        #     "initial_zpos": [self.landmarks[2][0], self.landmarks[2][1], self.landmarks[2][2]],
-        #     "new_xpos": [self.newpos_landmarks[0][0], self.newpos_landmarks[0][1], self.newpos_landmarks[0][2]],
-        #     "new_ypos": [self.newpos_landmarks[1][0], self.newpos_landmarks[1][1], self.newpos_landmarks[1][2]],
-        #     "new_zpos": [self.newpos_landmarks[2][0], self.newpos_landmarks[2][1], self.newpos_landmarks[2][2]]
-        # }
-        #
-        # jsonpath = str(self.file_path.parent.joinpath(self.file_name + '_landmarks.json'))
-        # if os.path.exists(jsonpath):
-        #     mode = "a"
-        # else:
-        #     mode = "w+"
-        # with open(jsonpath, mode) as outfile:
-        #     json.dump(dictionary, outfile)
-        #     outfile.write('\n')
+        # Landmarks as json --> Read: t = pd.read_json("filename_landmarks.json", lines=True)
+        ## xpos == nasion coordinates, ypos == left tragus coordinates, z_pos == right tragus coordinates
+        dictionary = {
+            "datetime": str(datetime.datetime.now().strftime("%Y-%m-%d/%H:%M:%S")),
+            "CoM": str(self.CoM_translation),
+            "initial_nasion": np.round([self.landmarks[0][0], self.landmarks[0][1],
+                                        self.landmarks[0][2]], 3).tolist(),
+            "initial_lh_coord": np.round([self.landmarks[1][0], self.landmarks[1][1],
+                                          self.landmarks[1][2]], 3).tolist(),
+            "initial_rh_coord": np.round([self.landmarks[2][0], self.landmarks[2][1],
+                                          self.landmarks[2][2]], 3).tolist(),
+            "new_nasion": np.round([self.newpos_landmarks[0][0], self.newpos_landmarks[0][1],
+                                    self.newpos_landmarks[0][2]], 3).tolist(),
+            "new_lh_coord": np.round([self.newpos_landmarks[2][0], self.newpos_landmarks[2][1],
+                                      self.newpos_landmarks[2][2]],3).tolist(),
+            "new_rh_coord": np.round([self.newpos_landmarks[1][0], self.newpos_landmarks[1][1],
+                                      self.newpos_landmarks[1][2]],3).tolist()
+        }
+
+        jsonpath = str(self.file_path.parent.joinpath(self.file_name + '_landmarks.json'))
+        if os.path.exists(jsonpath):
+            mode = "a"
+        else:
+            mode = "w+"
+        with open(jsonpath, mode) as outfile:
+            json.dump(dictionary, outfile)
+            outfile.write('\n')
 
     # Translation
     def com_translation(self):
         temp_metric = CranioMetrics(self.file_path)  # temporary metric of the mesh
         temp_metric.extract_dimensions(temp_metric.slice_height)
         CoM = temp_metric.HC_s.center_of_mass()
+        # self.mesh_file.translate([-CoM[0], 0, -CoM[2]]) # uncomment for lateral CoM translation
         self.mesh_file.translate([0, 0, -CoM[2]])
-        self.mesh_file.translate([-CoM[0], 0, 0])
+        self.CoM_value = [0, 0, -CoM[2]]
 
         if str(self.file_path).endswith('_rg' + self.extension) or str(self.file_path).endswith('_C' + self.extension):
             write_ply_file(self.mesh_file, str(self.file_path).replace(self.extension, ".ply"))
@@ -271,8 +285,7 @@ class GuiMethods:
                 temp_metric = CranioMetrics(self.file_path)  # temporary metric of the mesh
                 temp_metric.extract_dimensions(temp_metric.slice_height)
                 CoM = temp_metric.HC_s.center_of_mass()
-                self.mesh_file.translate([0, 0, -CoM[2]])
-                self.mesh_file.translate([-CoM[0], 0, 0])
+                self.mesh_file.translate([-CoM[0], 0, -CoM[2]])
                 write_ply_file(self.mesh_file, self.file_path)
 
             self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=True)
