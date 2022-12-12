@@ -96,7 +96,7 @@ pyinstaller CraniumPy.py --hidden-import vtkmodules --hidden-import vtkmodules.a
 If you use this software, I would appreciate if you cite:
 
 ```
-Abdel-Alim, T. (2021). CraniumPy [Computer software]. https://doi.org/10.5281/zenodo.7430069
+Abdel-Alim, T. (2022). CraniumPy [Computer software]. https://doi.org/10.5281/zenodo.7430069
 ```
 
 This code makes use of some excellent features implemented in the PyVista module (https://docs.pyvista.org/) and PyMeshFix (https://pymeshfix.pyvista.org/).
