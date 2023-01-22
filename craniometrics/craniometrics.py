@@ -89,7 +89,7 @@ class CranioMetrics:
         self.slice_index = np.where(self.slice_df['depth']
                                     == self.slice_df.depth.max())[0][0]
 
-        # check if the ears are not in the slice (excessive breadth > 170mm)
+        # check if the ears are not in the slice (excessive breadth > 180mm)
         # else go to next slice (max 100 slice searches)
         count_b = 0
         while self.slice_df.breadth.iloc[self.slice_index] >= 180 and count_b <= 100:
