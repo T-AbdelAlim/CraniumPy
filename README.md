@@ -19,6 +19,8 @@ CraniumPy is a simple tool that can be used to register 3D meshes for cranial an
 - head circumference (HC) 
 - mesh volume (can be used for intracranial volume approximation)
 
+_NOTE: CraniumPy has been optimized for pediatric analysis. For this reason, some hard-coded boundary conditions are established in the extraction algorithm [(e.g. code line 95)](./craniometrics/craniometrics.py). If CraniumPy does not work as desired for your research application (e.g. prematures or adults), feel free to contact the author for a solution._
+
 ![Reconstruction](resources/CraniumPy_info.png)
 
 ## Usage
