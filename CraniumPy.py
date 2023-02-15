@@ -1,6 +1,6 @@
 """
 Created on Mon Aug 2, 2021
-Last update on December 12, 2022
+Last update on February 15, 2023
 @author: T-AbdelAlim
 """
 
@@ -168,7 +168,7 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
 
 
 if __name__ == '__main__':
-    print('Running CraniumPy 0.3.0')
+    print('Running CraniumPy 0.3.1')
     root = Tk()
     root.withdraw()  # removes tkwindow from file import
     app = Qt.QApplication(sys.argv)
