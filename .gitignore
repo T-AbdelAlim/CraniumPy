@@ -1,3 +1,5 @@
 /.idea/
 .gitattributes
 *.exe
+/build
+/dist

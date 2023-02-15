@@ -164,8 +164,10 @@ class GuiMethods:
 
         self.mesh_file.rotate_x(angle=90, transform_all_input_vectors=True)
         self.mesh_file.flip_y(point=[0, 0, 0], transform_all_input_vectors=True)
+        self.mesh_file.flip_x(point=[0, 0, 0], transform_all_input_vectors=True)
         metrics.lm_surf.rotate_x(angle=90, transform_all_input_vectors=True)
         metrics.lm_surf.flip_y(point=[0, 0, 0], transform_all_input_vectors=True)
+        metrics.lm_surf.flip_x(point=[0, 0, 0], transform_all_input_vectors=True)
 
         if str(self.file_path).endswith('_rg' + self.extension) or str(self.file_path).endswith('_C' + self.extension):
             write_ply_file(self.mesh_file, str(self.file_path).replace(self.extension, ".ply"))
