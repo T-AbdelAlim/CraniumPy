@@ -11,6 +11,7 @@ from pyvistaqt import QtInteractor
 from gui.gui_methods import GuiMethods
 
 
+
 class MainWindow(Qt.QMainWindow, GuiMethods):
 
     def __init__(self, parent=None, show=True):
@@ -51,9 +52,9 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         # Basic menubar
         mainMenu = self.menuBar()
         fileMenu = mainMenu.addMenu('File')
-        regMenu = mainMenu.addMenu('Registration')
-        metricsMenu = mainMenu.addMenu('Cranium')
-        # trigMenu = mainMenu.addMenu('Frontal bone')
+        regMenu = mainMenu.addMenu('Global alignment')
+        nicpMenu = mainMenu.addMenu('Correspondence')
+        metricsMenu = mainMenu.addMenu('Cephalometry')
         viewMenu = mainMenu.addMenu('View')
 
         # mainMenu - Import mesh button
@@ -66,9 +67,8 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         exitButton.triggered.connect(self.close)
         fileMenu.addAction(exitButton)
 
-        ## REGISTRATION
+        ## FIDUCIAL
         pickMenu = regMenu.addMenu('(1) Landmark selection')
-        # regMenu - CPD Registration button
         pickButton = Qt.QAction('Enable picking (press P)', self)
         pickButton.setShortcut('Ctrl+P')
         pickButton.triggered.connect(lambda: self.coordinate_picking(target=None))
@@ -93,19 +93,63 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         pickMenu.addAction(save_c3_Button)
 
         # regMenu - register
-        reg_Button = Qt.QAction('(2) Register to template', self)
-        reg_Button.triggered.connect(lambda: self.register(self.landmarks))
-        regMenu.addAction(reg_Button)
+        regoptMenu = regMenu.addMenu('(2) Register for ')
+        regH_Button = Qt.QAction('Cranial analysis', self)
+        regH_Button.triggered.connect(lambda: self.register(self.landmarks, target='cranium'))
+        regoptMenu.addAction(regH_Button)
+
+        # regMenu - register
+        regF_Button = Qt.QAction('Facial analysis', self)
+        regF_Button.triggered.connect(lambda: self.register(self.landmarks, target='face'))
+        regoptMenu.addAction(regF_Button)
 
         # regMenu - Clip Mesh
-        FclipButton = Qt.QAction('(3) Clip, Repair, Resample', self)
+        clipMenu = regMenu.addMenu('(3) Clip, Repair, Resample')
+        FclipButton = Qt.QAction('Cranium', self)
         FclipButton.triggered.connect(lambda: self.cranial_cut(initial_clip=False))
-        regMenu.addAction(FclipButton)
+        clipMenu.addAction(FclipButton)
+
+        # regMenu - Clip Mesh
+        FclipButton2 = Qt.QAction('Face', self)
+        FclipButton2.triggered.connect(lambda: self.facial_clip(initial_clip=False))
+        clipMenu.addAction(FclipButton2)
 
         ## metricsMenu - show registration wrt cranial template
-        templButton = Qt.QAction('(4) Show registration', self)
+        showMenu = regMenu.addMenu('(4) Show registration')
+        templButton = Qt.QAction('Cranium', self)
         templButton.triggered.connect(self.show_registration)
-        regMenu.addAction(templButton)
+        showMenu.addAction(templButton)
+
+        ## metricsMenu - show registration wrt cranial template
+        templButton2 = Qt.QAction('Face', self)
+        templButton2.triggered.connect(self.show_registration_face)
+        showMenu.addAction(templButton2)
+
+
+        ## NICP
+        pickMenu2 = nicpMenu.addMenu('NICP cranium')
+        pickButton2 = Qt.QAction('Show target', self)
+        pickButton2.triggered.connect(self.show_registration)
+        pickMenu2.addAction(pickButton2)
+
+        reg_Button2 = Qt.QAction('Calculate', self)
+        reg_Button2.triggered.connect(lambda: self.nricp_to_template(target='cranium'))
+        pickMenu2.addAction(reg_Button2)
+
+        pickMenu3 = nicpMenu.addMenu('NICP face')
+        pickButton3 = Qt.QAction('Show target', self)
+        pickButton3.triggered.connect(self.show_registration_face)
+        pickMenu3.addAction(pickButton3)
+
+        reg_Button3 = Qt.QAction('Calculate', self)
+        reg_Button3.triggered.connect(lambda: self.nricp_to_template(target='face'))
+        pickMenu3.addAction(reg_Button3)
+
+        pickMenu4 = nicpMenu.addMenu('Experimental')
+        reg_Button4 = Qt.QAction('NICP head', self)
+        reg_Button4.triggered.connect(lambda: self.nricp_to_template(target='head'))
+        pickMenu4.addAction(reg_Button4)
+
 
         ## CRANIOMETRICS (cranium)
         # metricsMenu - extract measurements button
@@ -168,7 +212,7 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
 
 
 if __name__ == '__main__':
-    print('Running CraniumPy 0.3.1')
+    print('Running CraniumPy 0.3.2')
     root = Tk()
     root.withdraw()  # removes tkwindow from file import
     app = Qt.QApplication(sys.argv)

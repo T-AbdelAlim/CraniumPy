@@ -5,7 +5,7 @@ Last update on December 12, 2022
 """
 
 from tkinter.filedialog import askopenfilename, asksaveasfilename
-import os, datetime
+import datetime
 import pyacvd
 import pyvista as pv
 import numpy as np
@@ -16,12 +16,22 @@ from registration.picking import CoordinatePicking
 from registration.write_ply import write_ply_file
 import json
 
+import open3d as o3d
+from nicp.icp import icp
+from nicp.nricp import nonrigidIcp
+from nicp.write_ply import write_ply_file_NICP
+import copy
+
 
 class GuiMethods:
     def __init__(self):
         self.mesh_color = 'ivory'
         self.template_color = 'saddlebrown'
         self.template_path = Path('./template/clipped_template_xy.ply')
+        self.template_path_cranium = Path('./template/clipped_template_xy_com.ply')
+        self.template_path_face = Path('./template/template_face.ply')
+        self.template_path_head = Path('./template/template_xy_com.ply') # experimental
+
         self.CoM_translation = True
 
     # File tab
@@ -63,36 +73,58 @@ class GuiMethods:
         self.file_path = resampled_path
 
     @staticmethod
-    def call_template(ICV_scaling=1.0, CoM_translation=True):
+    def call_template(ICV_scaling=1.0, CoM_translation=True, face=False):
         if CoM_translation == True:
             template_path = Path('./template/clipped_template_xy_com.ply')
         else:
             template_path = Path('./template/clipped_template_xy.ply')
+
+        if face == True:
+            template_path = Path('./template/template_face.ply')
+
         template_mesh = pv.read(template_path)
-        template_mesh.points *= ICV_scaling ** (1 / 3)  # template_volume = 2339070.752133594
+        if face == False:
+            template_mesh.points *= ICV_scaling ** (1 / 3)  # template_volume = 2339070.752133594
+
         return template_mesh
 
     def show_registration(self):
         self.plotter.clear()
 
         try:
-            template_mesh = GuiMethods.call_template(ICV_scaling=self.mesh_file.volume / 2339070.75,
+            template_mesh = GuiMethods.call_template(ICV_scaling=1,
                                                      CoM_translation=self.CoM_translation)
-            self.plotter.add_mesh(template_mesh, color=self.template_color, opacity=0.2, show_edges=False)
-            # GuiMethods.three_slices(template_mesh, self.plotter, self.template_color)
-
-            self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=False, opacity=0.2)
-            # GuiMethods.three_slices(self.mesh_file, self.plotter, self.mesh_color)
-
+            # template_mesh = GuiMethods.call_template(ICV_scaling=self.mesh_file.volume / 2339070.75,
+            #                                          CoM_translation=self.CoM_translation)
+            self.plotter.add_mesh(template_mesh, color=self.template_color, opacity=0.5, show_edges=True)
+            self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=False, opacity=0.5)
             self.plotter.add_legend(labels=[['template', self.template_color], ['mesh', self.mesh_color]],
                                     face='circle')
 
         except:
             template_mesh = GuiMethods.call_template()
 
-            self.plotter.add_mesh(template_mesh, color=self.template_color, opacity=0.2, show_edges=False)
-            GuiMethods.three_slices(template_mesh, self.plotter, self.template_color)
+            self.plotter.add_mesh(template_mesh, color=self.template_color, opacity=0.5, show_edges=True)
             self.plotter.add_legend(labels=[['template', self.template_color]], face='circle')
+            self.plotter.reset_camera()
+
+    def show_registration_face(self):
+        self.plotter.clear()
+
+        try:
+            template_mesh = GuiMethods.call_template(ICV_scaling=self.mesh_file.volume / 2339070.75,
+                                                     CoM_translation=self.CoM_translation, face=True)
+            self.plotter.add_mesh(template_mesh, color=self.template_color, opacity=0.5, show_edges=True)
+            self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=False, opacity=0.5)
+            self.plotter.add_legend(labels=[['template', self.template_color], ['mesh', self.mesh_color]],
+                                    face='circle')
+
+        except:
+            template_mesh = GuiMethods.call_template(face=True)
+
+            self.plotter.add_mesh(template_mesh, color=self.template_color, opacity=0.5, show_edges=True)
+            self.plotter.add_legend(labels=[['template', self.template_color]], face='circle')
+            self.plotter.reset_camera()
 
     @staticmethod
     def three_slices(mesh_file, plotter, color='yellow'):
@@ -143,7 +175,7 @@ class GuiMethods:
         except:
             pass
 
-    def register(self, landmarks, n_iterations=50):
+    def register(self, landmarks, n_iterations=50, target='cranium'):
         metrics = CoordinatePicking(self.file_path)
 
         # first iteration based on selected landmarks
@@ -153,14 +185,12 @@ class GuiMethods:
         self.mesh_file.rotate_y(metrics.y_rotation, transform_all_input_vectors=True)
         self.mesh_file.rotate_x(metrics.x_rotation, transform_all_input_vectors=True)
 
-
         for i in range(n_iterations):
             metrics.reg_to_template(metrics.lm_surf.points)
             self.mesh_file.translate(metrics.translation)
             self.mesh_file.rotate_z(metrics.z_rotation, transform_all_input_vectors=True)
             self.mesh_file.rotate_y(metrics.y_rotation, transform_all_input_vectors=True)
             self.mesh_file.rotate_x(metrics.x_rotation, transform_all_input_vectors=True)
-
 
         self.mesh_file.rotate_x(angle=90, transform_all_input_vectors=True)
         self.mesh_file.flip_y(point=[0, 0, 0], transform_all_input_vectors=True)
@@ -184,6 +214,22 @@ class GuiMethods:
             self.com_translation()
             template_path = Path("./template/template_xy_com.ply")
             metrics.lm_surf.translate(self.CoM_value)
+
+        if target == 'face':
+            template_path = Path("./template/template_face.ply")
+            self.mesh_file.translate([-1 * metrics.lm_surf.points[0][0], -1 * metrics.lm_surf.points[0][1],
+                                      -1 * metrics.lm_surf.points[0][2]])
+            metrics.lm_surf.translate([-1 * metrics.lm_surf.points[0][0], -1 * metrics.lm_surf.points[0][1],
+                                       -1 * metrics.lm_surf.points[0][2]])
+
+            if str(self.file_path).endswith('_rg.ply'):
+                write_ply_file(self.mesh_file, str(self.file_path).replace("_rg.ply", "_rgF.ply"))
+                self.file_path = Path(str(self.file_path).replace("_rg.ply", "_rgF.ply"))
+            elif str(self.file_path).endswith('_rgF.ply'):
+                write_ply_file(self.mesh_file, str(self.file_path))
+            else:
+                write_ply_file(self.mesh_file, self.file_path.with_name(self.file_path.stem + '_rgF.ply'))
+                self.file_path = self.file_path.with_name(self.file_path.stem + '_rgF.ply')
 
         # # replace old with new registered mesh
         self.plotter.clear()  # clears mesh space every time a new mesh is added
@@ -219,9 +265,9 @@ class GuiMethods:
             "new_nasion": np.round([self.newpos_landmarks[0][0], self.newpos_landmarks[0][1],
                                     self.newpos_landmarks[0][2]], 3).tolist(),
             "new_lh_coord": np.round([self.newpos_landmarks[2][0], self.newpos_landmarks[2][1],
-                                      self.newpos_landmarks[2][2]],3).tolist(),
+                                      self.newpos_landmarks[2][2]], 3).tolist(),
             "new_rh_coord": np.round([self.newpos_landmarks[1][0], self.newpos_landmarks[1][1],
-                                      self.newpos_landmarks[1][2]],3).tolist()
+                                      self.newpos_landmarks[1][2]], 3).tolist()
         }
 
         jsonpath = str(self.file_path.parent.joinpath(self.file_name + '_landmarks.json'))
@@ -254,6 +300,8 @@ class GuiMethods:
 
     def cranial_cut(self, initial_clip=False):
         try:
+            self.plotter.clear()
+            self.plotter.add_text('Mesh processing...\nThis may take a moment.', position='upper_left')
             if initial_clip == True:
                 clip = -20
             else:
@@ -279,7 +327,7 @@ class GuiMethods:
             # write_ply_file(self.mesh_file.clip('z', origin=[0, 0, clip], invert=False), self.file_path)
             write_ply_file(self.mesh_file.clip('y', origin=[0, clip, 0], invert=False), self.file_path)
 
-            GuiMethods.repairsample(self.file_path, n_vertices=10000, repair=False)
+            GuiMethods.repairsample(self.file_path, n_vertices=16000, repair=False)
 
             self.mesh_file = pv.read(self.file_path)
             self.plotter.clear()
@@ -292,6 +340,47 @@ class GuiMethods:
                 CoM = temp_metric.HC_s.center_of_mass()
                 self.mesh_file.translate([-CoM[0], 0, -CoM[2]])
                 write_ply_file(self.mesh_file, self.file_path)
+
+            self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=True)
+
+        except:
+            pass
+
+    def facial_clip(self, initial_clip=False):
+
+        try:
+            self.plotter.clear()
+            self.plotter.add_text('Mesh processing...\nThis may take a moment.', position='upper_left')
+            if initial_clip == True:
+                clip = -20
+            else:
+                clip = 0
+
+            template_mesh = GuiMethods.call_template(face=True)
+
+            lmk_surface = pv.PolyData(self.newpos_landmarks).delaunay_2d()
+            templ_centroid = lmk_surface.center_of_mass()
+
+            # self.mesh_file.clip_box(template_mesh.bounds, invert=False)
+            self.mesh_file = self.mesh_file.clip('z', origin=[0, 20, templ_centroid[2] - 1], invert=False)
+
+            if str(self.file_path.stem).endswith('_CF'):
+                pass
+            else:
+                self.file_path = self.file_path.with_name(self.file_path.stem + '_CF.ply')
+            write_ply_file(self.mesh_file, self.file_path)
+
+            GuiMethods.repairsample(self.file_path, n_vertices=20000, repair=True)
+
+            self.mesh_file = pv.read(self.file_path)
+
+            write_ply_file(self.mesh_file.clip('z', origin=[0, 20, templ_centroid[2]], invert=False), self.file_path)
+
+            GuiMethods.repairsample(self.file_path, n_vertices=16000, repair=False)
+
+            self.mesh_file = pv.read(self.file_path)
+            self.plotter.clear()
+            write_ply_file(self.mesh_file, self.file_path)
 
             self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=True)
 
@@ -319,5 +408,54 @@ class GuiMethods:
                                                        filetypes=(("Screenshot", "*.png"),
                                                                   ("all files", "*.*"))))
             self.plotter.screenshot(screenshot_folder)
+        except:
+            pass
+
+    def nricp_to_template(self, target='cranium'):
+        try:
+            self.plotter.clear()
+            self.plotter.add_text('Non-rigid ICP ({}) in progress...\nThis may take a moment.'.format(target), position='upper_left')
+            sourcepath = self.template_path_cranium.__str__()
+            if target == 'face':
+                sourcepath = self.template_path_face.__str__()
+            elif target == 'head':
+                sourcepath = self.template_path_head.__str__()
+
+            targetpath = str(self.file_path)
+            if str(self.file_path).endswith('_' + target[0] + 'icp.ply'):
+                deformedpath = self.file_path
+            else:
+                deformedpath = self.file_path.with_name(self.file_path.stem + '_' + target[0] + 'icp.ply')
+            print(deformedpath)
+
+            # read source file
+            sourcemesh = o3d.io.read_triangle_mesh(sourcepath)
+            targetmesh = o3d.io.read_triangle_mesh(targetpath)
+            sourcemesh.compute_vertex_normals()
+            targetmesh.compute_vertex_normals()
+
+            # first find rigid registration
+            # guess for inital transform for icp
+            initial_guess = np.eye(4)
+            affine_transform = icp(sourcemesh, targetmesh, initial_guess)
+
+            # creating a new mesh for non rigid transform estimation
+            refined_sourcemesh = copy.deepcopy(sourcemesh)
+            refined_sourcemesh.transform(affine_transform)
+            refined_sourcemesh.compute_vertex_normals()
+
+            # non rigid registration
+            deformed_mesh = nonrigidIcp(refined_sourcemesh, targetmesh)
+            o3d.io.write_triangle_mesh(filename=str(deformedpath), mesh=deformed_mesh)
+
+            # convert deformed mesh as reconstructed output (ply file)
+            sourcem = pv.read(sourcepath)
+            targetm = pv.read(deformedpath)
+            write_ply_file_NICP(sourcem, targetm.points, deformedpath)
+            self.file_path = deformedpath
+            self.plotter.clear()
+            self.mesh_file = pv.read(self.file_path)
+            self.plotter.add_mesh(self.mesh_file, show_edges=True)
+
         except:
             pass
