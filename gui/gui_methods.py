@@ -195,6 +195,7 @@ class GuiMethods:
         self.mesh_file.rotate_x(angle=90, transform_all_input_vectors=True)
         self.mesh_file.flip_y(point=[0, 0, 0], transform_all_input_vectors=True)
         self.mesh_file.flip_x(point=[0, 0, 0], transform_all_input_vectors=True)
+
         metrics.lm_surf.rotate_x(angle=90, transform_all_input_vectors=True)
         metrics.lm_surf.flip_y(point=[0, 0, 0], transform_all_input_vectors=True)
         metrics.lm_surf.flip_x(point=[0, 0, 0], transform_all_input_vectors=True)
@@ -327,7 +328,7 @@ class GuiMethods:
             # write_ply_file(self.mesh_file.clip('z', origin=[0, 0, clip], invert=False), self.file_path)
             write_ply_file(self.mesh_file.clip('y', origin=[0, clip, 0], invert=False), self.file_path)
 
-            GuiMethods.repairsample(self.file_path, n_vertices=16000, repair=False)
+            GuiMethods.repairsample(self.file_path, n_vertices=10000, repair=False)
 
             self.mesh_file = pv.read(self.file_path)
             self.plotter.clear()
@@ -376,7 +377,7 @@ class GuiMethods:
 
             write_ply_file(self.mesh_file.clip('z', origin=[0, 20, templ_centroid[2]], invert=False), self.file_path)
 
-            GuiMethods.repairsample(self.file_path, n_vertices=16000, repair=False)
+            GuiMethods.repairsample(self.file_path, n_vertices=10000, repair=False)
 
             self.mesh_file = pv.read(self.file_path)
             self.plotter.clear()
