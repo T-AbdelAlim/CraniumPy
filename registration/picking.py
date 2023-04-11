@@ -105,16 +105,14 @@ class CoordinatePicking:
         nasion_centroid_templ = np.array(templ_triangle[0]) - np.array(templ_centroid)
         nasion_centroid_mesh = np.array(self.lm_surf.points[0]) - np.array(self.lm_surf.center_of_mass())
 
-        if self.lm_surf.points[2][1] > templ_surface.points[2][
-            1]:  # rh tragus higher in y = - rotation_z (cw - topview)
+        if self.lm_surf.points[2][1] < templ_surface.points[2][1]:  # rh tragus higher in y = - rotation_z (cw - topview)
             self.z_rotation = -1 * angle_between(nasion_centroid_mesh, nasion_centroid_templ)
         else:
             self.z_rotation = angle_between(nasion_centroid_mesh, nasion_centroid_templ)
         self.lm_surf.rotate_z(self.z_rotation)
 
         # y rotation
-        if self.lm_surf.points[2][2] > templ_surface.points[2][
-            2]:  # rh tragus higher in z = + rotation_y (ccw - frontview)
+        if self.lm_surf.points[2][2] > templ_surface.points[2][2]:  # rh tragus higher in z = + rotation_y (ccw - frontview)
             self.y_rotation = angle_between(self.lm_surf.face_normals[0], templ_surface.face_normals[0])
         else:
             self.y_rotation = -1 * angle_between(self.lm_surf.face_normals[0], templ_surface.face_normals[0])
