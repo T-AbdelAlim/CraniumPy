@@ -192,7 +192,7 @@ class GuiMethods:
             self.mesh_file.rotate_y(metrics.y_rotation, transform_all_input_vectors=True)
             self.mesh_file.rotate_x(metrics.x_rotation, transform_all_input_vectors=True)
 
-        self.mesh_file.rotate_x(angle=90, transform_all_input_vectors=True)
+        self.mesh_file.rotate_x(angle=90, point=[0,0,0], transform_all_input_vectors=True)
         # self.mesh_file.flip_y(point=[0, 0, 0], transform_all_input_vectors=True)
         # self.mesh_file.flip_x(point=[0, 0, 0], transform_all_input_vectors=True)
 
