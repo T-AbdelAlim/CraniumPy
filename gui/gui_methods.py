@@ -193,12 +193,12 @@ class GuiMethods:
             self.mesh_file.rotate_x(metrics.x_rotation, transform_all_input_vectors=True)
 
         self.mesh_file.rotate_x(angle=90, transform_all_input_vectors=True)
-        self.mesh_file.flip_y(point=[0, 0, 0], transform_all_input_vectors=True)
-        self.mesh_file.flip_x(point=[0, 0, 0], transform_all_input_vectors=True)
+        # self.mesh_file.flip_y(point=[0, 0, 0], transform_all_input_vectors=True)
+        # self.mesh_file.flip_x(point=[0, 0, 0], transform_all_input_vectors=True)
 
         metrics.lm_surf.rotate_x(angle=90, transform_all_input_vectors=True)
-        metrics.lm_surf.flip_y(point=[0, 0, 0], transform_all_input_vectors=True)
-        metrics.lm_surf.flip_x(point=[0, 0, 0], transform_all_input_vectors=True)
+        # metrics.lm_surf.flip_y(point=[0, 0, 0], transform_all_input_vectors=True)
+        # metrics.lm_surf.flip_x(point=[0, 0, 0], transform_all_input_vectors=True)
 
         if str(self.file_path).endswith('_rg' + self.extension) or str(self.file_path).endswith('_C' + self.extension):
             write_ply_file(self.mesh_file, str(self.file_path).replace(self.extension, ".ply"))
@@ -432,8 +432,21 @@ class GuiMethods:
             # read source file
             sourcemesh = o3d.io.read_triangle_mesh(sourcepath)
             targetmesh = o3d.io.read_triangle_mesh(targetpath)
+
             sourcemesh.compute_vertex_normals()
             targetmesh.compute_vertex_normals()
+
+            ## Volumetric scaling
+            # compute volume ratio between source and target mesh
+            target_vol = pv.read(targetpath).volume
+            source_vol = pv.read(sourcepath).volume
+            volume_ratio = np.power(target_vol / source_vol, 1 / 3)
+            print(volume_ratio)
+
+            # scale source mesh to match target mesh volume
+            sc=sourcemesh.get_center()
+
+            sourcemesh.scale(volume_ratio, center=[sc[0],0,sc[0]])
 
             # first find rigid registration
             # guess for inital transform for icp
@@ -453,6 +466,7 @@ class GuiMethods:
             sourcem = pv.read(sourcepath)
             targetm = pv.read(deformedpath)
             write_ply_file_NICP(sourcem, targetm.points, deformedpath)
+            print('NICP completed')
             self.file_path = deformedpath
             self.plotter.clear()
             self.mesh_file = pv.read(self.file_path)
