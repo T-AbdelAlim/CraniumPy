@@ -11,7 +11,7 @@ def draw_registration_result(source, target, transformation):
     source_temp.paint_uniform_color([1, 0.706, 0])
     target_temp.paint_uniform_color([0, 0.651, 0.929])
     source_temp.transform(transformation)
-    o3d.visualization.draw_geometries([source_temp, target_temp])
+    # o3d.visualization.draw_geometries([source_temp, target_temp])
 
 
 def icp(source,target,trans_init=np.eye(4)):
