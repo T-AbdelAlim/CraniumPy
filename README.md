@@ -34,6 +34,13 @@ The example mesh ```resources/test_mesh/test_mesh.ply``` can be used to explore 
 
 *NOTE: Step 3. (Clip, Repair, Resample) is computationally heavy (due to the resampling step) and can take a while depending on your setup. Clicking the screen may cause it to freeze.*
 
+### Registration
+Two methods of registration have been implemented after v0.3.2. 
+These include **fiducial registration**, based on the placement of three landmarks, and **non-rigid registration** (non-rigid iterative closest point algorithm).
+
+Unless vertex-to-vertex correspondence is required, fiducial registration may be sufficient and often results in meshes of higher quality (uniformly resampled).
+
+
 ## CraniumPy executable
 If you want to simply run this tool locally (on Windows) from an executable file (.exe), download the folder _CraniumPy v0.3.1_ from the following link:
 [CraniumPy (v0.3.1) Download](https://drive.google.com/drive/folders/1ilAXTINd2TuKbOsuQLmsuLVTppJMYOxz).

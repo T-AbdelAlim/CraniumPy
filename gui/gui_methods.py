@@ -193,20 +193,24 @@ class GuiMethods:
             self.mesh_file.rotate_x(metrics.x_rotation, transform_all_input_vectors=True)
 
         self.mesh_file.rotate_x(angle=90, point=[0,0,0], transform_all_input_vectors=True)
-        # self.mesh_file.flip_y(point=[0, 0, 0], transform_all_input_vectors=True)
-        # self.mesh_file.flip_x(point=[0, 0, 0], transform_all_input_vectors=True)
+        self.mesh_file.flip_y(point=[0, 0, 0], transform_all_input_vectors=True)
+        self.mesh_file.flip_x(point=[0, 0, 0], transform_all_input_vectors=True)
 
         metrics.lm_surf.rotate_x(angle=90, transform_all_input_vectors=True)
-        # metrics.lm_surf.flip_y(point=[0, 0, 0], transform_all_input_vectors=True)
-        # metrics.lm_surf.flip_x(point=[0, 0, 0], transform_all_input_vectors=True)
+        metrics.lm_surf.flip_y(point=[0, 0, 0], transform_all_input_vectors=True)
+        metrics.lm_surf.flip_x(point=[0, 0, 0], transform_all_input_vectors=True)
 
         if str(self.file_path).endswith('_rg' + self.extension) or str(self.file_path).endswith('_C' + self.extension):
             write_ply_file(self.mesh_file, str(self.file_path).replace(self.extension, ".ply"))
-        elif str(self.file_path).endswith('_rg.ply') or str(self.file_path).endswith('_C.ply'):
+        elif str(self.file_path).endswith('_rg.ply') or str(self.file_path).endswith('_rgF.ply') or str(self.file_path).endswith('_C.ply'):
             write_ply_file(self.mesh_file, str(self.file_path))
         else:
-            write_ply_file(self.mesh_file, self.file_path.with_name(self.file_path.stem + '_rg.ply'))
-            self.file_path = self.file_path.with_name(self.file_path.stem + '_rg.ply')
+            if target == "face":
+                write_ply_file(self.mesh_file, self.file_path.with_name(self.file_path.stem + '_rgF.ply'))
+                self.file_path = self.file_path.with_name(self.file_path.stem + '_rgF.ply')
+            else:
+                write_ply_file(self.mesh_file, self.file_path.with_name(self.file_path.stem + '_rg.ply'))
+                self.file_path = self.file_path.with_name(self.file_path.stem + '_rg.ply')
 
         template_path = Path("./template/template_xy.ply")
         if self.CoM_translation == True:
@@ -470,7 +474,8 @@ class GuiMethods:
             self.file_path = deformedpath
             self.plotter.clear()
             self.mesh_file = pv.read(self.file_path)
-            self.plotter.add_mesh(self.mesh_file, show_edges=True)
+            self.plotter.add_mesh(self.mesh_file, show_edges=False)
+            self.plotter.add_points(self.mesh_file.points, color = 'k', render_points_as_spheres=True, opacity=0.75)
 
         except:
             pass
