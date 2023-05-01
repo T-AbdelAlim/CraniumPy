@@ -163,8 +163,11 @@ class CranioMetrics:
             self.HC = np.round(HC_estimate / 10, 1)
 
         if self.HC <= 60:
-            self.slice_index = np.where(self.slice_df['y']
-                                        == slice_height)[0][0]
+            try:
+                self.slice_index = np.where(self.slice_df['y']
+                                            == slice_height)[0][0]
+            except IndexError:
+                print('Orientation problem; unable to detect slice')
 
         else:
             slice_height += self.slice_d

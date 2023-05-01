@@ -16,6 +16,7 @@ from registration.picking import CoordinatePicking
 from registration.write_ply import write_ply_file
 import json
 
+
 import open3d as o3d
 from nicp.icp import icp
 from nicp.nricp import nonrigidIcp
@@ -158,6 +159,15 @@ class GuiMethods:
         if repair == True:
             _meshfix.clean_from_file(str(remesh_path), str(remesh_path))
 
+    @staticmethod
+    def save_ply_file(mesh, file_path, suffix):
+        stem = file_path.stem
+        if not stem.endswith(suffix):
+            stem += suffix
+        new_file_path = file_path.with_name(stem + ".ply")
+        write_ply_file(mesh, str(new_file_path))
+        return new_file_path
+
     # Reg tab
     def coordinate_picking(self, target):
         try:
@@ -175,7 +185,7 @@ class GuiMethods:
         except:
             pass
 
-    def register(self, landmarks, n_iterations=50, target='cranium'):
+    def register(self, landmarks, n_iterations=150, target='cranium'):
         metrics = CoordinatePicking(self.file_path)
 
         # first iteration based on selected landmarks
@@ -193,32 +203,24 @@ class GuiMethods:
             self.mesh_file.rotate_x(metrics.x_rotation, transform_all_input_vectors=True)
 
         self.mesh_file.rotate_x(angle=90, point=[0,0,0], transform_all_input_vectors=True)
-        self.mesh_file.flip_y(point=[0, 0, 0], transform_all_input_vectors=True)
-        self.mesh_file.flip_x(point=[0, 0, 0], transform_all_input_vectors=True)
+        # self.mesh_file.flip_y(point=[0, 0, 0], transform_all_input_vectors=True)
+        # self.mesh_file.flip_x(point=[0, 0, 0], transform_all_input_vectors=True)
 
         metrics.lm_surf.rotate_x(angle=90, transform_all_input_vectors=True)
-        metrics.lm_surf.flip_y(point=[0, 0, 0], transform_all_input_vectors=True)
-        metrics.lm_surf.flip_x(point=[0, 0, 0], transform_all_input_vectors=True)
+        # metrics.lm_surf.flip_y(point=[0, 0, 0], transform_all_input_vectors=True)
+        # metrics.lm_surf.flip_x(point=[0, 0, 0], transform_all_input_vectors=True)
 
-        if str(self.file_path).endswith('_rg' + self.extension) or str(self.file_path).endswith('_C' + self.extension):
-            write_ply_file(self.mesh_file, str(self.file_path).replace(self.extension, ".ply"))
-        elif str(self.file_path).endswith('_rg.ply') or str(self.file_path).endswith('_rgF.ply') or str(self.file_path).endswith('_C.ply'):
-            write_ply_file(self.mesh_file, str(self.file_path))
-        else:
-            if target == "face":
-                write_ply_file(self.mesh_file, self.file_path.with_name(self.file_path.stem + '_rgF.ply'))
-                self.file_path = self.file_path.with_name(self.file_path.stem + '_rgF.ply')
-            else:
-                write_ply_file(self.mesh_file, self.file_path.with_name(self.file_path.stem + '_rg.ply'))
-                self.file_path = self.file_path.with_name(self.file_path.stem + '_rg.ply')
+        suffix = "_rgF" if target == "face" else "_rg"
+        self.file_path = GuiMethods.save_ply_file(self.mesh_file, self.file_path, suffix)
 
         template_path = Path("./template/template_xy.ply")
         if self.CoM_translation == True:
             # if False: the centroid of the 3 landmarks is used as the origin in the frame of reference.
             # if True: the mesh is translated along the y-axis (front-back) based on the center of mass of the HC slice
-            self.com_translation()
+            self.com_translation(suffix=suffix)
             template_path = Path("./template/template_xy_com.ply")
             metrics.lm_surf.translate(self.CoM_value)
+
 
         if target == 'face':
             template_path = Path("./template/template_face.ply")
@@ -227,14 +229,7 @@ class GuiMethods:
             metrics.lm_surf.translate([-1 * metrics.lm_surf.points[0][0], -1 * metrics.lm_surf.points[0][1],
                                        -1 * metrics.lm_surf.points[0][2]])
 
-            if str(self.file_path).endswith('_rg.ply'):
-                write_ply_file(self.mesh_file, str(self.file_path).replace("_rg.ply", "_rgF.ply"))
-                self.file_path = Path(str(self.file_path).replace("_rg.ply", "_rgF.ply"))
-            elif str(self.file_path).endswith('_rgF.ply'):
-                write_ply_file(self.mesh_file, str(self.file_path))
-            else:
-                write_ply_file(self.mesh_file, self.file_path.with_name(self.file_path.stem + '_rgF.ply'))
-                self.file_path = self.file_path.with_name(self.file_path.stem + '_rgF.ply')
+            self.file_path = GuiMethods.save_ply_file(self.mesh_file, self.file_path, suffix)
 
         # # replace old with new registered mesh
         self.plotter.clear()  # clears mesh space every time a new mesh is added
@@ -287,7 +282,7 @@ class GuiMethods:
             outfile.write('\n')
 
     # Translation
-    def com_translation(self):
+    def com_translation(self, suffix=None):
         temp_metric = CranioMetrics(self.file_path)  # temporary metric of the mesh
         temp_metric.extract_dimensions(temp_metric.slice_height)
         CoM = temp_metric.HC_s.center_of_mass()
@@ -295,13 +290,18 @@ class GuiMethods:
         self.mesh_file.translate([0, 0, -CoM[2]])
         self.CoM_value = [0, 0, -CoM[2]]
 
-        if str(self.file_path).endswith('_rg' + self.extension) or str(self.file_path).endswith('_C' + self.extension):
-            write_ply_file(self.mesh_file, str(self.file_path).replace(self.extension, ".ply"))
-        elif str(self.file_path).endswith('_rg.ply') or str(self.file_path).endswith('_C.ply'):
-            write_ply_file(self.mesh_file, str(self.file_path))
+        if suffix != None:
+            self.file_path = GuiMethods.save_ply_file(self.mesh_file, self.file_path, suffix)
         else:
-            write_ply_file(self.mesh_file, self.file_path.with_name(self.file_path.stem + '_rg.ply'))
-            self.file_path = self.file_path.with_name(self.file_path.stem + '_rg.ply')
+            write_ply_file(self.mesh_file, str(self.file_path))
+
+        # if str(self.file_path).endswith('_rg' + self.extension) or str(self.file_path).endswith('_C' + self.extension):
+        #     write_ply_file(self.mesh_file, str(self.file_path).replace(self.extension, ".ply"))
+        # elif str(self.file_path).endswith('_rg.ply') or str(self.file_path).endswith('_C.ply'):
+        #     write_ply_file(self.mesh_file, str(self.file_path))
+        # else:
+        #     write_ply_file(self.mesh_file, self.file_path.with_name(self.file_path.stem + '_rg.ply'))
+        #     self.file_path = self.file_path.with_name(self.file_path.stem + '_rg.ply')
 
     def cranial_cut(self, initial_clip=False):
         try:
