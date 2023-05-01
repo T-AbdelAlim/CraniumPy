@@ -295,14 +295,6 @@ class GuiMethods:
         else:
             write_ply_file(self.mesh_file, str(self.file_path))
 
-        # if str(self.file_path).endswith('_rg' + self.extension) or str(self.file_path).endswith('_C' + self.extension):
-        #     write_ply_file(self.mesh_file, str(self.file_path).replace(self.extension, ".ply"))
-        # elif str(self.file_path).endswith('_rg.ply') or str(self.file_path).endswith('_C.ply'):
-        #     write_ply_file(self.mesh_file, str(self.file_path))
-        # else:
-        #     write_ply_file(self.mesh_file, self.file_path.with_name(self.file_path.stem + '_rg.ply'))
-        #     self.file_path = self.file_path.with_name(self.file_path.stem + '_rg.ply')
-
     def cranial_cut(self, initial_clip=False):
         try:
             self.plotter.clear()
