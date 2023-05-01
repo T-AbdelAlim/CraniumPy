@@ -87,45 +87,6 @@ class CoordinatePicking:
         angle_degr = angle_rad * (180 / np.pi)
         return angle_degr
 
-    def reg_to_templateNew(self, landmarks):
-        # Template triangle with the new reference frame
-        templ_triangle = np.array([[1.00000000e-10, -2.75124192e-01, 5.72706234e+01],
-                                   [-6.10000000e+01, 1.37562096e-01, -2.86353117e+01],
-                                   [6.10000000e+01, 1.37562096e-01, -2.86353117e+01]])
-
-        templ_surface = pv.PolyData(templ_triangle).delaunay_2d()
-        templ_centroid = templ_surface.center_of_mass()
-
-        landmark_vertices = np.array(landmarks)
-        self.lm_surf = pv.PolyData(landmark_vertices).delaunay_2d()
-
-        # Align the random triangle's centroid to the template triangle's centroid
-        self.translation = templ_centroid - np.array(self.lm_surf.center_of_mass())
-        self.lm_surf.translate(self.translation)
-
-        # Rotate the random triangle around the z-axis to align the first vertices
-        nasion_centroid_templ = np.array(templ_triangle[0]) - np.array(templ_centroid)
-        nasion_centroid_mesh = np.array(self.lm_surf.points[0]) - np.array(self.lm_surf.center_of_mass())
-
-        sign = -1 if self.lm_surf.points[2][1] < templ_surface.points[2][1] else 1
-        self.z_rotation = sign * self.angle_between(nasion_centroid_mesh, nasion_centroid_templ)
-        self.lm_surf.rotate_z(self.z_rotation)
-
-        # Rotate the random triangle around the y-axis to align the second vertices
-        sign = 1 if self.lm_surf.points[2][2] > templ_surface.points[2][2] else -1
-        self.y_rotation = sign * self.angle_between(self.lm_surf.face_normals[0], templ_surface.face_normals[0])
-        self.lm_surf.rotate_y(self.y_rotation)
-
-        # Rotate the random triangle around the x-axis to align the third vertices
-        sign = -1 if self.lm_surf.points[0][2] > templ_surface.points[0][2] else 1
-        self.x_rotation = sign * self.angle_between(self.lm_surf.face_normals[0], templ_surface.face_normals[0])
-        self.lm_surf.rotate_x(self.x_rotation)
-
-        return self.translation, self.z_rotation, self.y_rotation, self.x_rotation, self.lm_surf
-
-        # reset coords
-        self.nose_coord = self.left_coord = self.right_coord = []
-
 
     def reg_to_template(self, landmarks):
         # calculate rotations
@@ -148,10 +109,6 @@ class CoordinatePicking:
         templ_triangle = np.array([[1.00000000e-10, 5.72706234e+01, -2.75124192e-01],
                                    [-6.10000000e+01, -2.86353117e+01, 1.37562096e-01],
                                    [6.10000000e+01, -2.86353117e+01, 1.37562096e-01]])
-
-        # templ_triangle = np.array([[0, 0, 80],
-        #                            [60, 0, 0],
-        #                            [-60, 0, 0]])
 
         templ_surface = pv.PolyData(templ_triangle).delaunay_2d()
         templ_centroid = templ_surface.center_of_mass()
