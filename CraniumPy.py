@@ -107,7 +107,7 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         fileMenu.addAction(exitButton)
 
         ## FIDUCIAL
-        pickMenu = regMenu.addMenu('(1) Landmark selection')
+        pickMenu = regMenu.addMenu('(1) Landmark selection (press P)')
 
         # regMenu - coordinate 1 (nose)
         save_c1_Button = Qt.QAction('Save coordinate 1 (nasion)', self)
