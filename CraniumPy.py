@@ -9,7 +9,41 @@ from PyQt5 import Qt, QtCore
 from tkinter import Tk
 from pyvistaqt import QtInteractor
 from gui.gui_methods import GuiMethods
+from PyQt5.QtGui import QPixmap, QFont, QIcon
+from PyQt5.QtWidgets import QLabel
 
+
+class WelcomeScreen(Qt.QDialog):
+    def __init__(self, parent=None):
+        super(WelcomeScreen, self).__init__(parent)
+        self.setWindowFlags(self.windowFlags() & ~Qt.Qt.WindowContextHelpButtonHint)
+        self.setWindowIcon(QIcon("resources/CraniumPy_logo.ico"))
+        self.setWindowTitle("Welcome to CraniumPy")
+
+        layout = Qt.QVBoxLayout()
+
+        # Add custom figure
+        self.add_custom_figure("resources/welcomeCP.jpg", layout)
+
+        # Add button
+        start_button = Qt.QPushButton("CraniumPy v0.3.2")
+        font = QFont("Arial", 14)  # Change font to Arial with a size of 12
+        start_button.setFont(font)
+        try:
+            start_button.setStyleSheet("font-family: 'Arial Nova Light'; font-size: 14; color: rgb(0, 35, 40);")
+        except:
+            pass
+        start_button.clicked.connect(self.accept)  # Close the welcome screen when the button is clicked
+        layout.addWidget(start_button)
+
+        self.setLayout(layout)
+
+    def add_custom_figure(self, image_path, layout):
+        pixmap = QPixmap(image_path)
+        image_label = QLabel()
+        image_label.setPixmap(pixmap)
+        image_label.setScaledContents(True)  # This will enable the image to scale with the window size
+        layout.addWidget(image_label)
 
 
 class MainWindow(Qt.QMainWindow, GuiMethods):
@@ -19,6 +53,8 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         Initialize gui window (without buttons)
         '''
         Qt.QMainWindow.__init__(self, parent)
+        self.setWindowIcon(QIcon("resources/CraniumPy_logo.ico"))
+        self.resize(1000, 1000)
 
         # create the frame
         self.frame = Qt.QFrame()
@@ -34,6 +70,8 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
 
         self.frame.setLayout(hlayout)
         self.setCentralWidget(self.frame)
+
+        self.coordinate_picking(target=None)
 
     def buttons(self):
         '''
@@ -60,6 +98,7 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         # mainMenu - Import mesh button
         importButton = Qt.QAction('Import mesh (.ply)', self)
         importButton.triggered.connect(self.import_mesh)
+        importButton.triggered.connect(lambda: self.coordinate_picking(target=None))
         fileMenu.addAction(importButton)
 
         # mainMenu - Exit button
@@ -69,10 +108,6 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
 
         ## FIDUCIAL
         pickMenu = regMenu.addMenu('(1) Landmark selection')
-        pickButton = Qt.QAction('Enable picking (press P)', self)
-        pickButton.setShortcut('Ctrl+P')
-        pickButton.triggered.connect(lambda: self.coordinate_picking(target=None))
-        pickMenu.addAction(pickButton)
 
         # regMenu - coordinate 1 (nose)
         save_c1_Button = Qt.QAction('Save coordinate 1 (nasion)', self)
@@ -216,7 +251,13 @@ if __name__ == '__main__':
     root = Tk()
     root.withdraw()  # removes tkwindow from file import
     app = Qt.QApplication(sys.argv)
-    window = MainWindow()
-    window.buttons()
-    window.show()
-    sys.exit(app.exec_())
+
+    # Show the welcome screen
+    welcome_screen = WelcomeScreen()
+    if welcome_screen.exec() == Qt.QDialog.Accepted:
+        window = MainWindow()
+        window.buttons()
+        window.show()
+        sys.exit(app.exec_())
+    else:
+        sys.exit(0)
