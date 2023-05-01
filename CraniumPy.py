@@ -1,6 +1,6 @@
 """
 Created on Mon Aug 2, 2021
-Last update on February 15, 2023
+Last update on May 1, 2023
 @author: T-AbdelAlim
 """
 
@@ -26,7 +26,7 @@ class WelcomeScreen(Qt.QDialog):
         self.add_custom_figure("resources/welcomeCP.jpg", layout)
 
         # Add button
-        start_button = Qt.QPushButton("CraniumPy v0.3.2")
+        start_button = Qt.QPushButton("CraniumPy v0.4.0")
         font = QFont("Arial", 14)  # Change font to Arial with a size of 12
         start_button.setFont(font)
         try:
@@ -247,7 +247,7 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
 
 
 if __name__ == '__main__':
-    print('Running CraniumPy 0.3.2')
+    print('Running CraniumPy 0.4.0')
     root = Tk()
     root.withdraw()  # removes tkwindow from file import
     app = Qt.QApplication(sys.argv)
