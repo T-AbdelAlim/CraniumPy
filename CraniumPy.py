@@ -93,13 +93,15 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         regMenu = mainMenu.addMenu('Global alignment')
         nicpMenu = mainMenu.addMenu('Correspondence')
         metricsMenu = mainMenu.addMenu('Cephalometry')
+        utilityMenu = mainMenu.addMenu('Utility')
         viewMenu = mainMenu.addMenu('View')
 
-        # mainMenu - Import mesh button
+        # fileMenu - Import mesh button
         importButton = Qt.QAction('Import mesh (.ply)', self)
         importButton.triggered.connect(self.import_mesh)
         importButton.triggered.connect(lambda: self.coordinate_picking(target=None))
         fileMenu.addAction(importButton)
+
 
         # mainMenu - Exit button
         exitButton = Qt.QAction('Exit', self)
@@ -197,10 +199,6 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         sliceextractButton.triggered.connect(lambda: self.craniometrics(slice_only=True))
         metricsMenu.addAction(sliceextractButton)
 
-        # metricsMenu - extract mesh button
-        cleanmeshButton = Qt.QAction('Re-load mesh', self)
-        cleanmeshButton.triggered.connect(self.clean_mesh)
-        metricsMenu.addAction(cleanmeshButton)
 
         # ## VIEW
         viewsMenu = viewMenu.addMenu('Camera View')
@@ -228,6 +226,24 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         resetviewButton.triggered.connect(lambda: self.plotter.view_xz())
         viewsMenu.addAction(resetviewButton)
 
+        # ## UTILITY
+
+        # utilMenu - extract mesh button
+        cleanmeshButton = Qt.QAction('Re-load mesh', self)
+        cleanmeshButton.triggered.connect(self.clean_mesh)
+        utilityMenu.addAction(cleanmeshButton)
+
+        # utilMenu - flip
+        regFlip_Button = Qt.QAction('(If required) Flip-Y ', self)
+        regFlip_Button.triggered.connect(self.flip)
+        utilityMenu.addAction(regFlip_Button)
+
+        # ## viewsMenu - Screenshot
+        ssButton = Qt.QAction('Screenshot', self)
+        ssButton.setShortcut('Ctrl+S')
+        ssButton.triggered.connect(self.screenshot)
+        utilityMenu.addAction(ssButton)
+
         # ## VIEW
         gridMenu = viewMenu.addMenu('Measurement grid')
         sgridButton = Qt.QAction('Show grid', self)
@@ -239,15 +255,11 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
                                                                      show_zaxis=False))
         gridMenu.addAction(hgridButton)
 
-        # ## viewsMenu - Screenshot
-        ssButton = Qt.QAction('Screenshot', self)
-        ssButton.setShortcut('Ctrl+S')
-        ssButton.triggered.connect(self.screenshot)
-        viewMenu.addAction(ssButton)
+
 
 
 if __name__ == '__main__':
-    print('Running CraniumPy 0.4.0')
+    print('Running CraniumPy 0.4.0\n-----------------------')
     root = Tk()
     root.withdraw()  # removes tkwindow from file import
     app = Qt.QApplication(sys.argv)
