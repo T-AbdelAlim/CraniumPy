@@ -15,6 +15,7 @@ from craniometrics.craniometrics import CranioMetrics
 from registration.picking import CoordinatePicking
 from registration.write_ply import write_ply_file
 import json
+import datetime
 
 
 import open3d as o3d
@@ -74,33 +75,36 @@ class GuiMethods:
         self.file_path = resampled_path
 
     @staticmethod
-    def call_template(ICV_scaling=1.0, CoM_translation=True, face=False):
+    def call_template(ICV_scaling=1.0, CoM_translation=True, target='cranium'): #target = face/cranium/head
         if CoM_translation == True:
             template_path = Path('./template/clipped_template_xy_com.ply')
         else:
             template_path = Path('./template/clipped_template_xy.ply')
 
-        if face == True:
+        if target == 'face':
             template_path = Path('./template/template_face.ply')
 
+        elif target == 'head':
+            template_path = Path('./template/template_xy_com.ply')
+
+
         template_mesh = pv.read(template_path)
-        if face == False:
+        if target != 'face':
             template_mesh.points *= ICV_scaling ** (1 / 3)  # template_volume = 2339070.752133594
 
         return template_mesh
 
-    def show_registration(self):
+    def show_registration(self, target='cranium'):
         self.plotter.clear()
 
         try:
             template_mesh = GuiMethods.call_template(ICV_scaling=1,
-                                                     CoM_translation=self.CoM_translation)
-            # template_mesh = GuiMethods.call_template(ICV_scaling=self.mesh_file.volume / 2339070.75,
-            #                                          CoM_translation=self.CoM_translation)
+                                                     CoM_translation=self.CoM_translation, target=target)
             self.plotter.add_mesh(template_mesh, color=self.template_color, opacity=0.5, show_edges=True)
             self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=False, opacity=0.5)
             self.plotter.add_legend(labels=[['template', self.template_color], ['mesh', self.mesh_color]],
                                     face='circle')
+
 
         except:
             template_mesh = GuiMethods.call_template()
@@ -109,23 +113,7 @@ class GuiMethods:
             self.plotter.add_legend(labels=[['template', self.template_color]], face='circle')
             self.plotter.reset_camera()
 
-    def show_registration_face(self):
-        self.plotter.clear()
 
-        try:
-            template_mesh = GuiMethods.call_template(ICV_scaling=self.mesh_file.volume / 2339070.75,
-                                                     CoM_translation=self.CoM_translation, face=True)
-            self.plotter.add_mesh(template_mesh, color=self.template_color, opacity=0.5, show_edges=True)
-            self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=False, opacity=0.5)
-            self.plotter.add_legend(labels=[['template', self.template_color], ['mesh', self.mesh_color]],
-                                    face='circle')
-
-        except:
-            template_mesh = GuiMethods.call_template(face=True)
-
-            self.plotter.add_mesh(template_mesh, color=self.template_color, opacity=0.5, show_edges=True)
-            self.plotter.add_legend(labels=[['template', self.template_color]], face='circle')
-            self.plotter.reset_camera()
 
     def flip(self):
         self.plotter.clear()
@@ -220,30 +208,6 @@ class GuiMethods:
         self.mesh_file.rotate_y(metrics.y_rotation_normals, transform_all_input_vectors=True)
         self.mesh_file.rotate_z(metrics.z_rotation_normals, transform_all_input_vectors=True)
 
-
-
-        # self.mesh_file.translate(metrics.translation)
-        # self.mesh_file.rotate_x(metrics.x_rotation, transform_all_input_vectors=True)
-        # self.mesh_file.rotate_y(metrics.y_rotation, transform_all_input_vectors=True)
-        # self.mesh_file.rotate_z(metrics.z_rotation, transform_all_input_vectors=True)
-
-
-        # for i in range(n_iterations):
-        #     metrics.reg_to_template(metrics.lm_surf.points)
-        #     self.mesh_file.translate(metrics.translation)
-        #     self.mesh_file.rotate_y(metrics.y_rotation)
-        #     self.mesh_file.rotate_z(metrics.z_rotation)
-        #     self.mesh_file.rotate_x(metrics.x_rotation)
-
-        # self.mesh_file.rotate_x(angle=90, point=[0,0,0], transform_all_input_vectors=True)
-        # self.mesh_file.rotate_z(angle=180, transform_all_input_vectors=True)
-        # self.mesh_file.flip_y(point=[0, 0, 0], transform_all_input_vectors=True)
-        # self.mesh_file.flip_x(point=[0, 0, 0], transform_all_input_vectors=True)
-
-        # metrics.lm_surf.rotate_x(angle=90, transform_all_input_vectors=True)
-        # metrics.lm_surf.rotate_z(angle=180, transform_all_input_vectors=True)
-        # metrics.lm_surf.flip_y(point=[0, 0, 0], transform_all_input_vectors=True)
-        # metrics.lm_surf.flip_x(point=[0, 0, 0], transform_all_input_vectors=True)
 
         suffix = "_rgF" if target == "face" else "_rg"
         self.file_path = GuiMethods.save_ply_file(self.mesh_file, self.file_path, suffix)
@@ -389,7 +353,7 @@ class GuiMethods:
             else:
                 clip = 0
 
-            template_mesh = GuiMethods.call_template(face=True)
+            template_mesh = GuiMethods.call_template(target='face')
 
             lmk_surface = pv.PolyData(self.newpos_landmarks).delaunay_2d()
             templ_centroid = lmk_surface.center_of_mass()
@@ -431,6 +395,25 @@ class GuiMethods:
             metrics.extract_dimensions(metrics.slice_height)
             metrics.plot_craniometrics(self.plotter, n_axes=1,
                                        slice_only=slice_only)  # n_axes = 1 -> only extracts axial slice
+
+            current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            measurements = {
+                "Datetime": current_time,
+                "Filepath": "{}".format(self.file_path),
+                "OFD_depth_mm": round(np.float64(metrics.depth), 2),
+                "BPD_breadth_mm": round(np.float64(metrics.breadth), 2),
+                "Cephalic_Index": metrics.CI,
+                "Circumference_cm": metrics.HC,
+                "MeshVolume_cc": round((metrics.pvmesh.volume / 1000), 2),
+            }
+
+            # Write the measurements to a JSON file
+            jsonpath_metrics = str(self.file_path.parent.joinpath(self.file_name + '_metrics.json'))
+            print('metricspath {}'.format(jsonpath_metrics))
+            with open(jsonpath_metrics, "+w") as jsonpath_metrics:
+                json.dump(measurements, jsonpath_metrics, indent=4)
+
+
         except:
             pass
 

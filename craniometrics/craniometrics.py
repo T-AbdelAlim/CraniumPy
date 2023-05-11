@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pyvista as pv
-
+import json
 
 class CranioMetrics:
     """
@@ -204,6 +204,8 @@ class CranioMetrics:
             'lh_opt': self.lh_opt,
         }, ignore_index=True)
 
+
+
     def plot_craniometrics(self, plotter, n_axes=1, slice_only=True):
         """
         plotting of the extracted extracted craniometrics
@@ -213,6 +215,7 @@ class CranioMetrics:
         the original mesh and in red: HC line and the four optima used to
         calculated the CI.
         """
+
         plotter.add_mesh(self.HC_s, color='red', line_width=12)
         if slice_only:
             plotter.view_xz(True)
@@ -242,8 +245,10 @@ Mesh volume = {} cc '''.format(
             self.HC,
             round((self.pvmesh.volume / 1000), 2),
         ), font_size=10, color='white')
+        # ICV correlation based on CT: round((((self.pvmesh.volume / 1000) + 46.4349) / 1.4566), 2)
 
-    # ICV correlation based on CT: round((((self.pvmesh.volume / 1000) + 46.4349) / 1.4566), 2)
+
+
 
     def plot_HC_slice(self):
         self.extract_dimensions(self.slice_height)
