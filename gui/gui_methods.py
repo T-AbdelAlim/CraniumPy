@@ -76,15 +76,16 @@ class GuiMethods:
 
     @staticmethod
     def call_template(ICV_scaling=1.0, CoM_translation=True, target='cranium'): #target = face/cranium/head
-        if CoM_translation == True:
+        # if CoM_translation == True:
+        #     template_path = Path('./template/clipped_template_xy_com.ply')
+        # else:
+        #     template_path = Path('./template/clipped_template_xy.ply')
+
+        if target == 'cranium' and CoM_translation == True:
             template_path = Path('./template/clipped_template_xy_com.ply')
-        else:
-            template_path = Path('./template/clipped_template_xy.ply')
-
-        if target == 'face':
+        elif target == 'face':
             template_path = Path('./template/template_face.ply')
-
-        elif target == 'head':
+        elif target == 'head' and CoM_translation == True:
             template_path = Path('./template/template_xy_com.ply')
 
 
@@ -107,7 +108,7 @@ class GuiMethods:
 
 
         except:
-            template_mesh = GuiMethods.call_template()
+            template_mesh = GuiMethods.call_template(target=target)
 
             self.plotter.add_mesh(template_mesh, color=self.template_color, opacity=0.5, show_edges=True)
             self.plotter.add_legend(labels=[['template', self.template_color]], face='circle')
