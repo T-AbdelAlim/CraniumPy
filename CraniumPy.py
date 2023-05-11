@@ -91,8 +91,8 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         mainMenu = self.menuBar()
         fileMenu = mainMenu.addMenu('File')
         regMenu = mainMenu.addMenu('Global alignment')
-        nicpMenu = mainMenu.addMenu('Correspondence')
         metricsMenu = mainMenu.addMenu('Cephalometry')
+        nicpMenu = mainMenu.addMenu('Correspondence')
         utilityMenu = mainMenu.addMenu('Utility')
         viewMenu = mainMenu.addMenu('View')
 
@@ -186,14 +186,14 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         reg_Button3.triggered.connect(lambda: self.nricp_to_template(target='face'))
         pickMenu3.addAction(reg_Button3)
 
-        pickMenu4 = nicpMenu.addMenu('NICP head')
-        reg_Button4 = Qt.QAction('Show target', self)
-        reg_Button4.triggered.connect(lambda: self.show_registration(target='head'))
-        pickMenu4.addAction(reg_Button4)
-
-        reg_Button5 = Qt.QAction('Calculate', self)
-        reg_Button5.triggered.connect(lambda: self.nricp_to_template(target='face'))
-        pickMenu4.addAction(reg_Button5)
+        # pickMenu4 = nicpMenu.addMenu('NICP head')
+        # reg_Button4 = Qt.QAction('Show target', self)
+        # reg_Button4.triggered.connect(lambda: self.show_registration(target='head'))
+        # pickMenu4.addAction(reg_Button4)
+        #
+        # reg_Button5 = Qt.QAction('Calculate', self)
+        # reg_Button5.triggered.connect(lambda: self.nricp_to_template(target='face'))
+        # pickMenu4.addAction(reg_Button5)
 
 
         ## CRANIOMETRICS (cranium)
@@ -241,10 +241,10 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         cleanmeshButton.triggered.connect(self.clean_mesh)
         utilityMenu.addAction(cleanmeshButton)
 
-        # utilMenu - flip
-        regFlip_Button = Qt.QAction('(If required) Flip-Y ', self)
-        regFlip_Button.triggered.connect(self.flip)
-        utilityMenu.addAction(regFlip_Button)
+        # # utilMenu - flip
+        # regFlip_Button = Qt.QAction('(If required) Flip-Y ', self)
+        # regFlip_Button.triggered.connect(self.flip)
+        # utilityMenu.addAction(regFlip_Button)
 
         # ## viewsMenu - Screenshot
         ssButton = Qt.QAction('Screenshot', self)
