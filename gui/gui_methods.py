@@ -127,6 +127,22 @@ class GuiMethods:
             self.plotter.add_legend(labels=[['template', self.template_color]], face='circle')
             self.plotter.reset_camera()
 
+    def flip(self):
+        self.plotter.clear()
+
+        try:
+            self.mesh_file.flip_y(point=[0, 0, 0], transform_all_input_vectors=True)
+            self.mesh_file.flip_x(point=[0, 0, 0], transform_all_input_vectors=True)
+            suffix = "_rgF" if str(self.file_path).endswith('_rgF.ply') else "_rg"
+            self.file_path = GuiMethods.save_ply_file(self.mesh_file, self.file_path, suffix)
+            self.mesh_file = pv.read(self.file_path)
+            self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=True)
+            self.plotter.show_grid()
+            self.plotter.reset_camera()
+
+        except:
+            pass
+
     @staticmethod
     def three_slices(mesh_file, plotter, color='yellow'):
         AX_slice = mesh_file.slice(normal=[0, 0, 1], origin=[0, 0, 2])
@@ -185,28 +201,47 @@ class GuiMethods:
         except:
             pass
 
-    def register(self, landmarks, n_iterations=150, target='cranium'):
+    def register(self, landmarks, n_iterations=10, target='cranium'):
         metrics = CoordinatePicking(self.file_path)
 
         # first iteration based on selected landmarks
         metrics.reg_to_template(landmarks)
+        print("mesh translation {}".format(metrics.translation))
+        print("nasion pitching {}".format(metrics.x_rotation_nasion))
+        print("nasion rotation {}".format(metrics.y_rotation_nasion))
+        print("tragi rotation {}".format(metrics.z_rotation_nasion))
+
         self.mesh_file.translate(metrics.translation)
-        self.mesh_file.rotate_z(metrics.z_rotation, transform_all_input_vectors=True)
-        self.mesh_file.rotate_y(metrics.y_rotation, transform_all_input_vectors=True)
-        self.mesh_file.rotate_x(metrics.x_rotation, transform_all_input_vectors=True)
+        self.mesh_file.rotate_x(metrics.x_rotation_nasion, transform_all_input_vectors=True)
+        self.mesh_file.rotate_y(metrics.y_rotation_nasion, transform_all_input_vectors=True)
+        self.mesh_file.rotate_z(metrics.z_rotation_nasion, transform_all_input_vectors=True)
 
-        for i in range(n_iterations):
-            metrics.reg_to_template(metrics.lm_surf.points)
-            self.mesh_file.translate(metrics.translation)
-            self.mesh_file.rotate_z(metrics.z_rotation, transform_all_input_vectors=True)
-            self.mesh_file.rotate_y(metrics.y_rotation, transform_all_input_vectors=True)
-            self.mesh_file.rotate_x(metrics.x_rotation, transform_all_input_vectors=True)
+        self.mesh_file.rotate_x(metrics.x_rotation_normals, transform_all_input_vectors=True)
+        self.mesh_file.rotate_y(metrics.y_rotation_normals, transform_all_input_vectors=True)
+        self.mesh_file.rotate_z(metrics.z_rotation_normals, transform_all_input_vectors=True)
 
-        self.mesh_file.rotate_x(angle=90, point=[0,0,0], transform_all_input_vectors=True)
+
+
+        # self.mesh_file.translate(metrics.translation)
+        # self.mesh_file.rotate_x(metrics.x_rotation, transform_all_input_vectors=True)
+        # self.mesh_file.rotate_y(metrics.y_rotation, transform_all_input_vectors=True)
+        # self.mesh_file.rotate_z(metrics.z_rotation, transform_all_input_vectors=True)
+
+
+        # for i in range(n_iterations):
+        #     metrics.reg_to_template(metrics.lm_surf.points)
+        #     self.mesh_file.translate(metrics.translation)
+        #     self.mesh_file.rotate_y(metrics.y_rotation)
+        #     self.mesh_file.rotate_z(metrics.z_rotation)
+        #     self.mesh_file.rotate_x(metrics.x_rotation)
+
+        # self.mesh_file.rotate_x(angle=90, point=[0,0,0], transform_all_input_vectors=True)
+        # self.mesh_file.rotate_z(angle=180, transform_all_input_vectors=True)
         # self.mesh_file.flip_y(point=[0, 0, 0], transform_all_input_vectors=True)
         # self.mesh_file.flip_x(point=[0, 0, 0], transform_all_input_vectors=True)
 
-        metrics.lm_surf.rotate_x(angle=90, transform_all_input_vectors=True)
+        # metrics.lm_surf.rotate_x(angle=90, transform_all_input_vectors=True)
+        # metrics.lm_surf.rotate_z(angle=180, transform_all_input_vectors=True)
         # metrics.lm_surf.flip_y(point=[0, 0, 0], transform_all_input_vectors=True)
         # metrics.lm_surf.flip_x(point=[0, 0, 0], transform_all_input_vectors=True)
 
@@ -216,7 +251,7 @@ class GuiMethods:
         template_path = Path("./template/template_xy.ply")
         if self.CoM_translation == True:
             # if False: the centroid of the 3 landmarks is used as the origin in the frame of reference.
-            # if True: the mesh is translated along the y-axis (front-back) based on the center of mass of the HC slice
+            # if True: the mesh is translated along the z-axis (front-back) based on the center of mass of the HC slice
             self.com_translation(suffix=suffix)
             template_path = Path("./template/template_xy_com.ply")
             metrics.lm_surf.translate(self.CoM_value)
@@ -289,6 +324,7 @@ class GuiMethods:
         # self.mesh_file.translate([-CoM[0], 0, -CoM[2]]) # uncomment for lateral CoM translation
         self.mesh_file.translate([0, 0, -CoM[2]])
         self.CoM_value = [0, 0, -CoM[2]]
+        print('Center of Mass correction: {}'.format(self.CoM_value))
 
         if suffix != None:
             self.file_path = GuiMethods.save_ply_file(self.mesh_file, self.file_path, suffix)
