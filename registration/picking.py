@@ -102,9 +102,9 @@ class CoordinatePicking:
             v2 = coords[2] - coords[0]
             normal = np.cross(v1, v2)
             normal /= np.linalg.norm(normal)
-
-            if normal[1] < 0:
-                normal = -normal
+            #
+            # if normal[1] < 0:
+            #     normal = -normal
 
             return normal
 
@@ -189,6 +189,7 @@ class CoordinatePicking:
 
         # z rotation
         lm_surf_normal = compute_normal_vector(self.lm_surf.points)
+        print('original normal {} '.format(lm_surf_normal))
         templ_normal = compute_normal_vector(templ_surface.points)
         euler_face_normals = euler_angles_from_vectors(lm_surf_normal, templ_normal)
         self.x_rotation_normals = euler_face_normals[0]
@@ -199,6 +200,7 @@ class CoordinatePicking:
         self.lm_surf.rotate_y(self.y_rotation_normals)
         self.lm_surf.rotate_z(self.z_rotation_normals)
 
+        print('new normal {} '.format(lm_surf_normal))
 
         return self.translation, euler_nasion_angles, euler_face_normals
 

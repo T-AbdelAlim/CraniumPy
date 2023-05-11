@@ -159,14 +159,18 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
 
         ## metricsMenu - show registration wrt cranial template
         templButton2 = Qt.QAction('Face', self)
-        templButton2.triggered.connect(self.show_registration_face)
+        templButton2.triggered.connect(lambda: self.show_registration(target='face'))
         showMenu.addAction(templButton2)
+
+        templButton3 = Qt.QAction('Head', self)
+        templButton3.triggered.connect(lambda: self.show_registration(target='head'))
+        showMenu.addAction(templButton3)
 
 
         ## NICP
         pickMenu2 = nicpMenu.addMenu('NICP cranium')
         pickButton2 = Qt.QAction('Show target', self)
-        pickButton2.triggered.connect(self.show_registration)
+        pickButton2.triggered.connect(lambda: self.show_registration(target='cranium'))
         pickMenu2.addAction(pickButton2)
 
         reg_Button2 = Qt.QAction('Calculate', self)
@@ -175,17 +179,21 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
 
         pickMenu3 = nicpMenu.addMenu('NICP face')
         pickButton3 = Qt.QAction('Show target', self)
-        pickButton3.triggered.connect(self.show_registration_face)
+        pickButton3.triggered.connect(lambda: self.show_registration(target='face'))
         pickMenu3.addAction(pickButton3)
 
         reg_Button3 = Qt.QAction('Calculate', self)
         reg_Button3.triggered.connect(lambda: self.nricp_to_template(target='face'))
         pickMenu3.addAction(reg_Button3)
 
-        pickMenu4 = nicpMenu.addMenu('Experimental')
-        reg_Button4 = Qt.QAction('NICP head', self)
-        reg_Button4.triggered.connect(lambda: self.nricp_to_template(target='head'))
+        pickMenu4 = nicpMenu.addMenu('NICP head')
+        reg_Button4 = Qt.QAction('Show target', self)
+        reg_Button4.triggered.connect(lambda: self.show_registration(target='head'))
         pickMenu4.addAction(reg_Button4)
+
+        reg_Button5 = Qt.QAction('Calculate', self)
+        reg_Button5.triggered.connect(lambda: self.nricp_to_template(target='face'))
+        pickMenu4.addAction(reg_Button5)
 
 
         ## CRANIOMETRICS (cranium)
