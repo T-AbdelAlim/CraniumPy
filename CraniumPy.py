@@ -154,7 +154,7 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         ## metricsMenu - show registration wrt cranial template
         showMenu = regMenu.addMenu('(4) Show registration')
         templButton = Qt.QAction('Cranium', self)
-        templButton.triggered.connect(self.show_registration)
+        templButton.triggered.connect(lambda: self.show_registration(target='cranium'))
         showMenu.addAction(templButton)
 
         ## metricsMenu - show registration wrt cranial template
