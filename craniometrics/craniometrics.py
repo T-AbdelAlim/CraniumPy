@@ -117,6 +117,7 @@ class CranioMetrics:
                 self.mesh_s = self.pvmesh.slice(normal=[0, 0, 1], origin=[0, 0, i])
                 plotter.add_mesh(self.mesh_s, color='white')
 
+
     def extract_dimensions(self, slice_height):
         """
         extract_dimensions(self.slice_height) extracts the basic measures from

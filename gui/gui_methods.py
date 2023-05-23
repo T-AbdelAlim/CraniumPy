@@ -1,11 +1,9 @@
 """
-Created on Mon Aug 2, 2021
-Last update on May 1, 2023
 @author: TAbdelAlim
 """
 
 from tkinter.filedialog import askopenfilename, asksaveasfilename
-import datetime
+from menpo3d.vtkutils import VTKClosestPointLocator
 import pyacvd
 import pyvista as pv
 import numpy as np
@@ -23,6 +21,65 @@ from nicp.icp import icp
 from nicp.nricp import nonrigidIcp
 from nicp.write_ply import write_ply_file_NICP
 import copy
+
+
+
+def icp(source,target,trans_init=np.eye(4)):
+    sourcemesh=copy.deepcopy(source)
+    targetmesh=copy.deepcopy(target)
+    sourceply =  o3d.geometry.PointCloud()
+    targetply =  o3d.geometry.PointCloud()
+    sourcemesh.compute_vertex_normals()
+    targetmesh.compute_vertex_normals()
+    sourceply.points = sourcemesh.vertices
+    targetply.points = targetmesh.vertices
+    sourceply.normals = sourcemesh.vertex_normals
+    targetply.normals = targetmesh.vertex_normals
+
+    threshold = 0.02
+    reg_p2p = o3d.pipelines.registration.registration_icp(
+        sourceply, targetply, threshold, trans_init,
+        o3d.pipelines.registration.TransformationEstimationPointToPlane())
+    return reg_p2p.transformation
+
+
+def calculate_sum(points1, points2, half_face='left'):
+    assert half_face in ['left', 'right'], "half_face must be either 'left' or 'right'"
+
+    if half_face == 'left':
+        mask = points1[:, 0] < 0
+    else:
+        mask = points1[:, 0] > 0
+
+    points1 = points1[mask]
+    points2 = points2[mask]
+
+    n = points1.shape[0]  # number of points
+    distances = np.linalg.norm(points1 - points2, axis=1)  # Euclidean distances
+    return np.sum(distances) / n
+
+
+def mirror_mesh(mesh):
+    mirrored = mesh.copy()
+    mirrored.flip_x()
+    return mirrored
+
+
+def compute_asymmetry_heatmap(original_points, mirrored_points):
+    half_index = np.where(original_points[:, 0] < 0)
+    center = np.mean(original_points, axis=0)
+    center = [center[0],0,center[2]]
+
+    # Compute the distances from the center to the original and mirrored points
+    distance_original = np.linalg.norm(original_points - center, axis=1)
+    distance_mirror = np.linalg.norm(mirrored_points - center, axis=1)
+
+    # Compute the asymmetry heatmap as the difference of the distances,
+    # but reverse the sign of the difference
+    asymmetry_heatmap = (distance_original - distance_mirror)
+    asymmetry_heatmap[half_index] = 0
+
+    return asymmetry_heatmap
 
 
 class GuiMethods:
@@ -115,23 +172,6 @@ class GuiMethods:
             self.plotter.reset_camera()
 
 
-
-    def flip(self):
-        self.plotter.clear()
-
-        try:
-            self.mesh_file.flip_y(point=[0, 0, 0], transform_all_input_vectors=True)
-            self.mesh_file.flip_x(point=[0, 0, 0], transform_all_input_vectors=True)
-            suffix = "_rgF" if str(self.file_path).endswith('_rgF.ply') else "_rg"
-            self.file_path = GuiMethods.save_ply_file(self.mesh_file, self.file_path, suffix)
-            self.mesh_file = pv.read(self.file_path)
-            self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=True)
-            self.plotter.show_grid()
-            self.plotter.reset_camera()
-
-        except:
-            pass
-
     @staticmethod
     def three_slices(mesh_file, plotter, color='yellow'):
         AX_slice = mesh_file.slice(normal=[0, 0, 1], origin=[0, 0, 2])
@@ -155,7 +195,7 @@ class GuiMethods:
             clus.cluster(n_vertices)
             remesh = clus.create_mesh()
 
-        elif remesh.n_points > 150000:
+        elif remesh.n_points > 500000:
             print('Mesh contains too many vertices ({}). Mesh is not resampled.'.format(remesh.n_points))
 
         remesh_path = file_path.with_name(file_path.stem + postfix + extension)
@@ -488,6 +528,72 @@ class GuiMethods:
             self.mesh_file = pv.read(self.file_path)
             self.plotter.add_mesh(self.mesh_file, show_edges=False)
             self.plotter.add_points(self.mesh_file.points, color = 'k', render_points_as_spheres=True, opacity=0.75)
+
+        except:
+            pass
+
+    def calculate_asymmetry(self):
+        try:
+            # Load the mesh
+            mesh_path = str(self.file_path)
+            mesh = pv.read(mesh_path)
+
+            # Mirror the mesh
+            mirrored_mesh = mirror_mesh(mesh)
+
+            # Convert PyVista mesh to Open3D mesh
+            source_o3d = o3d.geometry.TriangleMesh()
+            source_o3d.vertices = o3d.utility.Vector3dVector(mesh.points)
+            source_o3d.triangles = o3d.utility.Vector3iVector(mesh.faces.reshape(-1, 4)[:, 1:])
+
+            mirrored_o3d = o3d.geometry.TriangleMesh()
+            mirrored_o3d.vertices = o3d.utility.Vector3dVector(mirrored_mesh.points)
+            mirrored_o3d.triangles = o3d.utility.Vector3iVector(mirrored_mesh.faces.reshape(-1, 4)[:, 1:])
+
+            # Perform ICP
+            initial_guess = np.eye(4)
+            transform = icp(source_o3d, mirrored_o3d, initial_guess)
+
+            # Apply transformation to mirrored mesh
+            mirrored_o3d.transform(transform)
+
+            # Convert the transformed Open3D mesh back to a PyVista mesh
+            vertices = np.asarray(mirrored_o3d.vertices)
+            faces = np.asarray(mirrored_o3d.triangles)
+            faces = np.c_[np.full(len(faces), 3), faces]  # Adding a column for the number of vertices per face
+            mirrored_mesh = pv.PolyData(vertices, faces)
+
+            # Compute the difference between the original and mirrored mesh
+            closest_points_locator = VTKClosestPointLocator(mirrored_mesh)
+            closest_points, closest_idx = closest_points_locator(mesh.points)
+
+            # Calculate the sum
+            sum_value = calculate_sum(mesh.points, closest_points)
+            print("Asymmetry Value: ", sum_value)
+
+            # Compute the asymmetry heatmap
+            asymmetry_heatmap = compute_asymmetry_heatmap(mesh.points, closest_points)
+            m_clim = np.abs(asymmetry_heatmap).max().round()
+
+            # Visualize the asymmetry
+            self.plotter.clear()
+            self.plotter.add_mesh(pv.read(str(self.file_path)), color='white', scalars=asymmetry_heatmap,
+                                  cmap='coolwarm', show_edges=True,
+                                  clim=[-m_clim, m_clim])
+            self.plotter.add_text("Mean Asymmetry Index: {}".format(np.round(sum_value, 4)), position='lower_right')
+
+            current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            MAI_measurement = {
+                "Datetime": current_time,
+                "Filepath": "{}".format(self.file_path),
+                "Mean_Asymmetry_Index": np.round(sum_value, 4)
+            }
+
+            # Write the measurements to a JSON file
+            jsonpath_asymmetry = str(self.file_path.parent.joinpath(self.file_name + '_MAI.json'))
+            print('asymmetrypath {}'.format(jsonpath_asymmetry))
+            with open(jsonpath_asymmetry, "+w") as jsonpath_asymmetry:
+                json.dump(MAI_measurement, jsonpath_asymmetry, indent=4)
 
         except:
             pass
