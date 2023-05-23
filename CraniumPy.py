@@ -1,6 +1,6 @@
 """
 Created on Mon Aug 2, 2021
-Last update on May 1, 2023
+Last update on May 19, 2023
 @author: T-AbdelAlim
 """
 
@@ -26,7 +26,7 @@ class WelcomeScreen(Qt.QDialog):
         self.add_custom_figure("resources/welcomeCP.jpg", layout)
 
         # Add button
-        start_button = Qt.QPushButton("CraniumPy v0.4.0")
+        start_button = Qt.QPushButton("CraniumPy v0.4.1")
         font = QFont("Arial", 14)  # Change font to Arial with a size of 12
         start_button.setFont(font)
         try:
@@ -91,13 +91,12 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         mainMenu = self.menuBar()
         fileMenu = mainMenu.addMenu('File')
         regMenu = mainMenu.addMenu('Global alignment')
-        metricsMenu = mainMenu.addMenu('Cephalometry')
-        nicpMenu = mainMenu.addMenu('Correspondence')
+        metricsMenu = mainMenu.addMenu('Compute')
         utilityMenu = mainMenu.addMenu('Utility')
         viewMenu = mainMenu.addMenu('View')
 
         # fileMenu - Import mesh button
-        importButton = Qt.QAction('Import mesh (.ply)', self)
+        importButton = Qt.QAction('Import mesh', self)
         importButton.triggered.connect(self.import_mesh)
         importButton.triggered.connect(lambda: self.coordinate_picking(target=None))
         fileMenu.addAction(importButton)
@@ -167,7 +166,25 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         showMenu.addAction(templButton3)
 
 
+        ## CRANIOMETRICS (cranium)
+        # metricsMenu - extract measurements button
+        extractButton = Qt.QAction('Cephalometrics', self)
+        extractButton.triggered.connect(self.craniometrics)
+        metricsMenu.addAction(extractButton)
+
+        # metricsMenu - extract slice only
+        sliceextractButton = Qt.QAction('2D slice', self)
+        sliceextractButton.triggered.connect(lambda: self.craniometrics(slice_only=True))
+        metricsMenu.addAction(sliceextractButton)
+
+        # metricsMenu - extract slice only
+        FAIButton = Qt.QAction('Facial Asymmetry', self)
+        FAIButton.triggered.connect(lambda: self.calculate_asymmetry())
+        metricsMenu.addAction(FAIButton)
+
         ## NICP
+        nicpMenu = metricsMenu.addMenu('Non-rigid ICP')
+
         pickMenu2 = nicpMenu.addMenu('NICP cranium')
         pickButton2 = Qt.QAction('Show target', self)
         pickButton2.triggered.connect(lambda: self.show_registration(target='cranium'))
@@ -185,28 +202,6 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         reg_Button3 = Qt.QAction('Calculate', self)
         reg_Button3.triggered.connect(lambda: self.nricp_to_template(target='face'))
         pickMenu3.addAction(reg_Button3)
-
-        # pickMenu4 = nicpMenu.addMenu('NICP head')
-        # reg_Button4 = Qt.QAction('Show target', self)
-        # reg_Button4.triggered.connect(lambda: self.show_registration(target='head'))
-        # pickMenu4.addAction(reg_Button4)
-        #
-        # reg_Button5 = Qt.QAction('Calculate', self)
-        # reg_Button5.triggered.connect(lambda: self.nricp_to_template(target='face'))
-        # pickMenu4.addAction(reg_Button5)
-
-
-        ## CRANIOMETRICS (cranium)
-        # metricsMenu - extract measurements button
-        extractButton = Qt.QAction('Extract measurements', self)
-        extractButton.triggered.connect(self.craniometrics)
-        metricsMenu.addAction(extractButton)
-
-        # metricsMenu - extract slice only
-        sliceextractButton = Qt.QAction('Show 2D slice', self)
-        sliceextractButton.triggered.connect(lambda: self.craniometrics(slice_only=True))
-        metricsMenu.addAction(sliceextractButton)
-
 
         # ## VIEW
         viewsMenu = viewMenu.addMenu('Camera View')
@@ -241,11 +236,6 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         cleanmeshButton.triggered.connect(self.clean_mesh)
         utilityMenu.addAction(cleanmeshButton)
 
-        # # utilMenu - flip
-        # regFlip_Button = Qt.QAction('(If required) Flip-Y ', self)
-        # regFlip_Button.triggered.connect(self.flip)
-        # utilityMenu.addAction(regFlip_Button)
-
         # ## viewsMenu - Screenshot
         ssButton = Qt.QAction('Screenshot', self)
         ssButton.setShortcut('Ctrl+S')
@@ -267,7 +257,7 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
 
 
 if __name__ == '__main__':
-    print('Running CraniumPy 0.4.0\n-----------------------')
+    print('Running CraniumPy 0.4.1\n-----------------------')
     root = Tk()
     root.withdraw()  # removes tkwindow from file import
     app = Qt.QApplication(sys.argv)
