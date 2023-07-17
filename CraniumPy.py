@@ -178,7 +178,7 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         metricsMenu.addAction(sliceextractButton)
 
         # metricsMenu - extract slice only
-        FAIButton = Qt.QAction('Facial Asymmetry', self)
+        FAIButton = Qt.QAction('Evaluate Asymmetry', self)
         FAIButton.triggered.connect(lambda: self.calculate_asymmetry())
         metricsMenu.addAction(FAIButton)
 
