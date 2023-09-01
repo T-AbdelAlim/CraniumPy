@@ -25,6 +25,8 @@ CraniumPy is a user-friendly tool developed for the registration and craniofacia
 - A [validated algorithm](http://dx.doi.org/10.1097/SCS.0000000000009448) to automatically extract commonly used head measurements.
 - Functionality to quantify facial asymmetry.
 
+_This repository also makes use of some excellent features implemented in the PyVista library (https://docs.pyvista.org/) and PyMeshFix (https://pymeshfix.pyvista.org/)._
+
 ![Reconstruction](resources/CraniumPy_info.png)
 
 
@@ -58,7 +60,9 @@ From a mesh that is pre-processed for cranial analysis, several cephalometric me
 - Mesh volume above the nasion-tragus plane (for potential intracranial volume approximation).
 
  This algorithm is located under the tab _**Compute>Cephalometrics**_. The axial slice from which these measurements have been obtained can also be plotted separately using _**Compute>2D slice**_.
-![Reconstruction](resources/hcvalidation.jpg)
+
+![Hcvalidation](resources/hcvalidation.jpg)
+
 _NOTE: CraniumPy has been optimized for pediatric analysis. For this reason, some hard-coded boundary conditions are established in the extraction algorithm [(e.g. code line 95)](./craniometrics/craniometrics.py). If CraniumPy does not work as desired for your research application (e.g. prematures or adults), feel free to contact me to see if we can find a solution._
 
 
@@ -70,7 +74,7 @@ A non-rigid iterative closest point (ICP) algorithm has been implemented which t
 
 
 
-##Download CraniumPy
+## Download CraniumPy
 If you want to run CraniumPy locally (on Windows) follow the steps below. You do not need to install any requirements or dependencies. 
 
 1. Download the latest version: [CraniumPy (v0.4.2)](https://drive.google.com/drive/folders/1ilAXTINd2TuKbOsuQLmsuLVTppJMYOxz)
@@ -136,9 +140,6 @@ _Abdel-Alim et al. - Reliability and Agreement of Automated Head Measurements Fr
 ```
 Abdel-Alim, T. (2022). CraniumPy [Computer software]. https://doi.org/10.5281/zenodo.5634153
 ```
-
-**Acknowledgements:**
-This repository makes use of some excellent features implemented in the PyVista module (https://docs.pyvista.org/) and PyMeshFix (https://pymeshfix.pyvista.org/).
 
 
 
