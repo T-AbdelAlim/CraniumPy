@@ -3,8 +3,13 @@
 
   * [Description](#description)
   * [Usage](#usage)
-  * [CraniumPy executable](#craniumpy-executable)
-  * [Installation](#installation)
+    * [Getting started](#getting-started)
+    * [Rigid registration and mesh harmonization ](#rigid-registration-and-mesh-harmonization )
+    * [Automated measurement extraction](#automated-measurement-extraction)
+    * [Facial asymmetry calculation](#facial-asymmetry-calculation)
+    * [Non-rigid ICP](#non-rigid-icp)
+  * [Download CraniumPy (.exe)](#download-craniumpy)
+  * [Clone repository](#clone-repository)
   * [Citation](#citation)
   * [Author](#author)
 
@@ -12,46 +17,76 @@
 ## Description
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.5634153.svg)](https://doi.org/10.5281/zenodo.5634153)
 
-CraniumPy is a simple tool that can be used to register 3D meshes for cranial analysis using three landmarks. In its current state, a raw 3D mesh (.ply, .obj, .stl) can be imported and visualized. After registration, cephalometric measurements can be automatically extracted. These measurements include:
-- occipotofrontal diameter (OFC) / head depth
-- biparietal diameter (BPD) / head breadth
-- cephalic index (CI) 
-- head circumference (HC) 
-- mesh volume (can be used for intracranial volume approximation)
+CraniumPy is a user-friendly tool developed for the registration and craniofacial analysis of 3D images (.ply, .obj, .stl). It can serve as an end-to-end pipeline, transforming a raw 3D image into a harmonized mesh, ready for either cranial or facial analysis. The integrated pipeline incorporates:
 
-_NOTE: CraniumPy has been optimized for pediatric analysis. For this reason, some hard-coded boundary conditions are established in the extraction algorithm [(e.g. code line 95)](./craniometrics/craniometrics.py). If CraniumPy does not work as desired for your research application (e.g. prematures or adults), feel free to contact the author for a solution._
+- Rigid and non-rigid registration.
+- Voronoi-based clustering for mesh resampling.
+- Artifact detection and repair [algorithms](http://dx.doi.org/10.1007/s00371-010-0416-3).
+- A [validated algorithm](http://dx.doi.org/10.1097/SCS.0000000000009448) to automatically extract commonly used head measurements.
+- Functionality to quantify facial asymmetry.
 
 ![Reconstruction](resources/CraniumPy_info.png)
 
+
 ## Usage
-Three anatomical landmarks (Nasion, LH tragus, RH tragus) need to be located by the user for registration. The mesh is then registered to an [average normal template](https://dined3d.io.tudelft.nl/en/mannequin/tool) and the landmark positions (xyz) are stored in place (filename_landmarks.json).
+### Getting started
+Refer to the [step-by-step guide](/resources/documentation.pdf) to get started. 
 
-Based on a single transverse slice (at maximum head depth), cephalometric measurements are automatically extracted and plotted on the 3D model. 
+### Rigid registration and mesh harmonization 
+Mesh registration and harmonization in CraniumPy requires three steps:
+1. **_Landmark selection_**: Three anatomical landmarks (Nasion, LH tragus, RH tragus) need to be located by the user for registration. 
 
-Check the [step-by-step guide](/resources/documentation.pdf) to get started. 
+2.  **_Register for cranial/facial analysis_**: The mesh is rigidly aligned to an average normal template by computing the Euler angles between two sets of vectors (derived from placed landmarks). The registered mesh (_filename_rg.ply_) and the landmark coordinate positions (_filename_landmarks.json_) are stored in place.
+
+3. **_"Clip, Repair, Resample"_**: In the final pre-processing step, the mesh is clipped through a reference plane (cranial analysis: through nasion-tragus plane | facial analysis: through centroid of triangle formed by the 3 landmarks). The clipped mesh is then inspected and artifacts are automatically repaired. Finally, the mesh is resampled to ensure a predefined number of vertices (default: _n= 10.000_).
+
+Based on a single transverse slice (at maximum head depth), cephalometric measurements are automatically extracted and plotted on the 3D model.
 
 The example mesh ```resources/test_mesh/test_mesh.ply``` can be used to explore the functionality of this tool. 
 
 *NOTE: Step 3. (Clip, Repair, Resample) is computationally heavy (due to the resampling step) and can take a while depending on your setup. Clicking the screen may cause it to freeze.*
 
-### Registration
-Two methods of registration have been implemented after v0.3.2. 
-These include **fiducial registration**, based on the placement of three landmarks, and **non-rigid registration** (non-rigid iterative closest point algorithm).
-
-Unless vertex-to-vertex correspondence is required, fiducial registration may be sufficient and often results in meshes of higher quality (uniformly resampled).
 
 
-## CraniumPy executable
-If you want to simply run this tool locally (on Windows) from an executable file (.exe), download the folder _CraniumPy v0.3.1_ from the following link:
-[CraniumPy (v0.3.1) Download](https://drive.google.com/drive/folders/1ilAXTINd2TuKbOsuQLmsuLVTppJMYOxz).
+
+### Automated measurement extraction
+From a mesh that is pre-processed for cranial analysis, several cephalometric measurements can be extracted. These include:
+- Occipitofrontal diameter (OFD) or head depth
+- Biparietal diameter (BPD) or head breadth
+- Cephalic index (CI)
+- Occipitofrontal circumference (OFC) or head circumference
+- Mesh volume above the nasion-tragus plane (for potential intracranial volume approximation).
+
+ This algorithm is located under the tab _**Compute>Cephalometrics**_. The axial slice from which these measurements have been obtained can also be plotted separately using _**Compute>2D slice**_.
+![Reconstruction](resources/hcvalidation.jpg)
+_NOTE: CraniumPy has been optimized for pediatric analysis. For this reason, some hard-coded boundary conditions are established in the extraction algorithm [(e.g. code line 95)](./craniometrics/craniometrics.py). If CraniumPy does not work as desired for your research application (e.g. prematures or adults), feel free to contact me to see if we can find a solution._
+
+
+### Facial asymmetry calculation
+A mesh registered for facial analysis can be used to compute the mean distance between each vertex on one half of the face to its corresponding vertex on the other half (using a mirrored reflection). The output is a heatmap (in mm), showing which areas are more or less symmetric. A quantitative metric is also computed, the mean facial asymmetry (MFA) index, which encapsulates the overall asymmetry observed in the face. This algorithm is located under the tab _**compute>Evaluate Asymmetry**_.
+
+### Non-rigid ICP
+A non-rigid iterative closest point (ICP) algorithm has been implemented which tries to deform a template onto the user's input mesh. This feature can come in handy when there's a need for point-to-point correspondence (e.g. automated landmark detection, advanced shape analysis, geometric deep learning). This step allows a user to match the topology of a mesh or set of meshes to that of the template. The mesh quality may be (slightly) reduced after non-rigid ICP.
+
+
+
+##Download CraniumPy
+If you want to run CraniumPy locally (on Windows) follow the steps below. You do not need to install any requirements or dependencies. 
+
+1. Download the latest version: [CraniumPy (v0.4.2)](https://drive.google.com/drive/folders/1ilAXTINd2TuKbOsuQLmsuLVTppJMYOxz)
+2. Extract the .zip folder in any location
+
+    _The extracted folder contains the templates (for visualizing the registration) and an example mesh is provided at `test_mesh/test_mesh.ply` for experimentation._
+
+3. Run **_CraniumPy_v0.4.2.exe_** (give it a few seconds to load)
+
 
 IMPORTANT: the reference frame has been changed from v0.3.0 onwards. The new convention is based on the more commonly used right hand coordinate system in which the z-axis points 
 outward from the nose. 
 
-Simply run the executable file (CraniumPy.exe) to start the program (takes a few seconds to start). You do not need to install any requirements or dependencies. 
-The folder contains the templates (for visualizing the registration), step-by-step documentation, and a test_mesh (arbitrary orientation and some artifacts) to experiment with.
 
-## Installation
+
+## Clone repository
 Project is created with:
 * Python version: 3.8
 
@@ -74,25 +109,10 @@ cd CraniumPy
 pip install -r requirements.txt
 ```
 
-5. Run tool:
+5. Run CraniumPy:
 ```
 python CraniumPy.py
 ```
-
-## Building the executebale using pyinstaller
-If you are interested in building the executble yourself after you made some changes the code, follow these steps:
-
-1. Install pyinstaller:
-```
-pip install pyinstaller==4.5.1
-```
-
-2. From the CraniumPy main directory run:
-```
-pyinstaller CraniumPy.py --hidden-import vtkmodules --hidden-import vtkmodules.all --hidden-import vtkmodules.util.numpy_support --hidden-import vtkmodules.numpy_interface --hidden-import vtkmodules.numpy_interface.dataset_adapter --hidden-import vtkmodules.qt --hidden-import vttmodules.util --hidden-import vttmodules.vtkCommonCore --hidden-import vttmodules.vtkCommonKitPython --hidden-import vtkmodules.qt.QVTKRenderWindowInteractor  --onefile --icon=resources/CraniumPy_logo.ico --clean
-```
-
-3. Move the executable file (CraniumPy.exe) from ```CraniumPy/dist/CraniumPy.exe``` to the main directory ```CraniumPy/CraniumPy.exe``` and run CraniumPy.exe from here to ensure proper callbacks to templates.
 
 ## Known issues
 
@@ -102,18 +122,29 @@ pyinstaller CraniumPy.py --hidden-import vtkmodules --hidden-import vtkmodules.a
 
 
 ## Citation
-If you use this software, I would appreciate if you cite:
+Kindly consider citing the software if it supports your research:
 
+**Initial Publication:**
+
+_Abdel-Alim et al. - Sagittal Craniosynostosis: Comparing Surgical Techniques using 3D Photogrammetry. Plastic and Reconstructive Surgery ():10.1097/PRS.0000000000010441, March 22, 2023. | DOI: [10.1097/PRS.0000000000010441](http://dx.doi.org/10.1097/PRS.0000000000010441)_
+
+**Validation Study:** 
+
+_Abdel-Alim et al. - Reliability and Agreement of Automated Head Measurements From 3-Dimensional Photogrammetry in Young Children. The Journal of Craniofacial Surgery 34(6):p 1629-1634, September 2023. | DOI: [10.1097/SCS.0000000000009448](http://dx.doi.org/10.1097/SCS.0000000000009448)_
+
+**Github Repository:**
 ```
 Abdel-Alim, T. (2022). CraniumPy [Computer software]. https://doi.org/10.5281/zenodo.5634153
 ```
 
-This code makes use of some excellent features implemented in the PyVista module (https://docs.pyvista.org/) and PyMeshFix (https://pymeshfix.pyvista.org/).
-Credit should be given to the original authors.
+**Acknowledgements:**
+This repository makes use of some excellent features implemented in the PyVista module (https://docs.pyvista.org/) and PyMeshFix (https://pymeshfix.pyvista.org/).
+
 
 
 ## Author
-Tareq Abdel-Alim (Department of Neurosurgery and Radiology, Erasmus MC, Rotterdam, the Netherlands)
+Tareq Abdel-Alim | Departments of Neurosurgery and Radiology, Erasmus MC, Rotterdam, the Netherlands
 
 If you have any questions, suggestions, or problems do not hesitate to contact me:
 t.abdelalim@erasmusmc.nl
+
