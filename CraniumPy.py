@@ -1,6 +1,5 @@
 """
-Created on Mon Aug 2, 2021
-Last update on May 19, 2023
+Last update on Aug 17, 2023
 @author: T-AbdelAlim
 """
 
@@ -26,7 +25,7 @@ class WelcomeScreen(Qt.QDialog):
         self.add_custom_figure("resources/welcomeCP.jpg", layout)
 
         # Add button
-        start_button = Qt.QPushButton("CraniumPy v0.4.1")
+        start_button = Qt.QPushButton("CraniumPy v0.4.2")
         font = QFont("Arial", 14)  # Change font to Arial with a size of 12
         start_button.setFont(font)
         try:
@@ -186,7 +185,7 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         nicpMenu = metricsMenu.addMenu('Non-rigid ICP')
 
         pickMenu2 = nicpMenu.addMenu('NICP cranium')
-        pickButton2 = Qt.QAction('Show target', self)
+        pickButton2 = Qt.QAction('Show template', self)
         pickButton2.triggered.connect(lambda: self.show_registration(target='cranium'))
         pickMenu2.addAction(pickButton2)
 
@@ -195,7 +194,7 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         pickMenu2.addAction(reg_Button2)
 
         pickMenu3 = nicpMenu.addMenu('NICP face')
-        pickButton3 = Qt.QAction('Show target', self)
+        pickButton3 = Qt.QAction('Show template', self)
         pickButton3.triggered.connect(lambda: self.show_registration(target='face'))
         pickMenu3.addAction(pickButton3)
 
@@ -257,7 +256,7 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
 
 
 if __name__ == '__main__':
-    print('Running CraniumPy 0.4.1\n-----------------------')
+    print('Running CraniumPy 0.4.2\n-----------------------')
     root = Tk()
     root.withdraw()  # removes tkwindow from file import
     app = Qt.QApplication(sys.argv)

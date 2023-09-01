@@ -17,30 +17,11 @@ import datetime
 
 
 import open3d as o3d
-from nicp.icp import icp
+from nicp.icp import *
 from nicp.nricp import nonrigidIcp
 from nicp.write_ply import write_ply_file_NICP
 import copy
 
-
-
-def icp(source,target,trans_init=np.eye(4)):
-    sourcemesh=copy.deepcopy(source)
-    targetmesh=copy.deepcopy(target)
-    sourceply =  o3d.geometry.PointCloud()
-    targetply =  o3d.geometry.PointCloud()
-    sourcemesh.compute_vertex_normals()
-    targetmesh.compute_vertex_normals()
-    sourceply.points = sourcemesh.vertices
-    targetply.points = targetmesh.vertices
-    sourceply.normals = sourcemesh.vertex_normals
-    targetply.normals = targetmesh.vertex_normals
-
-    threshold = 0.02
-    reg_p2p = o3d.pipelines.registration.registration_icp(
-        sourceply, targetply, threshold, trans_init,
-        o3d.pipelines.registration.TransformationEstimationPointToPlane())
-    return reg_p2p.transformation
 
 
 def calculate_sum(points1, points2, half_face='left'):
@@ -399,7 +380,7 @@ class GuiMethods:
             lmk_surface = pv.PolyData(self.newpos_landmarks).delaunay_2d()
             templ_centroid = lmk_surface.center_of_mass()
 
-            # self.mesh_file.clip_box(template_mesh.bounds, invert=False)
+            self.mesh_file.clip_box(template_mesh.bounds, invert=False)
             self.mesh_file = self.mesh_file.clip('z', origin=[0, 20, templ_centroid[2] - 1], invert=False)
 
             if str(self.file_path.stem).endswith('_CF'):
@@ -408,7 +389,7 @@ class GuiMethods:
                 self.file_path = self.file_path.with_name(self.file_path.stem + '_CF.ply')
             write_ply_file(self.mesh_file, self.file_path)
 
-            GuiMethods.repairsample(self.file_path, n_vertices=20000, repair=True)
+            # GuiMethods.repairsample(self.file_path, n_vertices=20000, repair=True)
 
             self.mesh_file = pv.read(self.file_path)
 
@@ -468,7 +449,7 @@ class GuiMethods:
         except:
             pass
 
-    def nricp_to_template(self, target='cranium'):
+    def nricp_to_template(self, target='cranium', icp=True):
         try:
             self.plotter.clear()
             self.plotter.add_text('Non-rigid ICP ({}) in progress...\nThis may take a moment.'.format(target), position='upper_left')
@@ -479,55 +460,49 @@ class GuiMethods:
                 sourcepath = self.template_path_head.__str__()
 
             targetpath = str(self.file_path)
-            if str(self.file_path).endswith('_' + target[0] + 'icp.ply'):
+            if str(self.file_path).endswith('_' + target[0] + '_nicp.ply'):
                 deformedpath = self.file_path
             else:
-                deformedpath = self.file_path.with_name(self.file_path.stem + '_' + target[0] + 'icp.ply')
+                deformedpath = self.file_path.with_name(self.file_path.stem + '_' + target[0] + '_nicp.ply')
             print(deformedpath)
 
-            # read source file
-            sourcemesh = o3d.io.read_triangle_mesh(sourcepath)
-            targetmesh = o3d.io.read_triangle_mesh(targetpath)
+            # Load the source and target meshes
+            sourcemesh = pv.read(sourcepath)  # the moving mesh
+            targetmesh = pv.read(targetpath)  # the fixed mesh
 
-            sourcemesh.compute_vertex_normals()
-            targetmesh.compute_vertex_normals()
+            # Convert PyVista mesh to Open3D mesh
+            def convert_to_open3d(mesh_pv):
+                mesh_o3d = o3d.geometry.TriangleMesh()
+                mesh_o3d.vertices = o3d.utility.Vector3dVector(mesh_pv.points)
+                mesh_o3d.triangles = o3d.utility.Vector3iVector(mesh_pv.faces.reshape(-1, 4)[:, 1:])
+                return mesh_o3d
 
-            ## Volumetric scaling
-            # compute volume ratio between source and target mesh
-            target_vol = pv.read(targetpath).volume
-            source_vol = pv.read(sourcepath).volume
-            volume_ratio = np.power(target_vol / source_vol, 1 / 3)
-            print(volume_ratio)
+            if icp == True:
+                # Perform rigid ICP
+                P = np.rollaxis(sourcemesh.points, 1)
+                X = np.rollaxis(targetmesh.points, 1)
+                Rr, tr, num_iter = IterativeClosestPoint(source_pts=P, target_pts=X, tau=10e-6)
+                Np = ApplyTransformation(P, Rr, tr)
+                Np = np.rollaxis(Np, 1)
 
-            # scale source mesh to match target mesh volume
-            sc=sourcemesh.get_center()
+                write_ply_file_NICP(sourcemesh, Np, deformedpath)
+                deformed_pv = pv.read(deformedpath)
+            else:
+                deformed_pv = pv.read(deformedpath)
 
-            sourcemesh.scale(volume_ratio, center=[sc[0],0,sc[0]])
 
-            # first find rigid registration
-            # guess for inital transform for icp
-            initial_guess = np.eye(4)
-            affine_transform = icp(sourcemesh, targetmesh, initial_guess)
-
-            # creating a new mesh for non rigid transform estimation
-            refined_sourcemesh = copy.deepcopy(sourcemesh)
-            refined_sourcemesh.transform(affine_transform)
-            refined_sourcemesh.compute_vertex_normals()
-
-            # non rigid registration
-            deformed_mesh = nonrigidIcp(refined_sourcemesh, targetmesh)
+            # # Convert the rigidly deformed mesh to Open3D format
+            deformed_rigid_o3d = convert_to_open3d(deformed_pv) #source / template
+            target_o3d = convert_to_open3d(targetmesh) # patient
+            deformed_mesh = nonrigidIcp(deformed_rigid_o3d, target_o3d)
             o3d.io.write_triangle_mesh(filename=str(deformedpath), mesh=deformed_mesh)
 
-            # convert deformed mesh as reconstructed output (ply file)
-            sourcem = pv.read(sourcepath)
-            targetm = pv.read(deformedpath)
-            write_ply_file_NICP(sourcem, targetm.points, deformedpath)
-            print('NICP completed')
-            self.file_path = deformedpath
+            print('Non-Rigid ICP completed')
+            self.file_path = str(deformedpath)
             self.plotter.clear()
             self.mesh_file = pv.read(self.file_path)
-            self.plotter.add_mesh(self.mesh_file, show_edges=False)
-            self.plotter.add_points(self.mesh_file.points, color = 'k', render_points_as_spheres=True, opacity=0.75)
+            self.plotter.add_mesh(self.mesh_file, show_edges=True, color='white')
+            self.plotter.remove_scalar_bar()
 
         except:
             pass
@@ -538,62 +513,56 @@ class GuiMethods:
             mesh_path = str(self.file_path)
             mesh = pv.read(mesh_path)
 
-            # Mirror the mesh
+            # Mirror the mesh using a custom function
             mirrored_mesh = mirror_mesh(mesh)
 
             # Convert PyVista mesh to Open3D mesh
-            source_o3d = o3d.geometry.TriangleMesh()
-            source_o3d.vertices = o3d.utility.Vector3dVector(mesh.points)
-            source_o3d.triangles = o3d.utility.Vector3iVector(mesh.faces.reshape(-1, 4)[:, 1:])
+            def convert_to_open3d(mesh_pv):
+                mesh_o3d = o3d.geometry.TriangleMesh()
+                mesh_o3d.vertices = o3d.utility.Vector3dVector(mesh_pv.points)
+                mesh_o3d.triangles = o3d.utility.Vector3iVector(mesh_pv.faces.reshape(-1, 4)[:, 1:])
+                return mesh_o3d
 
-            mirrored_o3d = o3d.geometry.TriangleMesh()
-            mirrored_o3d.vertices = o3d.utility.Vector3dVector(mirrored_mesh.points)
-            mirrored_o3d.triangles = o3d.utility.Vector3iVector(mirrored_mesh.faces.reshape(-1, 4)[:, 1:])
+            source_o3d = convert_to_open3d(mesh)
+            mirrored_o3d = convert_to_open3d(mirrored_mesh)
 
             # Perform ICP
-            initial_guess = np.eye(4)
-            transform = icp(source_o3d, mirrored_o3d, initial_guess)
-
-            # Apply transformation to mirrored mesh
-            mirrored_o3d.transform(transform)
+            P = np.rollaxis(mirrored_mesh.points, 1)
+            X = np.rollaxis(mesh.points, 1)
+            Rr, tr, num_iter = IterativeClosestPoint(source_pts=P, target_pts=X, tau=10e-6)
+            Np = ApplyTransformation(P, Rr, tr)
+            Np = np.rollaxis(Np, 1)
 
             # Convert the transformed Open3D mesh back to a PyVista mesh
-            vertices = np.asarray(mirrored_o3d.vertices)
+            vertices = np.asarray(Np)
             faces = np.asarray(mirrored_o3d.triangles)
             faces = np.c_[np.full(len(faces), 3), faces]  # Adding a column for the number of vertices per face
             mirrored_mesh = pv.PolyData(vertices, faces)
 
-            # Compute the difference between the original and mirrored mesh
+            # Compute asymmetry
             closest_points_locator = VTKClosestPointLocator(mirrored_mesh)
             closest_points, closest_idx = closest_points_locator(mesh.points)
-
-            # Calculate the sum
             sum_value = calculate_sum(mesh.points, closest_points)
-            print("Asymmetry Value: ", sum_value)
-
-            # Compute the asymmetry heatmap
             asymmetry_heatmap = compute_asymmetry_heatmap(mesh.points, closest_points)
             m_clim = np.abs(asymmetry_heatmap).max().round()
 
             # Visualize the asymmetry
             self.plotter.clear()
-            self.plotter.add_mesh(pv.read(str(self.file_path)), color='white', scalars=asymmetry_heatmap,
-                                  cmap='coolwarm', show_edges=True,
+            self.plotter.add_mesh(mesh, color='white', scalars=asymmetry_heatmap, cmap='coolwarm', show_edges=True,
                                   clim=[-m_clim, m_clim])
-            self.plotter.add_text("Mean Asymmetry Index: {}".format(np.round(sum_value, 4)), position='lower_right')
+            self.plotter.add_text(f"Mean Asymmetry Index: {np.round(sum_value, 4)}", position='lower_right')
 
+            # Write the measurements to a JSON file
             current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             MAI_measurement = {
                 "Datetime": current_time,
-                "Filepath": "{}".format(self.file_path),
+                "Filepath": str(self.file_path),
                 "Mean_Asymmetry_Index": np.round(sum_value, 4)
             }
-
-            # Write the measurements to a JSON file
             jsonpath_asymmetry = str(self.file_path.parent.joinpath(self.file_name + '_MAI.json'))
-            print('asymmetrypath {}'.format(jsonpath_asymmetry))
-            with open(jsonpath_asymmetry, "+w") as jsonpath_asymmetry:
-                json.dump(MAI_measurement, jsonpath_asymmetry, indent=4)
+            with open(jsonpath_asymmetry, "w") as json_file:
+                json.dump(MAI_measurement, json_file, indent=4)
+
 
         except:
             pass
