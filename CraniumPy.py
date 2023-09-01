@@ -254,7 +254,6 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
 
 
 
-
 if __name__ == '__main__':
     print('Running CraniumPy 0.4.2\n-----------------------')
     root = Tk()
