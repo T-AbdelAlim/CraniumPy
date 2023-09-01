@@ -25,7 +25,7 @@ CraniumPy is a user-friendly tool developed for the registration and craniofacia
 - A [validated algorithm](http://dx.doi.org/10.1097/SCS.0000000000009448) to automatically extract commonly used head measurements.
 - Functionality to quantify facial asymmetry.
 
-_This repository also makes use of some excellent features implemented in the PyVista library (https://docs.pyvista.org/) and PyMeshFix (https://pymeshfix.pyvista.org/)._
+_This repository makes use of some excellent features implemented in the PyVista library (https://docs.pyvista.org/) and PyMeshFix (https://pymeshfix.pyvista.org/)._
 
 ![Reconstruction](resources/CraniumPy_info.png)
 
