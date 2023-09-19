@@ -9,8 +9,7 @@
     * [Facial asymmetry calculation](#facial-asymmetry-calculation)
     * [Non-rigid ICP](#non-rigid-icp)
   * [Download CraniumPy (.exe)](#download-craniumpy)
-  * [Clone repository (without NICP)](#clone-repository-without-NICP)
-  * [Clone repository (with NICP)](#clone-repository-with-NICP)
+  * [Clone repository](#clone-repository)
   * [Citation](#citation)
   * [Author](#author)
 
@@ -71,7 +70,7 @@ _NOTE: CraniumPy has been optimized for pediatric analysis. For this reason, som
 A mesh registered for facial analysis can be used to compute the mean distance between each vertex on one half of the face to its corresponding vertex on the other half (using a mirrored reflection). The output is a heatmap (in mm), showing which areas are more or less symmetric. A quantitative metric is also computed, the mean facial asymmetry (MFA) index, which encapsulates the overall asymmetry observed in the face. This algorithm is located under the tab _**compute>Evaluate Asymmetry**_.
 
 ### Non-rigid ICP
-A non-rigid iterative closest point (NICP) algorithm has been implemented which tries to deform a template onto the user's input mesh. This feature can come in handy when there's a need for point-to-point correspondence (e.g. automated landmark detection, advanced shape analysis, geometric deep learning). This step allows a user to match the topology of a mesh or set of meshes to that of the template. The mesh quality may be (slightly) reduced after NICP. To run the CraniumPy source code **with** the NICP algorithm, several dependencies need to be installed as described in section [Clone Repository (with NICP)](#clone-repository-with-NICP).
+A non-rigid iterative closest point (NICP) algorithm has been implemented which tries to deform a template onto the user's input mesh. This feature can come in handy when there's a need for point-to-point correspondence (e.g. automated landmark detection, advanced shape analysis, geometric deep learning). This step allows a user to match the topology of a mesh or set of meshes to that of the template. The mesh quality may be (slightly) reduced after NICP.
 
 
 ## Download CraniumPy
@@ -89,12 +88,8 @@ IMPORTANT: the reference frame has been changed from v0.3.0 onwards. The new con
 outward from the nose. 
 
 
-
-## Clone repository (without NICP)
-Project is created with:
-* Python version: 3.8
-
-To run this project:
+## Clone repository
+The implemented NICP and facial asymmetry algorithm requires the scikit-sparse library. Follow these instructions to install the required dependencies:
 1. Create and/or load a virtual environment (for more information about virtual environments, [check the docs](https://conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html#activating-an-environment)):
 
 ```
@@ -102,37 +97,10 @@ conda create -n CraniumPy python=3.8
 conda activate CraniumPy
 ```
 
-2. Clone repository:
-```
-git clone https://github.com/T-AbdelAlim/CraniumPy.git
-cd CraniumPy
-```
-3. Install requirements:
-```
-pip install -r requirements.txt
-```
-
-4. Run CraniumPy:
-```
-python CraniumPy.py
-```
-
-## Clone repository (with NICP)
-The implemented NICP algorithm requires the scikit-sparse library. Follow these instructions to install the required dependencies:
-1. Create and/or load a virtual environment:
-
-```
-conda create -n CraniumPy_NICP python=3.8
-conda activate CraniumPy_NICP
-```
-
-2. Switch from master to CraniumPy_NICP branch.
-
-
 3. Clone repository:
 ```
 git clone https://github.com/T-AbdelAlim/CraniumPy.git
-cd CraniumPy_NICP
+cd CraniumPy
 ```
 4. Install requirements:
 ```
@@ -140,21 +108,28 @@ pip install -r requirements.txt
 ```
 
 5.Install NICP dependencies (tested on Windows 10 with Anaconda 3 and Python 3.8)
-    - `conda install -c conda-forge cython` - tested with v0.29.32
-    - `conda install -c conda-forge suitesparse` - tested with v5.4.0
-    - optional (included in the build dependencies of `scikit-sparse`):
-        - `conda install -c conda-forge numpy` - tested with v1.23.2
-        - `conda install -c conda-forge scipy` - tested with v1.9.1
+
+- `conda install -c conda-forge cython` - tested with v0.29.32
+- `conda install -c conda-forge suitesparse` - tested with v5.4.0
+- `conda install -c conda-forge numpy` - tested with v1.23.2
+- `conda install -c conda-forge scipy` - tested with v1.9.1
 6. Download Microsoft Build Tools for C++ from https://visualstudio.microsoft.com/visual-cpp-build-tools/ (tested with 2022, should work with 2015 or newer)
+
+
 7. Install Visual Studio Build Tools
     1. Choose Workloads
     2. Check "Desktop development with C++"
     3. Keep standard settings
+
+
 8. Run in a Powershell
-    - `$env:SUITESPARSE_INCLUDE_DIR='.../anaconda3/envs/CraniumPy_NICP/Library/include/suitesparse'`
-    - `$env:SUITESPARSE_LIBRARY_DIR='.../anaconda3//envs/CraniumPy_NICP/Library/lib'`
+    - `$env:SUITESPARSE_INCLUDE_DIR='.../anaconda3/envs/CraniumPy/Library/include/suitesparse'`
+    - `$env:SUITESPARSE_LIBRARY_DIR='.../anaconda3//envs/CraniumPy/Library/lib'`
     - `pip install scikit-sparse`
+
+
 9. Test `from sksparse.cholmod import cholesky`
+
 
 10. Run CraniumPy:
 ```
