@@ -95,13 +95,12 @@ Project is created with:
 * Python version: 3.8
 
 To run this project:
-1. Create and/or load a virtual environment:
+1. Create and/or load a virtual environment (for more information about virtual environments, [check the docs](https://conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html#activating-an-environment)):
 
 ```
 conda create -n CraniumPy python=3.8
 conda activate CraniumPy
 ```
-If you are unfamiliar with virtual environments, check [miniconda](https://docs.conda.io/en/latest/miniconda.html).
 
 2. Clone repository:
 ```
@@ -118,14 +117,13 @@ pip install -r requirements.txt
 python CraniumPy.py
 ```
 ## Clone repository (with NICP)
-If you want NICP functionality, clone the CraniumPy_NICP branch and follow the steps described above with the following changes:
+The implemented NICP algorithm requires the scikit-sparse library. Follow these instructions to install the required dependencies:
 1. Create and/or load a virtual environment:
 
 ```
 conda create -n CraniumPy_NICP python=3.8
 conda activate CraniumPy_NICP
 ```
-If you are unfamiliar with virtual environments, check [miniconda](https://docs.conda.io/en/latest/miniconda.html).
 
 2. Clone repository:
 ```
