@@ -15,6 +15,7 @@ from registration.write_ply import write_ply_file
 import json
 import datetime
 
+
 import open3d as o3d
 from nicp.icp import *
 from nicp.nricp import nonrigidIcp
@@ -113,6 +114,10 @@ class GuiMethods:
 
     @staticmethod
     def call_template(ICV_scaling=1.0, CoM_translation=True, target='cranium'): #target = face/cranium/head
+        # if CoM_translation == True:
+        #     template_path = Path('./template/clipped_template_xy_com.ply')
+        # else:
+        #     template_path = Path('./template/clipped_template_xy.ply')
 
         if target == 'cranium' and CoM_translation == True:
             template_path = Path('./template/clipped_template_xy_com.ply')
@@ -384,6 +389,7 @@ class GuiMethods:
                 self.file_path = self.file_path.with_name(self.file_path.stem + '_CF.ply')
             write_ply_file(self.mesh_file, self.file_path)
 
+            # GuiMethods.repairsample(self.file_path, n_vertices=20000, repair=True)
 
             self.mesh_file = pv.read(self.file_path)
 

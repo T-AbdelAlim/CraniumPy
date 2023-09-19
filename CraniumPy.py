@@ -176,6 +176,11 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         sliceextractButton.triggered.connect(lambda: self.craniometrics(slice_only=True))
         metricsMenu.addAction(sliceextractButton)
 
+        # metricsMenu - extract slice only
+        FAIButton = Qt.QAction('Evaluate Asymmetry', self)
+        FAIButton.triggered.connect(lambda: self.calculate_asymmetry())
+        metricsMenu.addAction(FAIButton)
+
         ## NICP
         nicpMenu = metricsMenu.addMenu('Non-rigid ICP')
 
@@ -196,11 +201,6 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         reg_Button3 = Qt.QAction('Calculate', self)
         reg_Button3.triggered.connect(lambda: self.nricp_to_template(target='face'))
         pickMenu3.addAction(reg_Button3)
-
-        # metricsMenu - Evaluate Asymmetry
-        FAIButton = Qt.QAction('Evaluate Asymmetry', self)
-        FAIButton.triggered.connect(lambda: self.calculate_asymmetry())
-        metricsMenu.addAction(FAIButton)
 
         # ## VIEW
         viewsMenu = viewMenu.addMenu('Camera View')
