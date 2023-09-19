@@ -116,6 +116,7 @@ pip install -r requirements.txt
 ```
 python CraniumPy.py
 ```
+
 ## Clone repository (with NICP)
 The implemented NICP algorithm requires the scikit-sparse library. Follow these instructions to install the required dependencies:
 1. Create and/or load a virtual environment:
@@ -125,34 +126,37 @@ conda create -n CraniumPy_NICP python=3.8
 conda activate CraniumPy_NICP
 ```
 
-2. Clone repository:
+2. Switch from master to CraniumPy_NICP branch.
+
+
+3. Clone repository:
 ```
-git clone https://github.com/T-AbdelAlim/CraniumPy_NICP.git
+git clone https://github.com/T-AbdelAlim/CraniumPy.git
 cd CraniumPy_NICP
 ```
-3. Install requirements:
+4. Install requirements:
 ```
 pip install -r requirements.txt
 ```
 
-4. Install NICP dependencies (tested on Windows 10 with Anaconda 3 and Python 3.8)
+5.Install NICP dependencies (tested on Windows 10 with Anaconda 3 and Python 3.8)
     - `conda install -c conda-forge cython` - tested with v0.29.32
     - `conda install -c conda-forge suitesparse` - tested with v5.4.0
     - optional (included in the build dependencies of `scikit-sparse`):
         - `conda install -c conda-forge numpy` - tested with v1.23.2
         - `conda install -c conda-forge scipy` - tested with v1.9.1
-5. Download Microsoft Build Tools for C++ from https://visualstudio.microsoft.com/visual-cpp-build-tools/ (tested with 2022, should work with 2015 or newer)
-6. Install Visual Studio Build Tools
+6. Download Microsoft Build Tools for C++ from https://visualstudio.microsoft.com/visual-cpp-build-tools/ (tested with 2022, should work with 2015 or newer)
+7. Install Visual Studio Build Tools
     1. Choose Workloads
     2. Check "Desktop development with C++"
     3. Keep standard settings
-7. Run in a Powershell
+8. Run in a Powershell
     - `$env:SUITESPARSE_INCLUDE_DIR='.../anaconda3/envs/CraniumPy_NICP/Library/include/suitesparse'`
     - `$env:SUITESPARSE_LIBRARY_DIR='.../anaconda3//envs/CraniumPy_NICP/Library/lib'`
     - `pip install scikit-sparse`
-8. Test `from sksparse.cholmod import cholesky`
+9. Test `from sksparse.cholmod import cholesky`
 
-9. Run CraniumPy:
+10. Run CraniumPy:
 ```
 python CraniumPy.py
 ```
@@ -187,4 +191,3 @@ Tareq Abdel-Alim | Departments of Neurosurgery and Radiology, Erasmus MC, Rotter
 
 If you have any questions, suggestions, or problems do not hesitate to contact me:
 t.abdelalim@erasmusmc.nl
-
