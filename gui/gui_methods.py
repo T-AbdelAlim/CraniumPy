@@ -329,7 +329,7 @@ class GuiMethods:
             template_mesh = GuiMethods.call_template(ICV_scaling=self.mesh_file.volume / 2339070.752133594)
             template_mesh.points *= 1.2
 
-            self.mesh_file.clip_box(template_mesh.bounds, invert=False)
+            self.mesh_file = self.mesh_file.clip_surface(pv.Sphere(radius=125, center=(0, 40, 0)), invert=True)
             self.mesh_file.clip(normal=[0, 0.6, 1], origin=[0, -60, -50], invert=False)
             self.mesh_file = self.mesh_file.clip('y', origin=[0, -21, 0], invert=False)
 
@@ -361,6 +361,7 @@ class GuiMethods:
                 write_ply_file(self.mesh_file, self.file_path)
 
             self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=True)
+            self.plotter.add_mesh(pv.Sphere(radius=125, center=(0, 40, 0)), opacity=0.25)
 
         except:
             pass
@@ -369,7 +370,6 @@ class GuiMethods:
 
         try:
             self.plotter.clear()
-            self.plotter.add_text('Mesh processing...\nThis may take a moment.', position='upper_left')
             if initial_clip == True:
                 clip = -20
             else:
@@ -380,16 +380,16 @@ class GuiMethods:
             lmk_surface = pv.PolyData(self.newpos_landmarks).delaunay_2d()
             templ_centroid = lmk_surface.center_of_mass()
 
-            self.mesh_file.clip_box(template_mesh.bounds, invert=False)
+            self.plotter.add_text('Mesh processing...\nThis may take a moment.', position='upper_left')
             self.mesh_file = self.mesh_file.clip('z', origin=[0, 20, templ_centroid[2] - 1], invert=False)
+            self.mesh_file = self.mesh_file.clip_surface(pv.Sphere(radius=115, center=(0, 25, -25)), invert=True)
 
             if str(self.file_path.stem).endswith('_CF'):
                 pass
             else:
+
                 self.file_path = self.file_path.with_name(self.file_path.stem + '_CF.ply')
             write_ply_file(self.mesh_file, self.file_path)
-
-            # GuiMethods.repairsample(self.file_path, n_vertices=20000, repair=True)
 
             self.mesh_file = pv.read(self.file_path)
 
@@ -404,6 +404,8 @@ class GuiMethods:
             self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=True)
 
         except:
+            self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=True)
+            self.plotter.add_text('Unable to clip face due to missing landmarks.\n1. Select landmarks\n2. Register for Facial Analysis\n3. Clip, Repair, Resample Face.')
             pass
 
     # Craniometrics tab
