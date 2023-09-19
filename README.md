@@ -9,8 +9,8 @@
     * [Facial asymmetry calculation](#facial-asymmetry-calculation)
     * [Non-rigid ICP](#non-rigid-icp)
   * [Download CraniumPy (.exe)](#download-craniumpy)
-  * [Clone repository (without NICP)](#clone-repository-(without-NICP))
-  * [Clone repository (with NICP)](#clone-repository-(with-NICP))
+  * [Clone repository (without NICP)](#clone-repository-without-NICP)
+  * [Clone repository (with NICP)](#clone-repository-with-NICP)
   * [Citation](#citation)
   * [Author](#author)
 
@@ -71,7 +71,7 @@ _NOTE: CraniumPy has been optimized for pediatric analysis. For this reason, som
 A mesh registered for facial analysis can be used to compute the mean distance between each vertex on one half of the face to its corresponding vertex on the other half (using a mirrored reflection). The output is a heatmap (in mm), showing which areas are more or less symmetric. A quantitative metric is also computed, the mean facial asymmetry (MFA) index, which encapsulates the overall asymmetry observed in the face. This algorithm is located under the tab _**compute>Evaluate Asymmetry**_.
 
 ### Non-rigid ICP
-A non-rigid iterative closest point (NICP) algorithm has been implemented which tries to deform a template onto the user's input mesh. This feature can come in handy when there's a need for point-to-point correspondence (e.g. automated landmark detection, advanced shape analysis, geometric deep learning). This step allows a user to match the topology of a mesh or set of meshes to that of the template. The mesh quality may be (slightly) reduced after NICP. To run the CraniumPy source code **with** the NICP algorithm, several dependencies need to be installed as described in section [Clone Repository (with NICP)](#clone-repository-(with-NICP)).
+A non-rigid iterative closest point (NICP) algorithm has been implemented which tries to deform a template onto the user's input mesh. This feature can come in handy when there's a need for point-to-point correspondence (e.g. automated landmark detection, advanced shape analysis, geometric deep learning). This step allows a user to match the topology of a mesh or set of meshes to that of the template. The mesh quality may be (slightly) reduced after NICP. To run the CraniumPy source code **with** the NICP algorithm, several dependencies need to be installed as described in section [Clone Repository (with NICP)](#clone-repository-with-NICP).
 
 
 ## Download CraniumPy
