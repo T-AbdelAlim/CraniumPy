@@ -384,7 +384,6 @@ class GuiMethods:
                 self.file_path = self.file_path.with_name(self.file_path.stem + '_CF.ply')
             write_ply_file(self.mesh_file, self.file_path)
 
-            # GuiMethods.repairsample(self.file_path, n_vertices=20000, repair=True)
 
             self.mesh_file = pv.read(self.file_path)
 
