@@ -143,7 +143,7 @@ pip install -r requirements.txt
     - optional (included in the build dependencies of `scikit-sparse`):
         - `conda install -c conda-forge numpy` - tested with v1.23.2
         - `conda install -c conda-forge scipy` - tested with v1.9.1
-5. Download Microsoft Build Tools for C++ from https://visualstudio.microsoft.com/de/visual-cpp-build-tools/ (tested with 2022, should work with 2015 or newer)
+5. Download Microsoft Build Tools for C++ from https://visualstudio.microsoft.com/visual-cpp-build-tools/ (tested with 2022, should work with 2015 or newer)
 6. Install Visual Studio Build Tools
     1. Choose Workloads
     2. Check "Desktop development with C++"
