@@ -75,23 +75,60 @@ class GuiMethods:
         self.CoM_translation = True
 
     # File tab
+    # def import_mesh(self, resample=False):
+    #     self.plotter.clear()  # clears mesh space every time a new mesh is added
+    #     self.plotter.view_xy()
+    #     self.file_path = Path(askopenfilename(title="Select file to open",
+    #                                           filetypes=(("Mesh files", ("*.ply", "*.obj", "*.stl")),
+    #                                                      ("all files", "*.*"))))
+    #     try:
+    #         self.file_name = self.file_path.name  # returns name.suffix
+    #         self.extension = self.file_path.suffix
+    #         self.mesh_file = pv.read(self.file_path)
+    #         self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=True)
+    #
+    #         self.plotter.reset_camera()
+    #         self.plotter.show_grid()
+    #         self.landmarks = [[], [], []]
+    #     except:
+    #         pass
+
     def import_mesh(self, resample=False):
-        self.plotter.clear()  # clears mesh space every time a new mesh is added
+        self.plotter.clear()  # Clears the mesh space every time a new mesh is added
         self.plotter.view_xy()
         self.file_path = Path(askopenfilename(title="Select file to open",
                                               filetypes=(("Mesh files", ("*.ply", "*.obj", "*.stl")),
                                                          ("all files", "*.*"))))
         try:
-            self.file_name = self.file_path.name  # returns name.suffix
+            self.file_name = self.file_path.name  # Returns the file name with suffix
             self.extension = self.file_path.suffix
             self.mesh_file = pv.read(self.file_path)
-            self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=True)
+
+            # Check if the mesh has embedded textures
+            if self.mesh_file.textures:
+                # Mesh has textures, add it without specifying color
+                self.plotter.add_mesh(self.mesh_file, show_edges=True)
+            else:
+                # Attempt to load an external texture file
+                texture_path = self.file_path.with_suffix('.jpg')
+                if texture_path.exists():
+                    try:
+                        texture = pv.read_texture(texture_path)
+                        # Apply the texture to the mesh
+                        self.plotter.add_mesh(self.mesh_file, texture=texture, show_edges=True)
+                    except Exception as e:
+                        print(f"Could not load texture: {e}")
+                        # Apply default color if texture fails to load
+                        self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=True)
+                else:
+                    # No texture file found, use default color
+                    self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=True)
 
             self.plotter.reset_camera()
             self.plotter.show_grid()
             self.landmarks = [[], [], []]
-        except:
-            pass
+        except Exception as e:
+            print(f"An error occurred: {e}")
 
     def clean_mesh(self):
         try:
