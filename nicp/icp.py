@@ -66,7 +66,7 @@ def CalcTransErrors(R1, t1, R2, t2):
 
 
 # point cloud registration between points p1 and p2
-# with 1-1 correspondance
+# with 1-1 correspondence
 def RegisterPoints(p1, p2):
     u1 = np.mean(p1, axis=1).reshape((3, 1))
     u2 = np.mean(p2, axis=1).reshape((3, 1))
