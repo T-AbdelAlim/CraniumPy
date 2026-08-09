@@ -30,6 +30,7 @@ _This repository makes use of some excellent features implemented in the PyVista
 ![Reconstruction](resources/CraniumPy_info.png)
 
 
+
 ## Usage
 ### Getting started
 Refer to the [step-by-step guide](/resources/documentation.pdf) to get started. 
