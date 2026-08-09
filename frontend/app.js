@@ -4,6 +4,35 @@ import * as THREE from "three";
 import { OrbitControls } from "./vendor/three/controls/OrbitControls.js";
 import { GLTFLoader } from "./vendor/three/loaders/GLTFLoader.js";
 
+// --- menu bar ---
+// just the shell for now - view (split screen, pre/post-op overlay) and
+// settings (default template/config) are placeholders, nothing behind them
+// yet. wiring here is only open/close, nothing else to hook up until there's
+// an actual feature behind one of these.
+
+document.querySelectorAll(".menu-trigger").forEach((trigger) => {
+  trigger.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const menu = trigger.closest(".menu");
+    const wasOpen = menu.classList.contains("open");
+    document.querySelectorAll(".menu.open").forEach((m) => {
+      m.classList.remove("open");
+      m.querySelector(".menu-dropdown").classList.add("hidden");
+    });
+    if (!wasOpen) {
+      menu.classList.add("open");
+      menu.querySelector(".menu-dropdown").classList.remove("hidden");
+    }
+  });
+});
+
+window.addEventListener("click", () => {
+  document.querySelectorAll(".menu.open").forEach((m) => {
+    m.classList.remove("open");
+    m.querySelector(".menu-dropdown").classList.add("hidden");
+  });
+});
+
 // --- scene setup ---
 
 const canvas = document.getElementById("viewer");
@@ -17,10 +46,20 @@ renderer.localClippingEnabled = true; // needed for the manual clip-plane live p
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 
+// three lights from different angles, each fairly dim, instead of one strong
+// one - a single directional light was crushing whichever side faced away
+// from it into near-black, which made it hard to see the mesh well enough
+// to place landmarks accurately on that side.
 scene.add(new THREE.HemisphereLight(0xffffff, 0x2a2e37, 1.3));
-const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
-dirLight.position.set(1, 1, 1);
-scene.add(dirLight);
+const keyLight = new THREE.DirectionalLight(0xffffff, 0.55);
+keyLight.position.set(1, 1, 1);
+scene.add(keyLight);
+const fillLight = new THREE.DirectionalLight(0xffffff, 0.4);
+fillLight.position.set(-1, 0.5, -1);
+scene.add(fillLight);
+const rimLight = new THREE.DirectionalLight(0xffffff, 0.3);
+rimLight.position.set(0, -1, 1);
+scene.add(rimLight);
 
 function resize() {
   const w = container.clientWidth;
@@ -58,12 +97,17 @@ function fitCameraToObject(object) {
 const gltfLoader = new GLTFLoader();
 let currentMeshObject = null;
 let currentMeshMaterials = [];
+let currentMeshHasTexture = false;
 let markerRadius = 2;
 
 function loadGlb(url) {
   return new Promise((resolve, reject) => {
     gltfLoader.load(url, (gltf) => resolve(gltf.scene), undefined, reject);
   });
+}
+
+function plainMaterial() {
+  return new THREE.MeshStandardMaterial({ color: 0xe8d9c0, side: THREE.DoubleSide, roughness: 0.85, metalness: 0.0 });
 }
 
 async function displayMesh(url) {
@@ -74,6 +118,7 @@ async function displayMesh(url) {
   clearMarkers();
   clearTemplateOverlay();
   currentMeshMaterials = [];
+  currentMeshHasTexture = false;
 
   const object = await loadGlb(url);
   object.traverse((child) => {
@@ -86,17 +131,23 @@ async function displayMesh(url) {
 
     const hasTexture = !!(child.material && child.material.map);
     const hasVertexColors = !!child.geometry.attributes.color;
-    if (!hasTexture && !hasVertexColors) {
+
+    if (hasTexture) {
+      // unlit on purpose - a photo texture already has real-world lighting
+      // baked into its pixels, so running it through the scene's directional
+      // light on top just adds a second, wrong light source, crushing one
+      // side of the face into shadow and making it hard to see where you're
+      // actually clicking for landmarks.
+      currentMeshHasTexture = true;
+      child.userData.texturedMaterial = new THREE.MeshBasicMaterial({ map: child.material.map, side: THREE.DoubleSide });
+      child.userData.plainMaterial = plainMaterial();
+      child.material = child.userData.texturedMaterial;
+    } else if (hasVertexColors) {
       child.material = new THREE.MeshStandardMaterial({
-        color: 0xe8d9c0,
-        side: THREE.DoubleSide,
-        roughness: 0.85,
-        metalness: 0.0,
+        vertexColors: true, side: THREE.DoubleSide, roughness: 0.85, metalness: 0.0,
       });
     } else {
-      child.material.side = THREE.DoubleSide;
-      child.material.vertexColors = hasVertexColors;
-      child.material.needsUpdate = true;
+      child.material = plainMaterial();
     }
     currentMeshMaterials.push(child.material);
   });
@@ -104,8 +155,38 @@ async function displayMesh(url) {
   currentMeshObject = object;
   markerRadius = fitCameraToObject(object) * 0.012;
   applyClipPreview();
+
+  document.getElementById("mesh-view-toggles").classList.remove("hidden");
+  document.getElementById("wireframe-toggle").checked = false;
+  const textureToggle = document.getElementById("texture-toggle");
+  textureToggle.closest("label").classList.toggle("hidden", !currentMeshHasTexture);
+  textureToggle.checked = true;
+  applyWireframeState();
+
   return object;
 }
+
+function applyWireframeState() {
+  const on = document.getElementById("wireframe-toggle").checked;
+  for (const m of currentMeshMaterials) m.wireframe = on;
+}
+
+document.getElementById("wireframe-toggle").addEventListener("change", applyWireframeState);
+
+document.getElementById("texture-toggle").addEventListener("change", (event) => {
+  if (!currentMeshObject) return;
+  const showTexture = event.target.checked;
+  currentMeshMaterials = [];
+  currentMeshObject.traverse((child) => {
+    if (!child.isMesh || !child.userData.texturedMaterial) return;
+    child.material = showTexture ? child.userData.texturedMaterial : child.userData.plainMaterial;
+  });
+  currentMeshObject.traverse((child) => {
+    if (child.isMesh) currentMeshMaterials.push(child.material);
+  });
+  applyWireframeState();
+  applyClipPreview();
+});
 
 // --- landmark / result markers ---
 // landmark markers (green, draggable via alt+drag) are tracked by name so a
@@ -296,22 +377,10 @@ window.addEventListener("mouseup", () => {
 
 let sessionId = null;
 
-async function uploadFiles(files) {
+async function _afterSessionOpened(response) {
   const infoEl = document.getElementById("mesh-info");
-  infoEl.textContent = "uploading...";
-
-  const formData = new FormData();
-  for (const f of files) formData.append("files", f);
-
-  let response;
-  try {
-    response = await fetch("/api/sessions", { method: "POST", body: formData });
-  } catch (err) {
-    infoEl.textContent = `upload failed: ${err}`;
-    return;
-  }
   if (!response.ok) {
-    infoEl.textContent = `upload failed: ${await response.text()}`;
+    infoEl.textContent = `couldn't open mesh: ${await response.text()}`;
     return;
   }
 
@@ -320,31 +389,72 @@ async function uploadFiles(files) {
   infoEl.textContent = `${data.vertex_count} vertices, ${data.face_count} faces`;
   document.getElementById("viewer-hint").classList.add("hidden");
   document.getElementById("results").classList.add("hidden");
+  document.getElementById("save-status").textContent = "";
 
   resetManualPicks();
   await displayMesh(`/api/sessions/${sessionId}/mesh/original`);
   updateAnalyzeButtonState();
 }
 
+async function uploadFiles(files) {
+  document.getElementById("mesh-info").textContent = "uploading...";
+  const formData = new FormData();
+  for (const f of files) formData.append("files", f);
+  try {
+    await _afterSessionOpened(await fetch("/api/sessions", { method: "POST", body: formData }));
+  } catch (err) {
+    document.getElementById("mesh-info").textContent = `upload failed: ${err}`;
+  }
+}
+
+// desktop-only: paths from the native file dialog (see pick_file in
+// desktop/app.py) - read straight off disk server-side, no upload needed,
+// and the source folder gets remembered so results can be saved back into
+// it later without asking (see the save-results button below).
+async function openFilesFromPaths(paths) {
+  document.getElementById("mesh-info").textContent = "opening...";
+  try {
+    await _afterSessionOpened(
+      await fetch("/api/sessions/from-paths", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paths }),
+      })
+    );
+  } catch (err) {
+    document.getElementById("mesh-info").textContent = `couldn't open mesh: ${err}`;
+  }
+}
+
 const MESH_EXTENSIONS = ["ply", "obj", "stl"];
+
+function hasMeshFile(names) {
+  const extOf = (name) => (name.split(".").pop() || "").toLowerCase();
+  return names.some((n) => MESH_EXTENSIONS.includes(extOf(n)));
+}
+
+document.getElementById("choose-mesh-button").addEventListener("click", async () => {
+  if (isDesktopApp()) {
+    const paths = await window.pywebview.api.pick_file(true);
+    if (!paths || paths.length === 0) return;
+    if (!hasMeshFile(paths.map((p) => p.split(/[\\/]/).pop()))) {
+      document.getElementById("mesh-info").textContent = "no .ply/.obj/.stl found in what you picked";
+      return;
+    }
+    openFilesFromPaths(paths);
+  } else {
+    document.getElementById("file-input").click();
+  }
+});
 
 document.getElementById("file-input").addEventListener("change", (event) => {
   const allFiles = Array.from(event.target.files);
   if (allFiles.length === 0) return;
-  const extOf = (name) => (name.split(".").pop() || "").toLowerCase();
-
-  const meshFile = allFiles.find((f) => MESH_EXTENSIONS.includes(extOf(f.name)));
-  if (!meshFile) {
+  if (!hasMeshFile(allFiles.map((f) => f.name))) {
     document.getElementById("mesh-info").textContent = "no .ply/.obj/.stl found in the files you picked";
     return;
   }
-
-  const includeTextures = document.getElementById("include-texture-files").checked;
-  const filesToUpload = includeTextures
-    ? allFiles
-    : [meshFile];
-
-  uploadFiles(filesToUpload);
+  uploadFiles(allFiles);
 });
 
 function updateAnalyzeButtonState() {
@@ -649,7 +759,8 @@ document.getElementById("template-select").addEventListener("change", () => {
 
 // browser-mode only: holds the last uploaded custom template's GLB blob URL
 // and display name for this session - can't remember a real path across
-// restarts without pywebview, see get_custom_template_mesh_from_path.
+// restarts without pywebview, see get_custom_template_mesh (the path-based
+// one) in api/routers/mesh.py.
 let customTemplateBlobUrl = null;
 let customTemplateBlobName = null;
 
@@ -829,7 +940,41 @@ document.getElementById("template-overlay-toggle").addEventListener("change", as
   }
 });
 
-document.getElementById("download-bundle-button").addEventListener("click", () => {
+document.getElementById("download-bundle-button").addEventListener("click", async () => {
   if (!sessionId) return;
+  const statusEl = document.getElementById("save-status");
+
+  if (isDesktopApp()) {
+    statusEl.textContent = "saving...";
+    const response = await fetch(`/api/sessions/${sessionId}/save`, { method: "POST" });
+    if (response.ok) {
+      const data = await response.json();
+      statusEl.textContent = `saved to ${data.saved_to}`;
+      return;
+    }
+    // only real reason this 400s is a session that wasn't opened from a real
+    // path (shouldn't normally happen in the desktop app, but fall back
+    // cleanly rather than leaving the user stuck) - anything else is worth
+    // surfacing instead of silently falling back.
+    if (response.status !== 400) {
+      statusEl.textContent = `save failed: ${await response.text()}`;
+      return;
+    }
+  }
+
+  statusEl.textContent = "";
   window.location.href = `/api/sessions/${sessionId}/bundle`;
 });
+
+function updateResultsButtonLabel() {
+  document.getElementById("download-bundle-button").textContent = isDesktopApp()
+    ? "save results (mesh + report + figure)"
+    : "download results (mesh + report + figure)";
+}
+
+// window.pywebview.api isn't necessarily ready on first paint - it shows up
+// once pywebview finishes injecting its bridge, hence both the immediate
+// call (covers plain-browser mode, which is never going to change) and the
+// event listener (covers desktop mode's slightly-delayed readiness).
+updateResultsButtonLabel();
+window.addEventListener("pywebviewready", updateResultsButtonLabel);

@@ -1,7 +1,14 @@
-"""builds the results zip you can download - meshes, a json report, and a
-measurement figure, packaged as CP_{filename}_results/. this is basically the
-same stuff the old app wrote next to your file (_rg.ply, _metrics.json etc)
-just bundled into one download instead of a pile of sibling files.
+"""builds the results you get after an analysis - meshes, a json report, and
+a measurement figure, packaged as CP_{stem}_results/. this is basically the
+same stuff the old app wrote next to your file (_rg.ply, _metrics.json etc),
+just organized into one folder now instead of a pile of sibling files.
+
+two ways this gets delivered: zipped for a browser download
+(build_results_bundle), or written straight to disk next to the original
+mesh when we know a real filesystem path for it (write_results_to_folder,
+desktop app only - see api/routers/mesh.py's /save endpoint). both go
+through _build_report_files so the folder layout and filenames match
+either way.
 """
 
 from __future__ import annotations
@@ -10,6 +17,7 @@ import io
 import json
 import zipfile
 from datetime import datetime, timezone
+from pathlib import Path
 
 import numpy as np
 import trimesh
@@ -18,6 +26,22 @@ from matplotlib.figure import Figure
 
 from craniumpy_core.craniometrics import CranioMeasurements, hc_slice_polygon
 from craniumpy_core.asymmetry import AsymmetryResult
+
+
+def shorten_stem(stem: str) -> str:
+    """collapses any embedded dot within an underscore-separated segment of
+    the stem, keeping only what's before it - some scanners name files like
+    "1016510_20210730.000112_edited", where that middle segment is a
+    date-plus-subversion nobody wants spelled out in a results folder name.
+    "1016510_20210730.000112_edited" -> "1016510_20210730_edited"."""
+    return "_".join(part.split(".", 1)[0] for part in stem.split("_"))
+
+
+def stem_from_filename(filename: str) -> str:
+    """the shortened stem to build a results folder/file names from, given
+    an original mesh filename (with its real extension still on it)."""
+    stem = filename.rsplit(".", 1)[0] if "." in filename else filename
+    return shorten_stem(stem)
 
 
 def _measurement_figure(mesh: trimesh.Trimesh, measurements: CranioMeasurements) -> bytes:
@@ -59,7 +83,7 @@ def _measurement_figure(mesh: trimesh.Trimesh, measurements: CranioMeasurements)
     return buf.getvalue()
 
 
-def build_results_bundle(
+def _build_report_files(
     original_filename: str,
     registered_mesh: trimesh.Trimesh,
     final_mesh: trimesh.Trimesh,
@@ -68,14 +92,11 @@ def build_results_bundle(
     craniometrics: CranioMeasurements | None,
     asymmetry: AsymmetryResult | None,
     config: dict,
-) -> bytes:
-    """zip bytes for CP_{stem}_results/, containing:
-    - {stem}_registered.ply - mesh right after registration, before clip/repair/resample
-    - {stem}_final.ply - mesh after the whole pipeline, what the measurements ran on
-    - {stem}_report.json - measurements + landmarks + whatever settings were used
-    - {stem}_measurements.png - the HC-slice figure (cranium target only)
-    """
-    stem = original_filename.rsplit(".", 1)[0] if "." in original_filename else original_filename
+) -> tuple[str, dict[str, bytes]]:
+    """(folder_name, {filename: bytes}) - the same 4 files either delivery
+    method writes, named {stem}_registered.ply / _final.ply / _report.json /
+    _measurements.png (cranium target only)."""
+    stem = stem_from_filename(original_filename)
     folder = f"CP_{stem}_results"
 
     report = {
@@ -101,12 +122,57 @@ def build_results_bundle(
     if asymmetry is not None:
         report["asymmetry"] = {"mean_asymmetry_index": asymmetry.mean_asymmetry_index}
 
+    files = {
+        f"{stem}_registered.ply": registered_mesh.export(file_type="ply"),
+        f"{stem}_final.ply": final_mesh.export(file_type="ply"),
+        f"{stem}_report.json": json.dumps(report, indent=2).encode("utf-8"),
+    }
+    if craniometrics is not None:
+        files[f"{stem}_measurements.png"] = _measurement_figure(final_mesh, craniometrics)
+
+    return folder, files
+
+
+def build_results_bundle(
+    original_filename: str,
+    registered_mesh: trimesh.Trimesh,
+    final_mesh: trimesh.Trimesh,
+    landmarks: np.ndarray,
+    target: str,
+    craniometrics: CranioMeasurements | None,
+    asymmetry: AsymmetryResult | None,
+    config: dict,
+) -> bytes:
+    """zip bytes for CP_{stem}_results/ - the browser-download path."""
+    folder, files = _build_report_files(
+        original_filename, registered_mesh, final_mesh, landmarks, target, craniometrics, asymmetry, config
+    )
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr(f"{folder}/{stem}_registered.ply", registered_mesh.export(file_type="ply"))
-        zf.writestr(f"{folder}/{stem}_final.ply", final_mesh.export(file_type="ply"))
-        zf.writestr(f"{folder}/{stem}_report.json", json.dumps(report, indent=2))
-        if craniometrics is not None:
-            zf.writestr(f"{folder}/{stem}_measurements.png", _measurement_figure(final_mesh, craniometrics))
-
+        for name, content in files.items():
+            zf.writestr(f"{folder}/{name}", content)
     return buf.getvalue()
+
+
+def write_results_to_folder(
+    dest_dir: Path,
+    original_filename: str,
+    registered_mesh: trimesh.Trimesh,
+    final_mesh: trimesh.Trimesh,
+    landmarks: np.ndarray,
+    target: str,
+    craniometrics: CranioMeasurements | None,
+    asymmetry: AsymmetryResult | None,
+    config: dict,
+) -> Path:
+    """writes CP_{stem}_results/ straight into dest_dir - the desktop app's
+    "save next to the original mesh" path, no zip/download step needed since
+    we already know a real folder to put it in. returns the folder written."""
+    folder, files = _build_report_files(
+        original_filename, registered_mesh, final_mesh, landmarks, target, craniometrics, asymmetry, config
+    )
+    results_dir = dest_dir / folder
+    results_dir.mkdir(parents=True, exist_ok=True)
+    for name, content in files.items():
+        (results_dir / name).write_bytes(content)
+    return results_dir

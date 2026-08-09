@@ -22,12 +22,13 @@ def _run_server() -> None:
 
 
 class Api:
-    """exposed to the frontend as window.pywebview.api.* - the only thing in
-    here right now is a native file dialog for picking a custom template
-    mesh, since a plain browser <input type=file> can't hand back a real
-    filesystem path (browser sandboxing, same reason "pick a folder" never
-    could either) and the frontend needs a real path to remember across
-    restarts. see frontend/app.js's custom template picker.
+    """exposed to the frontend as window.pywebview.api.* - a native file
+    dialog, since a plain browser <input type=file> can't hand back a real
+    filesystem path (browser sandboxing). used two ways: picking a custom
+    template to remember across restarts (frontend/app.js's template
+    picker), and picking the main mesh (+ its .mtl/texture companions) so
+    results can be saved straight back next to it instead of needing a
+    browser download (see api/routers/mesh.py's open_mesh_from_paths/save).
 
     the window reference has to be stored as _window (underscore), not
     window - pywebview auto-exposes every *public* non-callable attribute
@@ -42,14 +43,18 @@ class Api:
     def __init__(self) -> None:
         self._window: webview.Window | None = None
 
-    def pick_template_file(self) -> str | None:
+    def pick_file(self, allow_multiple: bool = False) -> list[str] | None:
         if self._window is None:
             return None
         result = self._window.create_file_dialog(
             webview.FileDialog.OPEN,
-            file_types=("Mesh files (*.ply;*.obj;*.stl)", "All files (*.*)"),
+            allow_multiple=allow_multiple,
+            file_types=(
+                "Mesh + texture files (*.ply;*.obj;*.stl;*.mtl;*.jpg;*.jpeg;*.png)",
+                "All files (*.*)",
+            ),
         )
-        return result[0] if result else None
+        return list(result) if result else None
 
 
 def main() -> None:

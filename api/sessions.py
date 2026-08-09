@@ -18,6 +18,7 @@ import threading
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Literal
 
 import trimesh
@@ -32,6 +33,11 @@ class Session:
     id: str
     mesh: trimesh.Trimesh
     original_filename: str = "mesh"
+    # set only when the mesh was opened from a real local path (desktop
+    # app's native file picker, not a browser upload) - lets /save write
+    # results straight next to the original file instead of needing a
+    # browser download. see api/routers/mesh.py's open_mesh_from_paths.
+    source_dir: Path | None = None
 
     # these get filled in as the job runs
     registered_mesh: trimesh.Trimesh | None = None
@@ -51,8 +57,12 @@ class SessionStore:
         self._sessions: dict[str, Session] = {}
         self._lock = threading.Lock()
 
-    def create(self, mesh: trimesh.Trimesh, original_filename: str = "mesh") -> Session:
-        session = Session(id=str(uuid.uuid4()), mesh=mesh, original_filename=original_filename)
+    def create(
+        self, mesh: trimesh.Trimesh, original_filename: str = "mesh", source_dir: Path | None = None
+    ) -> Session:
+        session = Session(
+            id=str(uuid.uuid4()), mesh=mesh, original_filename=original_filename, source_dir=source_dir
+        )
         with self._lock:
             self._sessions[session.id] = session
         return session

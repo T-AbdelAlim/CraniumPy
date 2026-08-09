@@ -259,3 +259,47 @@ def test_results_bundle_download(client, landmarks_payload):
     assert any(n.endswith("_final.ply") for n in names)
     assert any(n.endswith("_report.json") for n in names)
     assert any(n.endswith("_measurements.png") for n in names)
+
+
+def test_open_mesh_from_paths(client):
+    response = client.post("/api/sessions/from-paths", json={"paths": [str(TEMPLATE_PATH)]})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["vertex_count"] > 0
+
+
+def test_open_mesh_from_paths_missing_file_400s(client):
+    response = client.post("/api/sessions/from-paths", json={"paths": ["C:/nope/not-a-real-file.ply"]})
+    assert response.status_code == 400
+
+
+def test_save_results_without_source_dir_400s(client, landmarks_payload):
+    # opened via the plain-bytes /api/sessions upload, so there's no known
+    # source folder to save into
+    session_id = _upload(client)
+    status = _run_analysis(client, session_id, {"target": "cranium", "landmarks": landmarks_payload})
+    assert status == "done"
+
+    response = client.post(f"/api/sessions/{session_id}/save")
+    assert response.status_code == 400
+
+
+def test_save_results_to_source_folder(client, landmarks_payload, tmp_path):
+    import shutil
+
+    tmp_mesh = tmp_path / "1016510_20210730.000112_edited.ply"
+    shutil.copy(TEMPLATE_PATH, tmp_mesh)
+
+    open_response = client.post("/api/sessions/from-paths", json={"paths": [str(tmp_mesh)]})
+    session_id = open_response.json()["session_id"]
+
+    status = _run_analysis(client, session_id, {"target": "cranium", "landmarks": landmarks_payload})
+    assert status == "done"
+
+    save_response = client.post(f"/api/sessions/{session_id}/save")
+    assert save_response.status_code == 200, save_response.text
+    saved_to = Path(save_response.json()["saved_to"])
+    assert saved_to == tmp_path / "CP_1016510_20210730_edited_results"
+    assert (saved_to / "1016510_20210730_edited_registered.ply").exists()
+    assert (saved_to / "1016510_20210730_edited_final.ply").exists()
+    assert (saved_to / "1016510_20210730_edited_report.json").exists()

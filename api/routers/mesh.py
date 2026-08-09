@@ -20,13 +20,15 @@ from craniumpy_core import pipeline
 from craniumpy_core.clipping import cranial_clip, facial_clip
 from craniumpy_core.registration.rigid import REFERENCE_TRIANGLE
 from craniumpy_core.template_registry import SHIPPED_TEMPLATES, load_shipped_template
-from api.results_bundle import build_results_bundle
+from api.results_bundle import build_results_bundle, stem_from_filename, write_results_to_folder
 from api.schemas import (
     AnalyzeRequest,
     AsymmetryResponse,
     CraniometricsResponse,
     LandmarkPoint,
+    OpenFromPathsRequest,
     ResultsResponse,
+    SaveResultsResponse,
     StatusResponse,
     TemplateInfo,
     UploadResponse,
@@ -60,6 +62,28 @@ def _load_primary_and_resolver(files: list[UploadFile]) -> tuple[str, dict[str, 
         raise HTTPException(
             status_code=400,
             detail=f"expected exactly one .ply/.obj/.stl file among the upload, got {len(primary_candidates)}",
+        )
+    return primary_candidates[0], contents_by_name
+
+
+def _load_primary_and_resolver_from_paths(paths: list[str]) -> tuple[str, dict[str, bytes]]:
+    """same deal as _load_primary_and_resolver, but for real filesystem
+    paths picked by the desktop app's native file dialog instead of an HTTP
+    multipart upload - see open_mesh_from_paths."""
+    contents_by_name: dict[str, bytes] = {}
+    for raw_path in paths:
+        p = Path(raw_path)
+        if not p.is_file():
+            raise HTTPException(status_code=400, detail=f"file not found: {raw_path}")
+        contents_by_name[p.name] = p.read_bytes()
+
+    primary_candidates = [
+        name for name in contents_by_name if Path(name).suffix.lstrip(".").lower() in MESH_EXTENSIONS
+    ]
+    if len(primary_candidates) != 1:
+        raise HTTPException(
+            status_code=400,
+            detail=f"expected exactly one .ply/.obj/.stl file among the selection, got {len(primary_candidates)}",
         )
     return primary_candidates[0], contents_by_name
 
@@ -122,9 +146,9 @@ def _apply_overlay_clip(mesh: trimesh.Trimesh, clip: str | None) -> trimesh.Trim
 def get_custom_template_mesh(path: str, clip: str | None = None):
     """GLB export of a template mesh loaded straight from a local filesystem
     path - backs the desktop app's "remember this template for next time"
-    flow (see desktop/app.py's pick_template_file / frontend/app.js). reads
-    the file fresh every call, nothing kept server-side - the "remembering"
-    happens client-side, in the frontend's localStorage.
+    flow (see desktop/app.py's pick_file / frontend/app.js). reads the file
+    fresh every call, nothing kept server-side - the "remembering" happens
+    client-side, in the frontend's localStorage.
 
     only makes sense because both the desktop app and the documented
     `uvicorn api.main:app` web-service launch bind to 127.0.0.1 - the
@@ -183,9 +207,12 @@ async def upload_mesh(files: list[UploadFile]) -> UploadResponse:
     texture image, for a textured .obj). obj/ply reference textures by
     filename in a separate file, not inline - so a lone .obj can't actually
     carry its texture, trimesh just quietly falls back to a blank placeholder
-    image if it can't find what it's looking for. send everything together
-    (the "include texture files" option in the frontend does this for you)
-    and this sorts it out.
+    image if it can't find what it's looking for. multi-select them together
+    in the frontend's file picker and this sorts it out.
+
+    this is the plain-browser path - no real filesystem path comes with an
+    HTTP upload, so a session opened this way can't use /save (see
+    open_mesh_from_paths for the desktop equivalent that can).
     """
     if not files:
         raise HTTPException(status_code=400, detail="no files uploaded")
@@ -193,6 +220,22 @@ async def upload_mesh(files: list[UploadFile]) -> UploadResponse:
     mesh = _load_mesh_from_upload(primary_name, contents_by_name)
 
     session = store.create(mesh, original_filename=primary_name)
+    return UploadResponse(session_id=session.id, vertex_count=len(mesh.vertices), face_count=len(mesh.faces))
+
+
+@router.post("/from-paths", response_model=UploadResponse)
+def open_mesh_from_paths(request: OpenFromPathsRequest) -> UploadResponse:
+    """same as upload_mesh, but reads straight from local filesystem paths
+    instead of an HTTP upload - the desktop app's native (multi-select) file
+    dialog hands back real paths, so there's no reason to round-trip the
+    bytes through a browser upload. remembers the containing folder on the
+    session too, so /save can write results back next to the original file
+    without asking where."""
+    primary_name, contents_by_name = _load_primary_and_resolver_from_paths(request.paths)
+    mesh = _load_mesh_from_upload(primary_name, contents_by_name)
+
+    primary_path = next(p for p in request.paths if Path(p).name == primary_name)
+    session = store.create(mesh, original_filename=primary_name, source_dir=Path(primary_path).parent)
     return UploadResponse(session_id=session.id, vertex_count=len(mesh.vertices), face_count=len(mesh.faces))
 
 
@@ -331,7 +374,7 @@ def download_results_bundle(session_id: str):
 
     r = session.result
     request: AnalyzeRequest = r["request"]
-    stem = session.original_filename.rsplit(".", 1)[0] if "." in session.original_filename else session.original_filename
+    stem = stem_from_filename(session.original_filename)
 
     zip_bytes = build_results_bundle(
         original_filename=session.original_filename,
@@ -348,3 +391,36 @@ def download_results_bundle(session_id: str):
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="CP_{stem}_results.zip"'},
     )
+
+
+@router.post("/{session_id}/save", response_model=SaveResultsResponse)
+def save_results_to_source_folder(session_id: str) -> SaveResultsResponse:
+    """writes results straight into CP_{stem}_results/ next to the original
+    mesh file - only works for a session opened via open_mesh_from_paths
+    (desktop app, native file picker), since that's the only case where we
+    actually know a real folder to write into. the frontend falls back to
+    the zip download (/bundle) when this 400s."""
+    session = _get_session(session_id)
+    if session.source_dir is None:
+        raise HTTPException(
+            status_code=400,
+            detail="this session wasn't opened from a real file path, nowhere to save to - use /bundle instead",
+        )
+    if session.job_status != "done" or session.result is None or session.registered_mesh is None:
+        raise HTTPException(status_code=409, detail=f"no completed analysis yet (status: {session.job_status})")
+
+    r = session.result
+    request: AnalyzeRequest = r["request"]
+
+    results_dir = write_results_to_folder(
+        dest_dir=session.source_dir,
+        original_filename=session.original_filename,
+        registered_mesh=session.registered_mesh,
+        final_mesh=session.result_mesh,
+        landmarks=r["landmarks"],
+        target=request.target,
+        craniometrics=r["craniometrics"],
+        asymmetry=r["asymmetry"],
+        config=request.model_dump(),
+    )
+    return SaveResultsResponse(saved_to=str(results_dir))

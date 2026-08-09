@@ -48,6 +48,18 @@ class UploadResponse(BaseModel):
     face_count: int
 
 
+class OpenFromPathsRequest(BaseModel):
+    # absolute local filesystem paths - the mesh plus, optionally, its
+    # .mtl/texture companions, all picked in one go by the desktop app's
+    # native (multi-select) file dialog. see api/routers/mesh.py's
+    # open_mesh_from_paths and desktop/app.py's pick_file.
+    paths: list[str] = Field(min_length=1)
+
+
+class SaveResultsResponse(BaseModel):
+    saved_to: str
+
+
 class ProgressInfo(BaseModel):
     stage: str
     detail: str
