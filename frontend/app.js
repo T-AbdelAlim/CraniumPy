@@ -435,7 +435,9 @@ function hasMeshFile(names) {
 
 document.getElementById("choose-mesh-button").addEventListener("click", async () => {
   if (isDesktopApp()) {
-    const paths = await window.pywebview.api.pick_file(true);
+    const paths = await pickFileNative(true, (msg) => {
+      document.getElementById("mesh-info").textContent = `couldn't open the file picker: ${msg}`;
+    });
     if (!paths || paths.length === 0) return;
     if (!hasMeshFile(paths.map((p) => p.split(/[\\/]/).pop()))) {
       document.getElementById("mesh-info").textContent = "no .ply/.obj/.stl found in what you picked";
@@ -696,7 +698,25 @@ async function fetchShippedTemplates() {
 }
 
 function isDesktopApp() {
-  return !!(window.pywebview && window.pywebview.api);
+  // window.pywebview.api starts out as {} the instant pywebview injects its
+  // bridge, before pick_file is actually attached to it - checking the
+  // object's truthiness instead of the function's would report "desktop"
+  // during that gap and then fail calling something that doesn't exist yet.
+  return typeof window.pywebview !== "undefined" && typeof window.pywebview.api?.pick_file === "function";
+}
+
+// wraps the native file dialog call so a failure (bad file filter string,
+// pywebview not ready yet, whatever) shows up as a message instead of the
+// button just silently doing nothing - that's exactly how a real bug here
+// slipped through before: create_file_dialog raised (invalid file filter),
+// nothing caught the rejection, "choose file(s)" just did nothing at all.
+async function pickFileNative(allowMultiple, onError) {
+  try {
+    return await window.pywebview.api.pick_file(allowMultiple);
+  } catch (err) {
+    onError(err && err.message ? err.message : String(err));
+    return null;
+  }
 }
 
 function templateChoiceStorageKey(target) {
@@ -767,9 +787,11 @@ let customTemplateBlobName = null;
 document.getElementById("template-browse-button").addEventListener("click", async () => {
   const target = document.querySelector('input[name="target"]:checked').value;
   if (isDesktopApp()) {
-    const path = await window.pywebview.api.pick_template_file();
-    if (!path) return;
-    localStorage.setItem(customTemplatePathStorageKey(target), path);
+    const paths = await pickFileNative(false, (msg) => {
+      document.getElementById("template-custom-name").textContent = `couldn't open the file picker: ${msg}`;
+    });
+    if (!paths || paths.length === 0) return;
+    localStorage.setItem(customTemplatePathStorageKey(target), paths[0]);
     updateTemplateCustomRow();
   } else {
     document.getElementById("template-custom-file-input").click();

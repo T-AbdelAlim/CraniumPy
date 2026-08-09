@@ -46,11 +46,22 @@ class Api:
     def pick_file(self, allow_multiple: bool = False) -> list[str] | None:
         if self._window is None:
             return None
+        # pywebview validates each file_types string against its own regex
+        # (webview.util.parse_file_type: only word characters and spaces in
+        # the description) before it'll even open the dialog - "Mesh +
+        # texture files" here used to have a "+" in it, which failed that
+        # check silently: create_file_dialog raised before the dialog ever
+        # showed, the exception got turned into a rejected JS promise (see
+        # webview.util.js_bridge_call), and since the frontend never had a
+        # .catch() on this call, "choose file(s)" just did nothing with no
+        # visible error at all. caught this from a bug report, not from
+        # testing it myself - there's no way to click a real native dialog
+        # through my own tools, only to inspect the code that runs it.
         result = self._window.create_file_dialog(
             webview.FileDialog.OPEN,
             allow_multiple=allow_multiple,
             file_types=(
-                "Mesh + texture files (*.ply;*.obj;*.stl;*.mtl;*.jpg;*.jpeg;*.png)",
+                "Mesh and texture files (*.ply;*.obj;*.stl;*.mtl;*.jpg;*.jpeg;*.png)",
                 "All files (*.*)",
             ),
         )
