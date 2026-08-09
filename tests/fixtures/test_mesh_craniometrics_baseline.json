@@ -1,0 +1,31 @@
+{
+  "source_mesh": "resources/test_mesh/test_mesh.ply",
+  "pyvista_version": "0.48.4",
+  "note": "ran the unmodified old craniometrics.py math against the raw, unregistered test mesh to get this. just a regression check that my port gives the same numbers on the same input - not a real measurement since this mesh never went through registration.",
+  "slice_height": -2.220446049250313e-16,
+  "depth_mm": 159.55,
+  "breadth_mm": 172.21,
+  "cephalic_index": 107.9,
+  "circumference_cm": 50.0,
+  "mesh_volume_cc": 2408.22,
+  "front_opt": [
+    -10.436206817626953,
+    0.0,
+    69.13450622558594
+  ],
+  "occ_opt": [
+    10.862659454345703,
+    -2.220446049250313e-16,
+    -90.41055297851562
+  ],
+  "lh_opt": [
+    -94.17427825927734,
+    0.0,
+    -17.239421844482422
+  ],
+  "rh_opt": [
+    78.03133392333984,
+    -2.220446049250313e-16,
+    3.4789907932281494
+  ]
+}

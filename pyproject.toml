@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "craniumpy"
+version = "0.1.0"
+description = "Craniofacial 3D mesh registration and cephalometric analysis"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE.md" }
+
+# core deps - needed by the algorithm library and both delivery targets
+# (web service, desktop app), since backend + core always ship together.
+# nothing GUI-specific goes in here.
+dependencies = [
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "trimesh>=4.4",
+    "shapely>=2.0",
+    "fast-simplification>=0.1.7",
+    "networkx>=3.0",
+    "rtree>=1.2",
+    "pillow>=10.0",
+    "pymeshfix>=0.17",
+    "matplotlib>=3.8",
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+# only needed to build/run the standalone exe
+desktop = [
+    "pywebview>=5.2",
+    "pyinstaller>=6.8",
+]
+# only for local dev / CI
+dev = [
+    "pytest>=8.2",
+    "httpx>=0.27",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/craniumpy_core"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not slow'"
+markers = [
+    "slow: the real end-to-end pipeline test on the actual head template mesh, not a synthetic one. run with `pytest -m slow`, not part of the normal run.",
+]

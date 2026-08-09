@@ -1,0 +1,42 @@
+{
+  "note": "ran the unmodified old CoordinatePicking.reg_to_template math (registration/picking.py) against a made-up but non-degenerate landmark triple. 'landmarks' is the input (nasion, left tragus, right tragus), 'final_points' is where it ends up after the translation + both rotation stages.",
+  "landmarks": [
+    [
+      31.995,
+      -39.218,
+      64.042
+    ],
+    [
+      51.652,
+      39.337,
+      18.125200000000003
+    ],
+    [
+      -43.81,
+      -24.8293,
+      -18.673399999999994
+    ]
+  ],
+  "translation": [
+    -13.278999999966667,
+    8.236766666666666,
+    -21.164600000000004
+  ],
+  "final_points": [
+    [
+      8.992023792231407e-11,
+      -0.2695568611304966,
+      56.111712188404205
+    ],
+    [
+      59.12408417096593,
+      0.07585426793583494,
+      -15.790037152951093
+    ],
+    [
+      -59.12408417098203,
+      0.19370259313586402,
+      -40.32167503542004
+    ]
+  ]
+}

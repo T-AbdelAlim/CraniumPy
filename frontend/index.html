@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>CraniumPy</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="style.css" />
+  <script type="importmap">
+    { "imports": { "three": "./vendor/three/three.module.js" } }
+  </script>
+</head>
+<body>
+  <div id="app">
+    <aside id="panel">
+      <h1>CraniumPy</h1>
+
+      <section>
+        <h2>1. Mesh</h2>
+        <input id="file-input" type="file" accept=".ply,.obj,.stl,.mtl,.jpg,.jpeg,.png" multiple />
+        <label class="checkbox">
+          <input id="include-texture-files" type="checkbox" checked />
+          include texture files
+        </label>
+        <p class="hint">for a textured .obj, the .mtl and image need to come along with it in the same upload -
+          hold ctrl (cmd on mac) and click the .obj, its .mtl, and the texture image together in the file picker
+          above. uncheck this box if you selected extras by accident and just want the mesh itself uploaded.</p>
+        <p id="mesh-info" class="hint"></p>
+      </section>
+
+      <section>
+        <h2>2. What are we measuring</h2>
+        <label><input type="radio" name="target" value="cranium" checked /> cranial (head measurements)</label>
+        <label><input type="radio" name="target" value="face" /> facial (asymmetry)</label>
+      </section>
+
+      <section>
+        <h2>3. Preprocessing - landmarks</h2>
+        <p class="hint">click 3 points on the mesh, <strong>holding ctrl (or cmd on mac)</strong> while you click
+          so a normal click can still orbit the view. pick them in this order:</p>
+        <ol id="landmark-list">
+          <li data-name="nasion">
+            <span class="landmark-label">nasion</span>
+            <span class="landmark-desc">bridge of the nose, between the eyes</span>
+            <span class="landmark-value">not picked</span>
+          </li>
+          <li data-name="left_tragus">
+            <span class="landmark-label">left tragus</span>
+            <span class="landmark-desc">small cartilage flap in front of the left ear canal</span>
+            <span class="landmark-value">not picked</span>
+          </li>
+          <li data-name="right_tragus">
+            <span class="landmark-label">right tragus</span>
+            <span class="landmark-desc">same, right ear</span>
+            <span class="landmark-value">not picked</span>
+          </li>
+        </ol>
+        <button id="reset-landmarks" type="button">reset picks</button>
+      </section>
+
+      <section>
+        <h2>4. Clipping</h2>
+        <label><input type="radio" name="clip-mode" value="default" checked /> default for the target above</label>
+        <label><input type="radio" name="clip-mode" value="manual" /> manual plane</label>
+        <div id="manual-clip-controls" class="hidden">
+          <p class="hint">the yellow plane is the cut. the arrow points into the half that gets <strong>kept</strong>.
+            pick an axis, then slide to move the plane.</p>
+          <div class="axis-buttons">
+            <button type="button" data-axis="1,0,0">+X</button>
+            <button type="button" data-axis="-1,0,0">-X</button>
+            <button type="button" data-axis="0,1,0">+Y</button>
+            <button type="button" data-axis="0,-1,0">-Y</button>
+            <button type="button" data-axis="0,0,1">+Z</button>
+            <button type="button" data-axis="0,0,-1">-Z</button>
+          </div>
+          <label for="plane-offset">offset</label>
+          <input id="plane-offset" type="range" min="-150" max="150" value="0" step="1" />
+          <p class="hint">or ctrl/cmd-click the mesh to move the plane to that point.</p>
+        </div>
+      </section>
+
+      <section>
+        <h2>5. Mesh cleanup</h2>
+        <label class="checkbox"><input id="repair-mesh" type="checkbox" checked /> repair (fill holes, fix winding)</label>
+        <label class="checkbox"><input id="resample-mesh" type="checkbox" checked /> resample</label>
+        <label for="vertex-count">to</label>
+        <input id="vertex-count" type="number" min="500" max="200000" step="500" value="10000" /> vertices
+        <p class="hint">leave it at 10000 if you're not sure - that's what the pipeline was validated with. uncheck
+          if you want to keep the mesh's original vertex count.</p>
+      </section>
+
+      <section>
+        <h2>6. Run it</h2>
+        <label class="checkbox"><input id="com-translation" type="checkbox" checked /> center-of-mass correction</label>
+        <button id="analyze-button" type="button" disabled>run analysis</button>
+        <p id="job-status" class="hint"></p>
+      </section>
+
+      <section id="results" class="hidden">
+        <h2>results</h2>
+        <table id="results-table"></table>
+        <button id="download-bundle-button" type="button">download results (mesh + report + figure)</button>
+
+        <div id="template-select-row">
+          <label for="template-select">compare against</label>
+          <select id="template-select"></select>
+        </div>
+        <div id="template-custom-row" class="hidden">
+          <button id="template-browse-button" type="button">browse...</button>
+          <input id="template-custom-file-input" type="file" accept=".ply,.obj,.stl" class="hidden" />
+          <span id="template-custom-name" class="hint"></span>
+        </div>
+        <p id="template-custom-hint" class="hint hidden">this app can't remember a real file path here - you'll
+          need to pick the file again next time you want this comparison. the downloadable desktop app can
+          remember it for you instead.</p>
+
+        <label class="checkbox">
+          <input id="template-overlay-toggle" type="checkbox" />
+          show template overlay
+        </label>
+        <p class="hint">shows the final mesh (the one you'd download) with the template above overlaid on it
+          (blue, semi-transparent), draws the X/Y/Z axes through the origin (red/green/blue), and marks each
+          mesh's center of gravity (orange = your mesh, blue = template).</p>
+        <p id="template-offset-info" class="hint"></p>
+      </section>
+    </aside>
+
+    <main id="viewer-container">
+      <canvas id="viewer"></canvas>
+      <p id="viewer-hint" class="hint overlay">upload a mesh to begin.</p>
+    </main>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

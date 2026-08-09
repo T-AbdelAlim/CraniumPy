@@ -1,15 +1,16 @@
 # CraniumPy
 
-
   * [Description](#description)
   * [Usage](#usage)
     * [Getting started](#getting-started)
-    * [Rigid registration and mesh harmonization ](#rigid-registration-and-mesh-harmonization )
+    * [Preprocessing - landmarks](#preprocessing---landmarks)
+    * [Registration](#registration)
+    * [Clipping](#clipping)
     * [Automated measurement extraction](#automated-measurement-extraction)
     * [Facial asymmetry calculation](#facial-asymmetry-calculation)
-    * [Non-rigid ICP](#non-rigid-icp)
-  * [Download CraniumPy (.exe)](#download-craniumpy)
-  * [Clone repository](#clone-repository)
+    * [Mesh cleanup](#mesh-cleanup)
+  * [Running it](#running-it)
+  * [Known issues](#known-issues)
   * [Citation](#citation)
   * [Author](#author)
 
@@ -17,131 +18,147 @@
 ## Description
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.5634153.svg)](https://doi.org/10.5281/zenodo.5634153)
 
-CraniumPy is a user-friendly tool developed for the registration and craniofacial analysis of 3D images (.ply, .obj, .stl). It can serve as an end-to-end pipeline, transforming a raw 3D image into a harmonized mesh, ready for either cranial or facial analysis. The integrated pipeline incorporates:
+CraniumPy registers and analyzes craniofacial 3D scans (.ply, .obj, .stl). give it
+a raw scan and it'll take you from landmark picking through registration,
+clipping, repair, and resampling, to either cephalometric measurements or a
+facial asymmetry score.
 
-- Rigid and non-rigid registration.
-- Voronoi-based clustering for mesh resampling.
-- Artifact detection and repair [algorithms](http://dx.doi.org/10.1007/s00371-010-0416-3).
-- A [validated algorithm](http://dx.doi.org/10.1097/SCS.0000000000009448) to automatically extract commonly used head measurements.
-- Functionality to quantify facial asymmetry.
+this is a full rewrite of the original desktop app - same underlying methods,
+new stack. it now runs either as a small local web app or as a standalone
+desktop app (same codebase either way, see [Running it](#running-it)). the old
+PyQt5 version is still there on the `legacy-craniumpy` branch if you need it.
 
-_This repository makes use of some excellent features implemented in the PyVista library (https://docs.pyvista.org/) and PyMeshFix (https://pymeshfix.pyvista.org/)._
+what it does right now (rigid registration + manual landmarking only for the
+moment - see [Registration](#registration) for why):
+- rigid, landmark-based registration.
+- mesh repair via [PyMeshFix](https://pymeshfix.pyvista.org/) and resampling
+  to a target vertex count you set.
+- a [validated algorithm](http://dx.doi.org/10.1097/SCS.0000000000009448) for
+  extracting the usual head measurements automatically.
+- facial asymmetry scoring.
 
 ![Reconstruction](resources/CraniumPy_info.png)
 
 
-
 ## Usage
+
 ### Getting started
-Refer to the [step-by-step guide](/resources/documentation.pdf) to get started. 
+upload a mesh, pick 3 landmarks, register, clip, and run the analysis. the
+sidebar walks you through it in order. `resources/test_mesh/test_mesh.ply` is
+in the repo if you want something to try it on first.
 
-### Rigid registration and mesh harmonization 
-Mesh registration and harmonization in CraniumPy requires three steps:
-1. **_Landmark selection_**: Three anatomical landmarks (Nasion, LH tragus, RH tragus) need to be located by the user for registration. 
+the old step-by-step PDF guide (`resources/documentation.pdf`) is for the
+legacy PyQt5 version and doesn't match this UI anymore - the sidebar here is
+meant to be self-explanatory, but let me know if something isn't clear.
 
-2.  **_Register for cranial/facial analysis_**: The mesh is rigidly aligned to an average normal template by computing the Euler angles between two sets of vectors (derived from placed landmarks). The registered mesh (_filename_rg.ply_) and the landmark coordinate positions (_filename_landmarks.json_) are stored in place.
+### Preprocessing - landmarks
+click 3 points on the mesh - nasion, left tragus, right tragus, in that order
+- while holding **ctrl** (or **cmd** on mac). holding the modifier key is
+required on purpose, so a plain click can still orbit the camera without
+accidentally dropping a landmark.
 
-3. **_"Clip, Repair, Resample"_**: In the final pre-processing step, the mesh is clipped through a reference plane (cranial analysis: through nasion-tragus plane | facial analysis: through centroid of triangle formed by the 3 landmarks). The clipped mesh is then inspected and artifacts are automatically repaired. Finally, the mesh is resampled to ensure a predefined number of vertices (default: _n= 10.000_).
+there's no automatic landmark detection. I tried it (deforming a full head
+template onto the scan and reading landmarks back off it) and pulled it out
+again - it took several minutes with no feedback on what was happening, and
+every attempt to speed it up made the results wrong. manual picking is fast
+enough and you know exactly what you're getting.
 
-Based on a single transverse slice (at maximum head depth), cephalometric measurements are automatically extracted and plotted on the 3D model.
+### Registration
+rigid, landmark-triangle alignment - that's all this does, no options to set.
+this is all you actually need for craniometrics.
 
-The example mesh ```resources/test_mesh/test_mesh.ply``` can be used to explore the functionality of this tool. 
+I did build and test a non-rigid mode too (rigid alignment, then deforming a
+template onto the scan for matched topology across meshes) but pulled it out
+entirely - not worth the runtime cost for what this app is actually used for.
 
-*NOTE: Step 3. (Clip, Repair, Resample) is computationally heavy (due to the resampling step) and can take a while depending on your setup. Clicking the screen may cause it to freeze.*
-
-
-
+### Clipping
+pick **cranial** or **facial** for the usual clip through the nasion-tragus
+plane or the landmark-triangle centroid, or **manual** to drag your own
+cutting plane through the mesh in the viewer. the arrow on the plane points
+into the half that gets kept.
 
 ### Automated measurement extraction
-From a mesh that is pre-processed for cranial analysis, several cephalometric measurements can be extracted. These include:
-- Occipitofrontal diameter (OFD) or head depth
-- Biparietal diameter (BPD) or head breadth
-- Cephalic index (CI)
-- Occipitofrontal circumference (OFC) or head circumference
-- Mesh volume above the nasion-tragus plane (for potential intracranial volume approximation).
+from a cranially-registered mesh you get:
+- occipitofrontal diameter (OFD) / head depth
+- biparietal diameter (BPD) / head breadth
+- cephalic index (CI)
+- occipitofrontal circumference (OFC) / head circumference
+- mesh volume above the nasion-tragus plane (rough ICV proxy)
 
- This algorithm is located under the tab _**Compute>Cephalometrics**_. The axial slice from which these measurements have been obtained can also be plotted separately using _**Compute>2D slice**_.
+this is the validated part of the app - the slicing/measurement math hasn't
+changed from the original. the viewer draws the actual head-circumference
+slice as a red line so you can see what got measured, same idea as the figure
+below.
 
 ![Hcvalidation](resources/hcvalidation.jpg)
 
-_NOTE: CraniumPy has been optimized for pediatric analysis. For this reason, some hard-coded boundary conditions are established in the extraction algorithm [(e.g. code line 95)](./craniometrics/craniometrics.py). If CraniumPy does not work as desired for your research application (e.g. prematures or adults), feel free to contact me to see if we can find a solution._
-
+note: this was built and validated for pediatric heads, so there are a few
+hard-coded sanity bounds in the extraction algorithm (see
+`src/craniumpy_core/craniometrics.py`). if it's not behaving for your use
+case (adults, prematures, etc), reach out and we can figure something out.
 
 ### Facial asymmetry calculation
-A mesh registered for facial analysis can be used to compute the mean distance between each vertex on one half of the face to its corresponding vertex on the other half (using a mirrored reflection). The output is a heatmap (in mm), showing which areas are more or less symmetric. A quantitative metric is also computed, the mean facial asymmetry (MFA) index, which encapsulates the overall asymmetry observed in the face. This algorithm is located under the tab _**compute>Evaluate Asymmetry**_.
+mirrors a facially-registered mesh across the midline, aligns the mirror back
+onto the original, and measures the distance between each vertex and its
+mirrored counterpart. gives you a heatmap (mm) plus a single mean facial
+asymmetry index (MFAI) number.
 
-### Non-rigid ICP
-A non-rigid iterative closest point (NICP) algorithm has been implemented which tries to deform a template onto the user's input mesh. This feature can come in handy when there's a need for point-to-point correspondence (e.g. automated landmark detection, advanced shape analysis, geometric deep learning). This step allows a user to match the topology of a mesh or set of meshes to that of the template. The mesh quality may be (slightly) reduced after NICP.
+heads up: there's a known quirk carried over from the original algorithm -
+the heatmap and the MFAI number describe opposite halves of the face by
+default (see the docstring in `src/craniumpy_core/asymmetry.py`). ported it
+exactly as it was rather than silently changing the behavior, but you should
+know about it.
 
-
-## Download CraniumPy
-If you want to run CraniumPy locally (on Windows) follow the steps below. You do not need to install any requirements or dependencies.
-
-1. Download the latest version: [CraniumPy (v0.4.2)](https://drive.google.com/drive/folders/1ilAXTINd2TuKbOsuQLmsuLVTppJMYOxz)
-2. Extract the .zip folder in any location
-
-    _The extracted folder contains the templates (for visualizing the registration) and an example mesh is provided at `test_mesh/test_mesh.ply` for experimentation._
-
-3. Run **_CraniumPy_v0.4.2.exe_** (give it a few seconds to load)
-
-
-IMPORTANT: the reference frame has been changed from v0.3.0 onwards. The new convention is based on the more commonly used right hand coordinate system in which the z-axis points 
-outward from the nose. 
+### Mesh cleanup
+after clipping, the mesh gets repaired (fills holes, fixes face winding -
+uncheck it if you want the raw clipped mesh) and resampled down to a target
+vertex count, 10000 by default. bump it up or down depending on what you
+need - just know the craniometrics algorithm was validated at 10000, so
+results on a very different count haven't specifically been checked.
 
 
-## Clone repository
-The implemented NICP and facial asymmetry algorithm requires the scikit-sparse library. Follow these instructions to install the required dependencies:
-1. Create and/or load a virtual environment (for more information about virtual environments, [check the docs](https://conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html#activating-an-environment)):
+## Running it
 
-```
-conda create -n CraniumPy python=3.8
-conda activate CraniumPy
-```
+no more conda + Cython + SuiteSparse + Visual Studio Build Tools dance - that
+whole chain is gone. this only needs a normal Python (3.11+) virtual
+environment.
 
-3. Clone repository:
 ```
 git clone https://github.com/T-AbdelAlim/CraniumPy.git
 cd CraniumPy
+git checkout rewrite-craniumpy
+python -m venv .venv
+.venv\Scripts\Activate.ps1      # windows/powershell. bash: source .venv/Scripts/activate. mac/linux: source .venv/bin/activate
+pip install -e .
 ```
-4. Install requirements:
+
+**as a web app**, run the server and open it in a browser:
 ```
-pip install -r requirements.txt
+python -m uvicorn api.main:app --port 8734
+```
+then go to `http://127.0.0.1:8734`.
+
+**as a standalone desktop app**, install the extra bit it needs for the
+native window, then run it:
+```
+pip install -e ".[desktop]"
+python -m desktop.app
 ```
 
-5.Install NICP dependencies (tested on Windows 10 with Anaconda 3 and Python 3.8)
+same backend, same UI, either way you run it.
 
-- `conda install -c conda-forge cython` - tested with v0.29.32
-- `conda install -c conda-forge suitesparse` - tested with v5.4.0
-- `conda install -c conda-forge numpy` - tested with v1.23.2
-- `conda install -c conda-forge scipy` - tested with v1.9.1
-6. Download Microsoft Build Tools for C++ from https://visualstudio.microsoft.com/visual-cpp-build-tools/ (tested with 2022, should work with 2015 or newer)
-
-
-7. Install Visual Studio Build Tools
-    1. Choose Workloads
-    2. Check "Desktop development with C++"
-    3. Keep standard settings
-
-
-8. Run in a Powershell
-    - `$env:SUITESPARSE_INCLUDE_DIR='.../anaconda3/envs/CraniumPy/Library/include/suitesparse'`
-    - `$env:SUITESPARSE_LIBRARY_DIR='.../anaconda3//envs/CraniumPy/Library/lib'`
-    - `pip install scikit-sparse`
-
-
-9. Test `from sksparse.cholmod import cholesky`
-
-
-10. Run CraniumPy:
-```
-python CraniumPy.py
-```
 
 ## Known issues
 
-- CraniumPy closes if less than 3 landmarks are selected before registration. Steps need to be followed carefully as described in the step-by-step guide
-- Registration step 3. (Clip, Repair, Resample) takes a few seconds and freezes the user interface until all the calculations are performed, which may create the suspicion that the programme crashed ("windows not responding"). This is not the case. The user interface will unfreeze after the calculations are completed and will return the final mesh.
-
+- mesh volume can come out noisier than the other measurements on a raw,
+  unrepaired scan - it's not well defined on a mesh that isn't watertight,
+  which a raw scan usually isn't until it's gone through the repair step.
+- resampling uses quadric decimation, not true Voronoi/ACVD clustering - it's
+  a different algorithm from what the original app used (see
+  `DEPENDENCIES.md` if you want the full reasoning), close enough in practice
+  but the vertex distribution won't look identical.
+- no automatic landmark detection, on purpose - see
+  [Preprocessing](#preprocessing---landmarks) above.
 
 
 ## Citation
@@ -151,7 +168,7 @@ Kindly consider citing the software if it supports your research:
 
 _Abdel-Alim et al. - Sagittal Craniosynostosis: Comparing Surgical Techniques using 3D Photogrammetry. Plastic and Reconstructive Surgery ():10.1097/PRS.0000000000010441, March 22, 2023. | DOI: [10.1097/PRS.0000000000010441](http://dx.doi.org/10.1097/PRS.0000000000010441)_
 
-**Validation Study:** 
+**Validation Study:**
 
 _Abdel-Alim et al. - Reliability and Agreement of Automated Head Measurements From 3-Dimensional Photogrammetry in Young Children. The Journal of Craniofacial Surgery 34(6):p 1629-1634, September 2023. | DOI: [10.1097/SCS.0000000000009448](http://dx.doi.org/10.1097/SCS.0000000000009448)_
 
@@ -159,7 +176,6 @@ _Abdel-Alim et al. - Reliability and Agreement of Automated Head Measurements Fr
 ```
 Abdel-Alim, T. (2022). CraniumPy [Computer software]. https://doi.org/10.5281/zenodo.5634153
 ```
-
 
 
 ## Author
