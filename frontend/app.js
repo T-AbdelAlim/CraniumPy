@@ -71,6 +71,19 @@ let currentMeshMaterials = [];
 let currentMeshHasTexture = false;
 let markerRadius = 2;
 
+// whether the current session's file selection actually included a texture
+// image, set once at upload/open time (see uploadFiles/openFilesFromPaths
+// below) - deliberately separate from currentMeshHasTexture, which just
+// reflects whether the loaded GLB happens to carry a material.map. a lone
+// .obj that internally references an .mtl/texture by filename still gets
+// one of those from trimesh even when you never picked that file: trimesh
+// quietly falls back to a blank placeholder image instead of erroring (see
+// api/routers/mesh.py's upload_mesh docstring) - so without this, the
+// texture toggle would unlock itself and the mesh would render with that
+// meaningless placeholder, even though nothing you picked had a texture in
+// it.
+let selectionHasTexture = false;
+
 function loadGlb(url) {
   return new Promise((resolve, reject) => {
     gltfLoader.load(url, (gltf) => resolve(gltf.scene), undefined, reject);
@@ -100,7 +113,9 @@ async function displayMesh(url) {
     // solid black, learned that one the hard way
     child.geometry.computeVertexNormals();
 
-    const hasTexture = !!(child.material && child.material.map);
+    // gated on selectionHasTexture too, not just material.map - see that
+    // variable's comment for why a mesh can have a map that isn't real
+    const hasTexture = selectionHasTexture && !!(child.material && child.material.map);
     const hasVertexColors = !!child.geometry.attributes.color;
 
     if (hasTexture) {
@@ -244,7 +259,6 @@ function applyAsymmetryHeatmap(heatmapValues) {
   if (!currentMeshObject || !heatmapValues || heatmapValues.length === 0) return;
   const maxAbs = heatmapValues.reduce((m, v) => Math.max(m, Math.abs(v)), 1e-6);
 
-  currentMeshMaterials = [];
   currentMeshObject.traverse((child) => {
     if (!child.isMesh) return;
     const count = child.geometry.attributes.position.count;
@@ -256,10 +270,21 @@ function applyAsymmetryHeatmap(heatmapValues) {
       colors[i * 3 + 2] = c.b;
     }
     child.geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-    // unlit, same reasoning as textured meshes - this is a precise value
-    // encoded as a color, scene lighting would just distort it
-    child.material = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
-    currentMeshMaterials.push(child.material);
+    // tint multiplicatively on top of whatever material this mesh is
+    // already showing (texture, its own vertex colors, or the plain skin
+    // tone) instead of replacing the material outright - heatmapColor()
+    // returns white at 0, so vertices with no asymmetry data (the
+    // mirrored-out half, zeroed by design) pass straight through
+    // unchanged, and only the half with real data gets tinted red/blue.
+    // first attempt just swapped in a flat unlit vertex-colored material
+    // for the whole mesh - technically showed the data fine, but the
+    // zeroed half rendered as a featureless white blob with no surface
+    // detail at all, which is far worse to actually read.
+    for (const mat of [child.material, child.userData.texturedMaterial, child.userData.plainMaterial]) {
+      if (!mat) continue;
+      mat.vertexColors = true;
+      mat.needsUpdate = true;
+    }
   });
   applyWireframeState();
   applyClipPreview();
@@ -411,6 +436,7 @@ async function _afterSessionOpened(response) {
 }
 
 async function uploadFiles(files) {
+  selectionHasTexture = hasTextureFile(files.map((f) => f.name));
   document.getElementById("mesh-info").textContent = "uploading...";
   const formData = new FormData();
   for (const f of files) formData.append("files", f);
@@ -426,6 +452,7 @@ async function uploadFiles(files) {
 // and the source folder gets remembered so results can be saved back into
 // it later without asking (see the save-results button below).
 async function openFilesFromPaths(paths) {
+  selectionHasTexture = hasTextureFile(paths.map((p) => p.split(/[\\/]/).pop()));
   document.getElementById("mesh-info").textContent = "opening...";
   try {
     await _afterSessionOpened(
@@ -441,10 +468,18 @@ async function openFilesFromPaths(paths) {
 }
 
 const MESH_EXTENSIONS = ["ply", "obj", "stl"];
+const TEXTURE_EXTENSIONS = ["jpg", "jpeg", "png"];
+
+function extOf(name) {
+  return (name.split(".").pop() || "").toLowerCase();
+}
 
 function hasMeshFile(names) {
-  const extOf = (name) => (name.split(".").pop() || "").toLowerCase();
   return names.some((n) => MESH_EXTENSIONS.includes(extOf(n)));
+}
+
+function hasTextureFile(names) {
+  return names.some((n) => TEXTURE_EXTENSIONS.includes(extOf(n)));
 }
 
 document.getElementById("choose-mesh-button").addEventListener("click", async () => {
@@ -658,7 +693,7 @@ async function showResults() {
     rows.push(["mesh volume", `${c.mesh_volume_cc} cc`]);
   }
   if (data.asymmetry) {
-    rows.push(["mean asymmetry index", data.asymmetry.mean_asymmetry_index]);
+    rows.push(["mean asymmetry index", data.asymmetry.mean_asymmetry_index.toFixed(2)]);
   }
 
   const table = document.getElementById("results-table");
