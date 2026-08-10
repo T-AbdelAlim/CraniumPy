@@ -191,8 +191,17 @@ def harmonize(
         # cranial_clip keeps the raw landmark-plane boundary on purpose
         # (the ears stay attached to the clipped mesh), so this mesh can
         # still have them.
+        #
+        # Z (depth) only - same axis register()'s own com_translation step
+        # corrects, on purpose. this used to also subtract com[0] (X, left-
+        # right), which was wrong: com_translation is there to compensate
+        # for how far forward/back imprecise landmark picking left the head
+        # sitting, not to re-center it side to side or vertically (Y was
+        # already never touched) - a real leftward or rightward CoM offset
+        # is often genuine anatomy (plagiocephaly, facial asymmetry), not
+        # something to silently erase by nudging the whole mesh sideways.
         com = slice_center_of_mass(result, landmarks=landmarks)
-        result.vertices = result.vertices - np.array([com[0], 0.0, com[2]])
+        result.vertices = result.vertices - np.array([0.0, 0.0, com[2]])
 
     return result
 
@@ -264,35 +273,39 @@ def analyze(
     )
 
 
-def _nasion_com_raw_offset(mesh: trimesh.Trimesh, landmarks: np.ndarray) -> np.ndarray:
+def _nasion_com_z_offset(mesh: trimesh.Trimesh, landmarks: np.ndarray) -> float:
     """the same center-of-mass Z-nudge register()'s com_translation branch
     computes (see its docstring) - a rough Z-offset from a decimated proxy's
-    slice scan - except returned as a displacement vector in the mesh's own
-    RAW coordinates, not applied directly to an already-registered mesh.
+    slice scan, in the nasion-tragus-aligned frame.
 
-    exists so analyze_cranial's alt-frontal pass can use the SAME physical
-    correction the nasion pass would, instead of computing its own: calling
-    register()'s independent com_translation logic separately for each pass
-    scans slices in whatever frame THAT pass's own landmark triangle
-    produced, and subnasale-tragus defines a genuinely different (more
-    forward-tilted) plane than nasion-tragus does. "center of mass of the
-    head" isn't supposed to depend on which frontal point you happened to
-    click - computing it once here, from the anatomically-standard
-    nasion-tragus plane, and expressing it as a raw-space vector, lets the
-    caller apply the identical correction before EITHER landmark triangle
-    gets aligned, so both passes start from the same corrected mesh."""
+    exists so analyze_cranial's alt-frontal pass can reuse the SAME
+    magnitude the nasion pass would use, instead of computing its own:
+    calling register()'s independent com_translation logic separately for
+    the alt pass scans slices in whatever frame THAT pass's own landmark
+    triangle produced, and subnasale-tragus defines a genuinely different
+    (more forward-tilted) plane than nasion-tragus does. "center of mass of
+    the head" isn't supposed to depend on which frontal point you happened
+    to click.
+
+    deliberately returns a bare float (not a raw-mesh-space vector) - see
+    analyze_cranial's docstring for why an earlier version of this that
+    rotated the offset into raw space, so it could be applied once before
+    either landmark triangle got aligned, was wrong: the same physical
+    vector decomposes differently into X/Y/Z depending which frame you
+    view it through, so "purely Z in the nasion frame" became a mix of
+    all three axes once rotated into the alt frame - visibly, the alt
+    display mesh floated up/sideways relative to a nasion-plane reference
+    instead of sitting flat like the nasion frame does. applying this
+    SAME NUMBER along each frame's own Z axis separately (never rotating
+    it) is what actually keeps X and Y untouched in both frames, same
+    convention as harmonize()'s own com_translation step."""
     nasion_align = landmark_align(landmarks)
     aligned_mesh = trimesh.Trimesh(
         vertices=nasion_align.apply(np.asarray(mesh.vertices)), faces=mesh.faces, process=False
     )
     proxy = resample_mesh(aligned_mesh, n_vertices=20_000)
     com = slice_center_of_mass(proxy)
-    z_offset = np.array([0.0, 0.0, com[2]])
-    # z_offset lives in the nasion-aligned frame (RigidTransform.apply is
-    # points @ R.T + t) - rotating a pure displacement back into raw space
-    # is the inverse of that rotation, R.T's inverse, which for an
-    # orthogonal R is just R itself: (R.T)^-1 == R.
-    return z_offset @ nasion_align.rotation
+    return float(com[2])
 
 
 @dataclass
@@ -359,47 +372,21 @@ def analyze_cranial(
     landmark triangle produced, so calling it independently for the alt pass
     would measure "center of mass" against the subnasale-tragus plane
     instead of the anatomically standard nasion-tragus one - a genuinely
-    different, more forward-tilted cut. _nasion_com_raw_offset computes the
-    correction once, from nasion-tragus, and this function applies it to the
-    raw mesh BEFORE either landmark triangle gets aligned (register() is
-    then called with com_translation=False for both, since it's already
-    baked in) - so both passes start from the identical corrected mesh and
-    only differ in which triangle they align to REFERENCE_TRIANGLE after
-    that. this doesn't change the nasion pass's own result at all: shifting
-    the raw mesh by R^-1 @ z_offset before rotating by R lands at exactly
-    the same point as rotating first and shifting by z_offset after, so
-    nasion_mesh and craniometrics come out numerically identical to calling
-    register() the old way.
+    different, more forward-tilted cut. _nasion_com_z_offset computes that
+    correction's MAGNITUDE once, from nasion-tragus - the nasion pass below
+    is otherwise untouched (register() handles its own com_translation
+    exactly like it always has), and the alt pass reuses that same number,
+    applied along its OWN Z axis after its OWN alignment (never routed
+    through register()'s independent com_translation, and never rotated
+    into raw mesh space first - see _nasion_com_z_offset's docstring for why
+    that's the part that actually matters: the same physical shift, viewed
+    through two differently-rotated frames, doesn't decompose into the same
+    X/Y/Z split in both, so "purely Z" in one frame can leak into the
+    other's left-right or vertical axis if you're not careful about which
+    frame you apply it in)."""
+    com_z = _nasion_com_z_offset(mesh, landmarks) if (alt_frontal_landmark is not None and com_translation) else None
 
-    landmarks do NOT get the same raw-space pre-shift the mesh does, on
-    purpose, even though that looks wrong at first (a shifted mesh with
-    unshifted landmark labels) - landmark_align maps whatever 3 points you
-    give it onto REFERENCE_TRIANGLE regardless of any constant offset
-    applied to all of them beforehand, so shifting landmarks by the same
-    raw_offset before alignment would just make landmark_align re-derive a
-    compensating translation and cancel the whole correction back out
-    (verified this the hard way - mesh came out right, but by construction,
-    not by accident). instead each register() call below runs on the
-    UNSHIFTED landmarks (so its own transform is exactly what it would've
-    been anyway), and its RETURNED landmarks get patched afterward by
-    raw_offset rotated into that pass's own frame (transform.rotation.T) -
-    the same relative-rotation trick procrustes_fit uses elsewhere in this
-    function, just applied to a single offset vector instead of a whole
-    vertex set."""
-    register_com_translation = com_translation
-    raw_offset = None
-    if alt_frontal_landmark is not None and com_translation:
-        _report(on_progress, "register", "center-of-mass correction (nasion-tragus plane)")
-        raw_offset = _nasion_com_raw_offset(mesh, landmarks)
-        mesh = mesh.copy()
-        mesh.vertices = mesh.vertices - raw_offset
-        register_com_translation = False
-
-    nasion_reg = register(
-        mesh, landmarks, target="cranium", com_translation=register_com_translation, on_progress=on_progress
-    )
-    if raw_offset is not None:
-        nasion_reg.landmarks = nasion_reg.landmarks - raw_offset @ nasion_reg.transform.rotation.T
+    nasion_reg = register(mesh, landmarks, target="cranium", com_translation=com_translation, on_progress=on_progress)
     nasion_mesh = harmonize(
         nasion_reg.mesh,
         target="cranium",
@@ -415,11 +402,7 @@ def analyze_cranial(
         # see clipping.cranial_clip's docstring - trim_rear_neck=False for
         # the alt pass below isn't the only case that needs it off; turning
         # com_translation off drags the SAME plane into real cranium even
-        # in the nasion frame. com_translation here is the ORIGINAL flag,
-        # not register_com_translation above - harmonize's own re-centering
-        # step (on the clipped mesh, unrelated to the raw-mesh pre-
-        # correction above) still needs to know what the user actually asked
-        # for.
+        # in the nasion frame.
         trim_rear_neck=com_translation,
         on_progress=on_progress,
     )
@@ -442,22 +425,18 @@ def analyze_cranial(
             used_alt_frontal=False,
         )
 
-    # note: alt_landmarks is built from the ORIGINAL alt_frontal_landmark/
-    # landmarks arguments, not the (possibly reassigned) local `landmarks`
-    # variable above - `landmarks` is never reassigned in this function
-    # (see the landmarks-vs-mesh note in the docstring), so this is safe
-    # either way, just calling it out since it'd be an easy thing to break.
     alt_landmarks = np.array([alt_frontal_landmark, landmarks[1], landmarks[2]], dtype=np.float64)
-    # `mesh` is the nasion-CoM-pre-corrected raw mesh from above (or the
-    # untouched raw mesh if com_translation was off) - register_com_translation
-    # is already False whenever the correction was baked in above, so this
-    # doesn't apply a second, independently-computed one from the
-    # subnasale-tragus plane.
-    alt_reg = register(
-        mesh, alt_landmarks, target="cranium", com_translation=register_com_translation, on_progress=on_progress
-    )
-    if raw_offset is not None:
-        alt_reg.landmarks = alt_reg.landmarks - raw_offset @ alt_reg.transform.rotation.T
+    # com_translation=False here always - never let register() derive its
+    # own independent correction from the subnasale-tragus plane. when
+    # com_z is set (com_translation was on), it gets applied right below,
+    # along the alt frame's own Z axis specifically - not routed through
+    # register() and not rotated in from another frame (see this function's
+    # docstring / _nasion_com_z_offset's for why that distinction matters).
+    alt_reg = register(mesh, alt_landmarks, target="cranium", com_translation=False, on_progress=on_progress)
+    if com_z is not None:
+        z_offset = np.array([0.0, 0.0, com_z])
+        alt_reg.mesh.vertices = alt_reg.mesh.vertices - z_offset
+        alt_reg.landmarks = alt_reg.landmarks - z_offset
     alt_mesh = harmonize(
         alt_reg.mesh,
         target="cranium",

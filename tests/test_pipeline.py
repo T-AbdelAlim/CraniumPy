@@ -88,6 +88,26 @@ def test_register_rejects_wrong_landmark_count():
         register(mesh, landmarks[:2], target="cranium")
 
 
+def test_harmonize_com_translation_corrects_z_only_not_x():
+    # regression test: harmonize()'s own CoM re-centering step used to also
+    # subtract com[0] (X, left-right), silently erasing genuine left-right
+    # asymmetry (plagiocephaly, facial asymmetry) along with the intended
+    # forward/back correction. only Z should move - same axis register()'s
+    # own com_translation step corrects (Y was already never touched).
+    mesh = trimesh.creation.icosphere(subdivisions=3, radius=1.0)
+    v = np.asarray(mesh.vertices).copy()
+    v[v[:, 0] > 0, 0] *= 1.6  # skew mass to the +X side
+    mesh.vertices = v * np.array([70.0, 90.0, 60.0]) + np.array([5.0, -20.0, 8.0])
+    landmarks = REFERENCE_TRIANGLE * np.array([0.9, 1.1, 0.95]) + np.array([5.0, -20.0, 8.0])
+
+    reg = register(mesh, landmarks, target="cranium", com_translation=False)
+    result = harmonize(reg.mesh, target="cranium", landmarks=reg.landmarks, n_vertices=3000, com_translation=True)
+
+    com = slice_center_of_mass(result)
+    assert com[2] == pytest.approx(0.0, abs=1.0)
+    assert abs(com[0]) > 3.0
+
+
 def test_harmonize_cranium_on_reference_template():
     # template_xy_com.ply is already in the frame the clip constants
     # assume, so no need to run register() first just to test harmonize()
@@ -220,7 +240,7 @@ def test_analyze_cranial_alt_frontal_com_uses_nasion_plane_not_independent():
     # alt (e.g. subnasale-tragus) triangle produced - a genuinely different,
     # more forward-tilted plane than nasion-tragus. now it always reuses the
     # nasion-plane-derived correction (see analyze_cranial's docstring /
-    # _nasion_com_raw_offset). checking the alt DISPLAY registration lands
+    # _nasion_com_z_offset). checking the alt DISPLAY registration lands
     # somewhere different from what independently-computed alt-plane CoM
     # would have given confirms the correction source actually changed, not
     # just that com_translation still does *something*.
@@ -236,6 +256,37 @@ def test_analyze_cranial_alt_frontal_com_uses_nasion_plane_not_independent():
         np.asarray(independent_alt_reg.mesh.vertices).mean(axis=0),
         atol=1e-3,
     )
+
+
+def test_analyze_cranial_alt_frontal_com_correction_does_not_leak_into_x_or_y():
+    # regression test for a real bug: an earlier version of the com fix
+    # computed the nasion-plane Z-offset as a raw-mesh-space vector
+    # (rotating [0,0,z] by the nasion alignment's own rotation) and applied
+    # that SAME rotated vector to the alt pass - which is wrong, because a
+    # vector that's purely Z in the nasion-aligned frame generally has
+    # nonzero X and Y components once expressed in the alt frame's OWN
+    # (differently rotated) coordinates. visually this showed up as the
+    # alt-registered display mesh floating noticeably above a nasion-plane
+    # reference overlay instead of sitting flush at the same height. fixed
+    # by applying the same Z MAGNITUDE along each frame's own Z axis
+    # separately, never rotating it between frames (see
+    # _nasion_com_z_offset's docstring). checking here that turning
+    # com_translation on only ever moves the alt registration's mesh
+    # centroid in Z, never X or Y, relative to turning it off.
+    mesh, landmarks = _ellipsoid_with_landmarks(asymmetric=True)
+    alt_frontal = landmarks[0] + np.array([0.0, -15.0, -5.0])
+
+    with_com = analyze_cranial(mesh, landmarks, alt_frontal_landmark=alt_frontal, com_translation=True, n_vertices=3000)
+    without_com = analyze_cranial(
+        mesh, landmarks, alt_frontal_landmark=alt_frontal, com_translation=False, n_vertices=3000
+    )
+
+    delta = np.asarray(with_com.display_registered_mesh.vertices).mean(axis=0) - np.asarray(
+        without_com.display_registered_mesh.vertices
+    ).mean(axis=0)
+    assert delta[0] == pytest.approx(0.0, abs=1e-6)
+    assert delta[1] == pytest.approx(0.0, abs=1e-6)
+    assert abs(delta[2]) > 1.0  # confirms com_translation is doing something
 
 
 def test_analyze_cranial_hc_polygon_lands_on_display_mesh_surface():
@@ -336,16 +387,20 @@ def test_analyze_cranial_com_translation_off_has_no_gash():
     # (125 -> 175) and tying trim_rear_neck to com_translation, not just to
     # which landmark drove registration (see clipping.cranial_clip and
     # pipeline.analyze_cranial's docstrings).
+    #
+    # uses template_xy_com.ply (RAW, unclipped) rather than the shipped
+    # template_xy_subanasal_com: that one got replaced mid-session with an
+    # already-once-clipped mesh (see the alt-frontal tests below, which DO
+    # use it, for real click coordinates against that specific file).
+    # re-clipping an already-clipped mesh at the same plane removes
+    # nothing, which - combined with repair sealing the resulting "no-op"
+    # mesh's open boundary shut before any real clip ever reopens it -
+    # produces a fully watertight result regardless of com_translation, a
+    # real but unrelated pipeline gap this test isn't trying to cover.
     from craniumpy_core.remesh import _boundary_loops
-    from craniumpy_core.template_registry import load_shipped_template
 
-    mesh = load_shipped_template("template_xy_subanasal_com")
-    nasion = np.array([0.15707502561413453, -3.7892594673064153, 80.08047788925751])
-    left_tragus = np.array([61.086913285524034, -0.20366638084653843, -3.517742714574581])
-    right_tragus = np.array([-60.78038313441493, -0.7896673874549753, -5.6494919282106935])
-    landmarks = np.array([nasion, left_tragus, right_tragus])
-
-    result = analyze_cranial(mesh, landmarks, com_translation=False, n_vertices=None)
+    mesh = load_mesh(TEMPLATES_DIR / "template_xy_com.ply")
+    result = analyze_cranial(mesh, REFERENCE_TRIANGLE, com_translation=False, n_vertices=None)
 
     loops = _boundary_loops(result.display_mesh)
     assert len(loops) == 1
