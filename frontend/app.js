@@ -101,6 +101,9 @@ async function displayMesh(url) {
   }
   clearMarkers();
   clearTemplateOverlay();
+  hideScalarBar(); // same reasoning as drawHcLine(null) below - reset stale
+  // state from a previous *facial* result before a fresh mesh (or a
+  // cranial result, which never calls applyAsymmetryHeatmap) shows up
   currentMeshMaterials = [];
   currentMeshHasTexture = false;
 
@@ -255,9 +258,20 @@ function heatmapColor(value, maxAbs) {
   return new THREE.Color(1, k, k);
 }
 
+function updateScalarBar(maxAbs) {
+  document.getElementById("scalar-bar-max").textContent = `+${maxAbs.toFixed(1)} mm`;
+  document.getElementById("scalar-bar-min").textContent = `-${maxAbs.toFixed(1)} mm`;
+  document.getElementById("heatmap-scalar-bar").classList.remove("hidden");
+}
+
+function hideScalarBar() {
+  document.getElementById("heatmap-scalar-bar").classList.add("hidden");
+}
+
 function applyAsymmetryHeatmap(heatmapValues) {
   if (!currentMeshObject || !heatmapValues || heatmapValues.length === 0) return;
   const maxAbs = heatmapValues.reduce((m, v) => Math.max(m, Math.abs(v)), 1e-6);
+  updateScalarBar(maxAbs);
 
   currentMeshObject.traverse((child) => {
     if (!child.isMesh) return;
@@ -303,7 +317,7 @@ const ALT_FRONTAL_NAME = "alt_frontal";
 // list (see the matching CSS in style.css) are unambiguously the same point -
 // picking order alone wasn't enough once the labels went generic (frontal/
 // left/right landmark instead of nasion/tragus).
-const LANDMARK_COLORS = { nasion: 0x98764d, left_tragus: 0xa65c3c, right_tragus: 0x344c42, alt_frontal: 0x6b7882 };
+const LANDMARK_COLORS = { nasion: 0x344c42, left_tragus: 0xa65c3c, right_tragus: 0x98764d, alt_frontal: 0x2a4d80 };
 const pickedLandmarks = {};
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
@@ -796,7 +810,11 @@ async function displayResultMesh() {
 // post clip/repair/resample - "what's in view") against a reference
 // template, with X/Y/Z axes and both centers of gravity.
 
-const DEFAULT_TEMPLATE_BY_TARGET = { cranium: "template_xy_com", face: "template_face" };
+// template_xy_com used to be the cranium default here, but it's no longer
+// in SHIPPED_TEMPLATES (see template_registry.py) - clipped_template_xy_com
+// is the natural replacement anyway, since the overlay always compares
+// against the patient's *clipped* result mesh (see CLIP_BY_TARGET below).
+const DEFAULT_TEMPLATE_BY_TARGET = { cranium: "clipped_template_xy_com", face: "template_face" };
 
 // whatever template you pick (shipped or custom) gets clipped live, the
 // same way the real pipeline clips the patient's mesh - see

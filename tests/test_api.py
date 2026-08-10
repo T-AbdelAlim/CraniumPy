@@ -86,12 +86,12 @@ def test_list_templates(client):
     response = client.get("/api/templates")
     assert response.status_code == 200
     names = [t["name"] for t in response.json()]
-    assert "template_xy" in names
+    assert "clipped_template_xy_com" in names
     assert len(response.json()) >= 1
 
 
 def test_get_template_mesh(client):
-    response = client.get("/api/templates/template_xy_com/mesh")
+    response = client.get("/api/templates/clipped_template_xy_com/mesh")
     assert response.status_code == 200
     assert response.headers["content-type"] == "model/gltf-binary"
     assert len(response.content) > 0
@@ -111,16 +111,39 @@ def test_get_template_mesh_clip_cranial_cuts_near_landmark_plane(client):
     # regression test for the overlay comparing against a stale pre-baked
     # clipped_template_*.ply - the live clip=cranial pass has to land at the
     # actual landmark plane, not wherever that file happened to be cut.
-    unclipped = client.get("/api/templates/template_xy_com/mesh")
-    clipped = client.get("/api/templates/template_xy_com/mesh?clip=cranial")
+    # template_xy_com.ply isn't a shipped/dropdown template anymore (see
+    # template_registry.py) but the file's still on disk, so this goes
+    # through the custom-template-by-path endpoint instead - same live
+    # clip=cranial code path, just not gated on SHIPPED_TEMPLATES.
+    unclipped = client.get(f"/api/templates/custom/mesh?path={TEMPLATE_PATH}")
+    clipped = client.get(f"/api/templates/custom/mesh?path={TEMPLATE_PATH}&clip=cranial")
     assert clipped.status_code == 200
     assert _glb_min_y(unclipped.content) < -50
     assert abs(_glb_min_y(clipped.content)) < 10
 
 
 def test_get_template_mesh_invalid_clip_400s(client):
-    response = client.get("/api/templates/template_xy_com/mesh?clip=nonsense")
+    response = client.get("/api/templates/clipped_template_xy_com/mesh?clip=nonsense")
     assert response.status_code == 400
+
+
+def test_get_template_mesh_clip_cranial_no_rear_gouge_on_non_com_template(client):
+    # regression test: clipped_template_xy (no "_com" suffix - not
+    # registered with center-of-mass correction baked into its pose) used
+    # to gouge ~58mm into the occiput when the overlay's live clip=cranial
+    # pass ran with the rear/neck safety plane still active, since that
+    # plane is hardcoded against the pose CoM correction produces (see
+    # clipping.cranial_clip's docstring and _apply_overlay_clip's
+    # trim_rear_neck=False). checking boundary Y-spread stays small here
+    # the same way test_pipeline.py's com_translation-off test does.
+    from craniumpy_core.remesh import _boundary_loops
+
+    response = client.get("/api/templates/clipped_template_xy/mesh?clip=cranial")
+    assert response.status_code == 200
+    mesh = trimesh.load(BytesIO(response.content), file_type="glb", process=False, force="mesh")
+    loops = _boundary_loops(mesh)
+    assert len(loops) == 1
+    assert np.ptp(mesh.vertices[loops[0]][:, 1]) < 5.0
 
 
 def test_get_custom_template_mesh_from_path(client):
@@ -315,7 +338,7 @@ def test_results_bundle_download(client, landmarks_payload):
     bundle = client.get(f"/api/sessions/{session_id}/bundle")
     assert bundle.status_code == 200
     assert bundle.headers["content-type"] == "application/zip"
-    assert "CP_template_xy_com_C_results.zip" in bundle.headers["content-disposition"]
+    assert "CP_template_xy_com_C_3_CoM.zip" in bundle.headers["content-disposition"]
 
     zf = zipfile.ZipFile(BytesIO(bundle.content))
     names = zf.namelist()
@@ -363,7 +386,7 @@ def test_save_results_to_source_folder(client, landmarks_payload, tmp_path):
     save_response = client.post(f"/api/sessions/{session_id}/save")
     assert save_response.status_code == 200, save_response.text
     saved_to = Path(save_response.json()["saved_to"])
-    assert saved_to == tmp_path / "CP_1016510_20210730_edited_C_results"
+    assert saved_to == tmp_path / "CP_1016510_20210730_edited_C_3_CoM"
     assert (saved_to / "1016510_20210730_edited_registered.ply").exists()
     assert (saved_to / "1016510_20210730_edited_final.ply").exists()
     assert (saved_to / "1016510_20210730_edited_report.json").exists()

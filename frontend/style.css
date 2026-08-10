@@ -140,7 +140,7 @@ input[type="file"] {
 
 /* colors match LANDMARK_COLORS in app.js - keep these two in sync */
 #landmark-list li[data-name="nasion"] .landmark-swatch {
-  background: #98764d;
+  background: #344c42;
 }
 
 #landmark-list li[data-name="left_tragus"] .landmark-swatch {
@@ -148,11 +148,11 @@ input[type="file"] {
 }
 
 #landmark-list li[data-name="right_tragus"] .landmark-swatch {
-  background: #344c42;
+  background: #98764d;
 }
 
 #landmark-list li[data-name="alt_frontal"] .landmark-swatch {
-  background: #6b7882;
+  background: #2a4d80;
 }
 
 .landmark-label {
@@ -284,4 +284,34 @@ select {
   left: 50%;
   transform: translate(-50%, -50%);
   pointer-events: none;
+}
+
+/* asymmetry heatmap legend - same blue(dent)/white/red(protruded) diverging
+   scale as the live viewer's vertex coloring (see heatmapColor() in app.js)
+   and the saved measurements PNG's colorbar (see _asymmetry_figure in
+   api/results_bundle.py), so the on-screen legend actually matches what
+   both of those already show. */
+#heatmap-scalar-bar {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.5rem 0.4rem;
+  background: rgba(20, 22, 26, 0.7);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.7rem;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+#scalar-bar-gradient {
+  width: 14px;
+  height: 140px;
+  border-radius: 3px;
+  background: linear-gradient(to top, #0000ff, #ffffff, #ff0000);
 }

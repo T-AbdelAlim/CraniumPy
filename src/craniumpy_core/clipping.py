@@ -79,7 +79,7 @@ def _landmark_plane(landmarks: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return normal, origin
 
 
-def cranial_clip(mesh: trimesh.Trimesh, landmarks: np.ndarray) -> trimesh.Trimesh:
+def cranial_clip(mesh: trimesh.Trimesh, landmarks: np.ndarray, trim_rear_neck: bool = True) -> trimesh.Trimesh:
     """cranium above the plane through the 3 registered landmarks: a sphere
     trim to kill far-away junk, an angled plane clip for stray rear/neck
     geometry a horizontal cut alone wouldn't catch, then the actual
@@ -112,9 +112,42 @@ def cranial_clip(mesh: trimesh.Trimesh, landmarks: np.ndarray) -> trimesh.Trimes
     plane running close to tangent for its *whole* length, leaving a
     sawtooth around the entire rim - clean_boundary handles that (see its
     docstring in remesh.py for why this needs more than just dropping bad
-    triangles)."""
-    mesh = clip_sphere(mesh, center=(0, 40, 0), radius=125, keep_inside=True)
-    mesh = clip_plane(mesh, normal=[0, 0.6, 1], origin=[0, -60, -50], invert=False)
+    triangles).
+
+    trim_rear_neck exists because that angled plane's numbers - [0, 0.6, 1]
+    normal, [0, -60, -50] origin - are hardcoded in the REGISTERED frame,
+    tuned against a nasion-based registration. landmark_align only pins the
+    3 chosen landmarks to REFERENCE_TRIANGLE - it says nothing about where
+    the rest of the head ends up, and subnasale sits far enough below (and
+    forward of) nasion that forcing IT onto the same reference triangle
+    tips the whole head into a different pose, dragging the actual back of
+    the skull to a different spot in this same fixed coordinate frame.
+    found on a real scan (pipeline.analyze_cranial's alt-frontal pass,
+    registered via subnasale): this same plane, which cuts cleanly through
+    the neck in the nasion frame, gouges straight into the occiput in the
+    subnasale frame - not debris this time, a genuine notch carved out of
+    the kept cranium, big enough that keep_largest_component and
+    clean_boundary can't paper over it since the surface never actually
+    disconnects, just dents inward by ~30mm. pass False for any pass that
+    didn't register on nasion - see pipeline.analyze_cranial.
+
+    turns out registering on nasion isn't even enough on its own - the
+    same failure mode shows up with com_translation=False too. register()'s
+    CoM Z-nudge isn't just cosmetic "smooth out imprecise clicking" the way
+    it reads at a glance: on a real scan, turning it off left the head
+    sitting a genuine 25mm further back than the pose this plane (and the
+    sphere trim above it) were tuned against, which was enough for BOTH to
+    start cutting into real cranium instead of the neck/background junk
+    they're meant for - the sphere trim's old radius (125) actually clipped
+    real occiput too, not just the angled plane. bumped that radius to 175
+    for exactly this reason, but the angled plane still isn't safe at that
+    pose, so pass trim_rear_neck=False there as well - pipeline.analyze()
+    and analyze_cranial() both do this by tying trim_rear_neck to whatever
+    com_translation actually was, not just to which landmark drove
+    registration."""
+    mesh = clip_sphere(mesh, center=(0, 40, 0), radius=175, keep_inside=True)
+    if trim_rear_neck:
+        mesh = clip_plane(mesh, normal=[0, 0.6, 1], origin=[0, -60, -50], invert=False)
     normal, origin = _landmark_plane(landmarks)
     mesh = clip_plane(mesh, normal=normal, origin=origin, invert=False)
     mesh = keep_largest_component(mesh)

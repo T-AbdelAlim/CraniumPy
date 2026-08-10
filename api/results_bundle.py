@@ -1,7 +1,8 @@
 """builds the results you get after an analysis - meshes, a json report, and
-a measurement figure, packaged as CP_{stem}_results/. this is basically the
-same stuff the old app wrote next to your file (_rg.ply, _metrics.json etc),
-just organized into one folder now instead of a pile of sibling files.
+a measurement figure, packaged as CP_{stem}_{C|F}_{3|4}[_CoM]/ (see
+results_folder_name). this is basically the same stuff the old app wrote
+next to your file (_rg.ply, _metrics.json etc), just organized into one
+folder now instead of a pile of sibling files.
 
 two ways this gets delivered: zipped for a browser download
 (build_results_bundle), or written straight to disk next to the original
@@ -43,6 +44,24 @@ def stem_from_filename(filename: str) -> str:
     an original mesh filename (with its real extension still on it)."""
     stem = filename.rsplit(".", 1)[0] if "." in filename else filename
     return shorten_stem(stem)
+
+
+def results_folder_name(original_filename: str, target: str, config: dict) -> str:
+    """CP_{stem}_{C|F}_{3|4}[_CoM] - what actually went into this run, not a
+    generic "_results" suffix. landmark count is 4 when an
+    alt_frontal_landmark was given (see pipeline.analyze_cranial - that's a
+    genuinely different registration/clip/display frame, not just a label),
+    and _CoM records whether center-of-mass correction ran (see
+    pipeline.register - turning it off measurably changes where the head
+    lands before clipping). two runs against the same source file with
+    different settings now land in different folders instead of one
+    silently overwriting the other, and the folder name itself tells you
+    which run is which without having to open report.json."""
+    stem = stem_from_filename(original_filename)
+    target_suffix = "C" if target == "cranium" else "F"
+    landmark_count = 4 if config.get("alt_frontal_landmark") else 3
+    com_suffix = "_CoM" if config.get("com_translation") else ""
+    return f"CP_{stem}_{target_suffix}_{landmark_count}{com_suffix}"
 
 
 def _measurement_figure(mesh: trimesh.Trimesh, measurements: CranioMeasurements) -> bytes:
@@ -163,9 +182,9 @@ def _build_report_files(
     stem = stem_from_filename(original_filename)
     # cranial and facial analyses of the same source mesh used to collide on
     # one folder name, so the second save silently overwrote the first -
-    # the target's initial disambiguates them.
-    target_suffix = "C" if target == "cranium" else "F"
-    folder = f"CP_{stem}_{target_suffix}_results"
+    # results_folder_name's target/landmark-count/CoM suffix disambiguates
+    # them (and any other settings combination run against the same file).
+    folder = results_folder_name(original_filename, target, config)
 
     figure_mesh = nasion_mesh if nasion_mesh is not None else final_mesh
     report_landmarks = nasion_landmarks if nasion_landmarks is not None else landmarks

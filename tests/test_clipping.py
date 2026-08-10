@@ -72,11 +72,38 @@ def test_cranial_clip_respects_all_three_constraints(test_mesh):
     assert len(clipped.vertices) < len(test_mesh.vertices)
 
     dist = np.linalg.norm(clipped.vertices - np.array([0, 40, 0]), axis=1)
-    assert dist.max() <= 125 + 1e-6
+    assert dist.max() <= 175 + 1e-6
 
     plane_signed_diag = (clipped.vertices - np.array([0, -60, -50])) @ np.array([0, 0.6, 1])
     assert plane_signed_diag.min() >= -1e-6
 
+    origin = landmarks.mean(axis=0)
+    normal = np.cross(landmarks[1] - landmarks[0], landmarks[2] - landmarks[0])
+    normal = normal / np.linalg.norm(normal)
+    if normal[1] < 0:
+        normal = -normal
+    plane_signed = (clipped.vertices - origin) @ normal
+    assert plane_signed.min() >= -1e-6
+
+
+def test_cranial_clip_trim_rear_neck_false_skips_that_plane(test_mesh):
+    # regression test for the alt-frontal-landmark bug: the rear/neck plane
+    # is hardcoded in the registered frame, tuned against nasion-based
+    # registration - registering on a different frontal landmark (e.g.
+    # subnasale) tips the whole head into a different pose in that same
+    # fixed frame, and on a real scan this plane ended up gouging into the
+    # actual occiput instead of the neck. trim_rear_neck=False (used by
+    # pipeline.analyze_cranial's alt-frontal pass) skips that plane
+    # entirely - just confirming here that the constraint it would enforce
+    # is in fact no longer enforced, i.e. the flag actually does something.
+    landmarks = np.array([[0.0, -30.0, 90.0], [55.0, -30.0, 0.0], [-55.0, -30.0, 0.0]])
+    clipped = cranial_clip(test_mesh, landmarks, trim_rear_neck=False)
+    assert len(clipped.vertices) > 0
+
+    plane_signed_diag = (clipped.vertices - np.array([0, -60, -50])) @ np.array([0, 0.6, 1])
+    assert plane_signed_diag.min() < -1e-6
+
+    # the landmark-plane boundary (the one that actually matters) still holds
     origin = landmarks.mean(axis=0)
     normal = np.cross(landmarks[1] - landmarks[0], landmarks[2] - landmarks[0])
     normal = normal / np.linalg.norm(normal)

@@ -10,6 +10,7 @@ import trimesh
 
 from api.results_bundle import (
     build_results_bundle,
+    results_folder_name,
     shorten_stem,
     stem_from_filename,
     write_results_to_folder,
@@ -63,7 +64,7 @@ def test_write_results_to_folder_uses_shortened_stem(tmp_path, sample_result):
         asymmetry=None,
         config={},
     )
-    assert results_dir == tmp_path / "CP_1016510_20210730_edited_C_results"
+    assert results_dir == tmp_path / "CP_1016510_20210730_edited_C_3"
     assert (results_dir / "1016510_20210730_edited_registered.ply").exists()
     assert (results_dir / "1016510_20210730_edited_final.ply").exists()
     assert (results_dir / "1016510_20210730_edited_report.json").exists()
@@ -86,4 +87,25 @@ def test_build_results_bundle_uses_shortened_stem_too(sample_result):
     from io import BytesIO
 
     names = zipfile.ZipFile(BytesIO(zip_bytes)).namelist()
-    assert all(n.startswith("CP_1016510_20210730_edited_C_results/1016510_20210730_edited_") for n in names)
+    assert all(n.startswith("CP_1016510_20210730_edited_C_3/1016510_20210730_edited_") for n in names)
+
+
+@pytest.mark.parametrize(
+    "config, expected_suffix",
+    [
+        ({}, "C_3"),
+        ({"com_translation": True}, "C_3_CoM"),
+        ({"com_translation": False}, "C_3"),
+        ({"alt_frontal_landmark": {"x": 0.0, "y": -37.0, "z": 73.0}}, "C_4"),
+        ({"alt_frontal_landmark": {"x": 0.0, "y": -37.0, "z": 73.0}, "com_translation": True}, "C_4_CoM"),
+        ({"alt_frontal_landmark": None, "com_translation": True}, "C_3_CoM"),
+    ],
+)
+def test_results_folder_name_reflects_landmark_count_and_com(config, expected_suffix):
+    folder = results_folder_name("scan.ply", "cranium", config)
+    assert folder == f"CP_scan_{expected_suffix}"
+
+
+def test_results_folder_name_facial_target_uses_f_suffix():
+    folder = results_folder_name("scan.ply", "face", {})
+    assert folder == "CP_scan_F_3"

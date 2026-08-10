@@ -18,9 +18,10 @@ from trimesh.resolvers import ZipResolver
 
 from craniumpy_core import pipeline
 from craniumpy_core.clipping import cranial_clip, facial_clip
+from craniumpy_core.io import strip_uninteresting_vertex_colors
 from craniumpy_core.registration.rigid import FACE_REFERENCE_TRIANGLE, REFERENCE_TRIANGLE
 from craniumpy_core.template_registry import SHIPPED_TEMPLATES, load_shipped_template
-from api.results_bundle import build_results_bundle, stem_from_filename, write_results_to_folder
+from api.results_bundle import build_results_bundle, results_folder_name, write_results_to_folder
 from api.schemas import (
     AnalyzeRequest,
     AsymmetryResponse,
@@ -104,7 +105,7 @@ def _load_mesh_from_upload(primary_name: str, contents_by_name: dict[str, bytes]
         raise HTTPException(status_code=400, detail=f"could not read mesh: {exc}") from exc
     if not isinstance(mesh, trimesh.Trimesh):
         raise HTTPException(status_code=400, detail="file did not contain a single triangle mesh")
-    return mesh
+    return strip_uninteresting_vertex_colors(mesh)
 
 
 @templates_router.get("", response_model=list[TemplateInfo])
@@ -136,11 +137,25 @@ def _apply_overlay_clip(mesh: trimesh.Trimesh, clip: str | None) -> trimesh.Trim
     above the landmark plane instead of at it, a leftover from however it
     got generated originally, and the mismatch only became visible once the
     overlay started comparing clipped-vs-clipped instead of full-vs-full).
-    computing it live means it can never go stale again."""
+    computing it live means it can never go stale again.
+
+    trim_rear_neck=False, always, for the cranial branch - not every
+    shipped template was registered with center-of-mass correction baked
+    into its pose (the plain "template_xy"/"clipped_template_xy", without
+    the "_com" suffix, weren't). cranial_clip's rear/neck safety plane is
+    hardcoded against the pose CoM correction produces (see its docstring),
+    and clipping one of the non-CoM templates with that plane still active
+    reproduced the exact same gouge as pipeline.analyze_cranial's
+    com_translation=False bug - measured ~58mm of boundary Y-spread on
+    clipped_template_xy versus <1mm clean. skipping it here costs nothing
+    real: this is comparison-overlay geometry, not the measurement
+    pipeline, and the sphere trim + keep_largest_component + clean_boundary
+    already handle whatever stray junk a template might have without that
+    plane's help."""
     if clip is None:
         return mesh
     if clip == "cranial":
-        return cranial_clip(mesh, REFERENCE_TRIANGLE)
+        return cranial_clip(mesh, REFERENCE_TRIANGLE, trim_rear_neck=False)
     if clip == "facial":
         return facial_clip(mesh, FACE_REFERENCE_TRIANGLE)
     raise HTTPException(status_code=400, detail=f"clip must be 'cranial' or 'facial', got {clip!r}")
@@ -171,6 +186,7 @@ def get_custom_template_mesh(path: str, clip: str | None = None):
         raise HTTPException(status_code=400, detail=f"could not read mesh: {exc}") from exc
     if not isinstance(mesh, trimesh.Trimesh):
         raise HTTPException(status_code=400, detail="file did not contain a single triangle mesh")
+    mesh = strip_uninteresting_vertex_colors(mesh)
     mesh = _apply_overlay_clip(mesh, clip)
     glb_bytes = mesh.export(file_type="glb", include_normals=True)
     return Response(content=glb_bytes, media_type="model/gltf-binary")
@@ -430,8 +446,8 @@ def download_results_bundle(session_id: str):
 
     r = session.result
     request: AnalyzeRequest = r["request"]
-    stem = stem_from_filename(session.original_filename)
-    target_suffix = "C" if request.target == "cranium" else "F"
+    config = request.model_dump()
+    folder_name = results_folder_name(session.original_filename, request.target, config)
 
     zip_bytes = build_results_bundle(
         original_filename=session.original_filename,
@@ -441,24 +457,25 @@ def download_results_bundle(session_id: str):
         target=request.target,
         craniometrics=r["craniometrics"],
         asymmetry=r["asymmetry"],
-        config=request.model_dump(),
+        config=config,
         nasion_mesh=session.nasion_result_mesh,
         nasion_landmarks=r["nasion_landmarks"],
     )
     return Response(
         content=zip_bytes,
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="CP_{stem}_{target_suffix}_results.zip"'},
+        headers={"Content-Disposition": f'attachment; filename="{folder_name}.zip"'},
     )
 
 
 @router.post("/{session_id}/save", response_model=SaveResultsResponse)
 def save_results_to_source_folder(session_id: str) -> SaveResultsResponse:
-    """writes results straight into CP_{stem}_results/ next to the original
-    mesh file - only works for a session opened via open_mesh_from_paths
-    (desktop app, native file picker), since that's the only case where we
-    actually know a real folder to write into. the frontend falls back to
-    the zip download (/bundle) when this 400s."""
+    """writes results straight into a CP_{stem}_{C|F}_{3|4}[_CoM]/ folder
+    next to the original mesh file (see results_bundle.results_folder_name)
+    - only works for a session opened via open_mesh_from_paths (desktop
+    app, native file picker), since that's the only case where we actually
+    know a real folder to write into. the frontend falls back to the zip
+    download (/bundle) when this 400s."""
     session = _get_session(session_id)
     if session.source_dir is None:
         raise HTTPException(
