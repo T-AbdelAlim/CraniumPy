@@ -32,6 +32,13 @@ class AnalyzeRequest(BaseModel):
     # coordinates. always required now, always picked manually - see
     # pipeline.py for why I dropped automatic detection
     landmarks: list[LandmarkPoint] = Field(min_length=3, max_length=3)
+    # optional, cranium-only: an alternate frontal point (e.g. subnasale)
+    # that takes over as the registration/clip/display frame for
+    # everything shown/saved, while nasion (still mandatory above) stays
+    # the anchor for the actual measurements and the saved 2D figure - see
+    # craniumpy_core.pipeline.analyze_cranial for why nasion can't just be
+    # swapped out for this instead of adding it alongside.
+    alt_frontal_landmark: LandmarkPoint | None = None
     com_translation: bool = True
     clipping: ClippingConfig = ClippingConfig()
     harmonize: HarmonizeConfig = HarmonizeConfig()
@@ -97,3 +104,6 @@ class ResultsResponse(BaseModel):
     vertex_count: int
     craniometrics: CraniometricsResponse | None = None
     asymmetry: AsymmetryResponse | None = None
+    # True when an alt_frontal_landmark was given and the shown/saved mesh
+    # is in that frame instead of the nasion one - see AnalyzeRequest
+    used_alt_frontal: bool = False

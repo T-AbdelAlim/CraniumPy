@@ -24,6 +24,7 @@
         </div>
         <p class="hint">for a textured .obj, multi-select (ctrl/cmd-click) the .obj, its .mtl, and the texture
           image together in the file picker.</p>
+        <p id="mesh-path" class="hint"></p>
         <p id="mesh-info" class="hint"></p>
       </section>
 
@@ -39,21 +40,35 @@
           pick in this order:</p>
         <ol id="landmark-list">
           <li data-name="nasion">
+            <span class="landmark-swatch"></span>
             <span class="landmark-label">nasion</span>
             <span class="landmark-desc">bridge of the nose, between the eyes</span>
             <span class="landmark-value">not picked</span>
           </li>
           <li data-name="left_tragus">
-            <span class="landmark-label">left tragus</span>
+            <span class="landmark-swatch"></span>
+            <span class="landmark-label">left landmark (e.g. LH tragus)</span>
             <span class="landmark-desc">small cartilage flap in front of the left ear canal</span>
             <span class="landmark-value">not picked</span>
           </li>
           <li data-name="right_tragus">
-            <span class="landmark-label">right tragus</span>
+            <span class="landmark-swatch"></span>
+            <span class="landmark-label">right landmark (e.g. RH tragus)</span>
             <span class="landmark-desc">same, right ear</span>
             <span class="landmark-value">not picked</span>
           </li>
+          <li data-name="alt_frontal" id="alt-frontal-item" class="hidden">
+            <span class="landmark-swatch"></span>
+            <span class="landmark-label">secondary frontal landmark (optional, e.g. subnasale)</span>
+            <span class="landmark-desc">an alternate anchor point - the displayed/saved mesh is registered
+              and clipped using this point instead of nasion, but measurements always stay based on nasion</span>
+            <span class="landmark-value">not picked</span>
+          </li>
         </ol>
+        <label class="checkbox" id="use-alt-frontal-row">
+          <input id="use-alt-frontal" type="checkbox" />
+          use a secondary frontal landmark (e.g. subnasale) for the displayed/saved mesh
+        </label>
         <button id="reset-landmarks" type="button">reset picks</button>
       </section>
 
@@ -81,7 +96,7 @@
       <section>
         <h2>5. Mesh cleanup</h2>
         <label class="checkbox"><input id="repair-mesh" type="checkbox" checked /> repair (fill holes, fix winding)</label>
-        <label class="checkbox"><input id="resample-mesh" type="checkbox" checked /> resample</label>
+        <label class="checkbox"><input id="resample-mesh" type="checkbox" /> resample</label>
         <label for="vertex-count">to</label>
         <input id="vertex-count" type="number" min="500" max="200000" step="500" value="10000" /> vertices
         <p class="hint">leave it at 10000 if you're not sure - that's what the pipeline was validated with. uncheck
@@ -98,6 +113,8 @@
       <section id="results" class="hidden">
         <h2>results</h2>
         <table id="results-table"></table>
+        <p id="alt-frontal-note" class="hint hidden">showing the mesh registered to the secondary frontal
+          landmark - measurements above and the saved 2D figure are still based on nasion.</p>
         <button id="download-bundle-button" type="button">download results (mesh + report + figure)</button>
         <p id="save-status" class="hint"></p>
 

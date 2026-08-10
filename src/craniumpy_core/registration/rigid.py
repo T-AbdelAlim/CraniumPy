@@ -35,11 +35,22 @@ class RigidTransform:
         return RigidTransform(R, t)
 
 
-def _procrustes(source_pts: np.ndarray, target_pts: np.ndarray) -> RigidTransform:
+def procrustes_fit(source_pts: np.ndarray, target_pts: np.ndarray) -> RigidTransform:
     """SVD-based Procrustes (Kabsch) for point sets that are already 1:1
     matched. Keeps the reflection fix from the original - plain Procrustes can
     hand you a mirror image instead of a rotation, det(R) < 0 catches that and
-    flips it back."""
+    flips it back.
+
+    public (not just an internal step of procrustes_icp below) since it's
+    also the simplest correct way to recover the rigid transform between two
+    independent registrations of the same mesh - see pipeline.analyze_cranial,
+    which registers a mesh twice (once per frontal landmark choice) and needs
+    the exact transform between the two resulting frames to carry the HC ring
+    drawn in one frame over into the other. composing the two registrations'
+    own landmark_align transforms would need also accounting for each pass's
+    separate com_translation offset - fitting directly on the two (fully
+    corresponding, since it's the same mesh either way) vertex sets sidesteps
+    that entirely."""
     u1 = source_pts.mean(axis=0)
     u2 = target_pts.mean(axis=0)
     pp1 = source_pts - u1
@@ -82,7 +93,7 @@ def procrustes_icp(
         _, idx = tree.query(current)
         neighbors = target_pts[idx]
 
-        transform = _procrustes(source_pts, neighbors)
+        transform = procrustes_fit(source_pts, neighbors)
         current = transform.apply(source_pts)
 
         metric = float(np.sum(np.linalg.norm(current - neighbors, axis=1)))

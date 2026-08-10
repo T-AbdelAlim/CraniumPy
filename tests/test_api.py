@@ -7,11 +7,13 @@ clip constants assume, so harmonize() has something real to work with
 without needing an actual scan.
 """
 
+import json
 import time
 import zipfile
 from io import BytesIO
 from pathlib import Path
 
+import numpy as np
 import pytest
 import trimesh
 from fastapi.testclient import TestClient
@@ -185,6 +187,68 @@ def test_full_analysis_flow_rigid(client, landmarks_payload):
     registered_response = client.get(f"/api/sessions/{session_id}/mesh/registered")
     assert registered_response.status_code == 200
     assert len(registered_response.content) > 0
+
+
+def test_analyze_cranial_with_alt_frontal_landmark(client, landmarks_payload):
+    # stands in for "subnasale instead of nasion" - a different point,
+    # clearly outside the real landmark triangle
+    alt_frontal = {
+        "x": landmarks_payload[0]["x"],
+        "y": landmarks_payload[0]["y"] - 15.0,
+        "z": landmarks_payload[0]["z"] - 5.0,
+    }
+    harmonize_cfg = {"n_vertices": 3000}
+
+    session_plain = _upload(client)
+    assert _run_analysis(
+        client, session_plain,
+        {"target": "cranium", "landmarks": landmarks_payload, "harmonize": harmonize_cfg},
+    ) == "done"
+    plain_results = client.get(f"/api/sessions/{session_plain}/results").json()
+
+    session_alt = _upload(client)
+    assert _run_analysis(
+        client, session_alt,
+        {
+            "target": "cranium", "landmarks": landmarks_payload,
+            "alt_frontal_landmark": alt_frontal, "harmonize": harmonize_cfg,
+        },
+    ) == "done"
+    alt_results = client.get(f"/api/sessions/{session_alt}/results").json()
+
+    assert plain_results["used_alt_frontal"] is False
+    assert alt_results["used_alt_frontal"] is True
+
+    # the numbers themselves never change based on which frame gets shown -
+    # they always come from the mandatory nasion landmark
+    assert alt_results["craniometrics"]["depth_mm"] == pytest.approx(plain_results["craniometrics"]["depth_mm"])
+    assert alt_results["craniometrics"]["breadth_mm"] == pytest.approx(plain_results["craniometrics"]["breadth_mm"])
+    assert alt_results["craniometrics"]["circumference_cm"] == pytest.approx(
+        plain_results["craniometrics"]["circumference_cm"]
+    )
+
+    # but the displayed/downloadable mesh actually is a different pose
+    plain_mesh = trimesh.load(
+        BytesIO(client.get(f"/api/sessions/{session_plain}/mesh/result").content), file_type="glb", force="mesh"
+    )
+    alt_mesh = trimesh.load(
+        BytesIO(client.get(f"/api/sessions/{session_alt}/mesh/result").content), file_type="glb", force="mesh"
+    )
+    assert not np.allclose(
+        np.asarray(plain_mesh.vertices).mean(axis=0), np.asarray(alt_mesh.vertices).mean(axis=0), atol=1.0
+    )
+
+    # the saved report documents both frames when they differ
+    bundle = client.get(f"/api/sessions/{session_alt}/bundle")
+    assert bundle.status_code == 200
+    zf = zipfile.ZipFile(BytesIO(bundle.content))
+    report_name = next(n for n in zf.namelist() if n.endswith("_report.json"))
+    report = json.loads(zf.read(report_name))
+    assert "display_frontal_landmark" in report
+    # com_translation nudges Z a little, so not an exact match to
+    # REFERENCE_TRIANGLE - just confirms the report's "nasion" entry is the
+    # nasion-frame landmark, not the alt one
+    np.testing.assert_allclose(report["landmarks"]["nasion"], list(REFERENCE_TRIANGLE[0]), atol=2.0)
 
 
 def test_analyze_progress_is_reported(client, landmarks_payload):

@@ -37,6 +37,8 @@ import numpy as np
 import trimesh
 from trimesh.intersections import slice_mesh_plane
 
+from .remesh import clean_boundary, keep_largest_component
+
 
 def clip_plane(mesh: trimesh.Trimesh, normal, origin, invert: bool = False) -> trimesh.Trimesh:
     """keeps the half of the mesh on the +normal side of origin (or -normal if invert)."""
@@ -81,20 +83,57 @@ def cranial_clip(mesh: trimesh.Trimesh, landmarks: np.ndarray) -> trimesh.Trimes
     """cranium above the plane through the 3 registered landmarks: a sphere
     trim to kill far-away junk, an angled plane clip for stray rear/neck
     geometry a horizontal cut alone wouldn't catch, then the actual
-    landmark-triangle plane as the real cranial boundary."""
+    landmark-triangle plane as the real cranial boundary.
+
+    the boundary is deliberately the raw landmark plane, not adjusted for
+    the ears - the cranial region this clips out is defined by the
+    landmarks themselves, full stop. (an earlier version of this function
+    raised the boundary to clear the ears, on the theory that it was the
+    same root cause as the HC slice landing on the ears - it isn't the fix
+    that was actually wanted: the clip stays at the landmarks, only the HC
+    measurement itself should skip past ear-level slices, see
+    extract_measurements's landmarks param.)
+
+    that angled rear/neck plane is the risky one - found on a real template
+    that it can graze the actual cranium surface at a shallow angle instead
+    of passing cleanly through the neck, for a head shaped differently than
+    whatever this was tuned against. slicing at a near-tangent angle leaves
+    a scatter of tiny disconnected slivers behind (1 component going in,
+    225 by the time all three cuts here had run, on that file). dropping
+    everything but the largest component at the end cleans that up - it's
+    debris, not a hole, so this doesn't touch the intentional open boundary
+    the landmark-plane cut leaves (see the module docstring: clips are left
+    open on purpose, repair closes them later).
+
+    the landmark-plane cut itself can graze at a shallow angle too, same
+    root cause as the rear/neck one above but along the actual cranial
+    boundary this time instead of debris headed for the trash. worse,
+    found on a real scan that it's often not just one grazing spot but the
+    plane running close to tangent for its *whole* length, leaving a
+    sawtooth around the entire rim - clean_boundary handles that (see its
+    docstring in remesh.py for why this needs more than just dropping bad
+    triangles)."""
     mesh = clip_sphere(mesh, center=(0, 40, 0), radius=125, keep_inside=True)
     mesh = clip_plane(mesh, normal=[0, 0.6, 1], origin=[0, -60, -50], invert=False)
     normal, origin = _landmark_plane(landmarks)
     mesh = clip_plane(mesh, normal=normal, origin=origin, invert=False)
-    return mesh
+    mesh = keep_largest_component(mesh)
+    return clean_boundary(mesh)
 
 
 def facial_clip(mesh: trimesh.Trimesh, landmarks: np.ndarray) -> trimesh.Trimesh:
     """just the face: a depth clip through the landmark-triangle centroid plus a
     sphere trim. landmarks = the mesh's own registered [nasion, left_tragus,
     right_tragus]. old facial_clip did the depth clip twice, ~1mm apart -
-    collapsed that into one clip at the centroid depth."""
+    collapsed that into one clip at the centroid depth.
+
+    same keep_largest_component cleanup as cranial_clip, for the same
+    reason - two chained clips (a plane then a sphere) is the same kind of
+    setup that can graze a surface and fragment it on an unlucky head
+    shape, even though the specific bug that surfaced this was found via
+    cranial_clip."""
     centroid = np.mean(landmarks, axis=0)
     mesh = clip_plane(mesh, normal=[0, 0, 1], origin=[0, 20, centroid[2]], invert=False)
     mesh = clip_sphere(mesh, center=(0, 25, -25), radius=115, keep_inside=True)
-    return mesh
+    mesh = keep_largest_component(mesh)
+    return clean_boundary(mesh)

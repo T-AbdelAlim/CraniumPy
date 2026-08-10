@@ -17,7 +17,7 @@ from PIL import Image
 
 from craniumpy_core.craniometrics import slice_center_of_mass
 from craniumpy_core.io import load_mesh
-from craniumpy_core.pipeline import analyze, harmonize, register
+from craniumpy_core.pipeline import analyze, analyze_cranial, harmonize, register
 from craniumpy_core.registration.rigid import REFERENCE_TRIANGLE
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -157,6 +157,57 @@ def test_harmonize_repair_false_skips_repair():
     # shouldn't raise even though pymeshfix never gets called here
     result = harmonize(template, target="cranium", landmarks=REFERENCE_TRIANGLE, repair=False, n_vertices=3000)
     assert len(result.vertices) > 0
+
+
+def test_analyze_cranial_without_alt_frontal_uses_nasion_mesh_as_display():
+    mesh, landmarks = _ellipsoid_with_landmarks()
+    result = analyze_cranial(mesh, landmarks, n_vertices=3000)
+
+    assert result.used_alt_frontal is False
+    assert result.display_mesh is result.nasion_mesh
+    np.testing.assert_array_equal(result.display_landmarks, result.nasion_landmarks)
+    if result.nasion_hc_polygon is not None:
+        np.testing.assert_array_equal(result.display_hc_polygon, result.nasion_hc_polygon)
+
+
+def test_analyze_cranial_with_alt_frontal_uses_alt_mesh_as_display():
+    mesh, landmarks = _ellipsoid_with_landmarks()
+    # a different point on the ellipsoid surface, well clear of the real
+    # landmark triangle - stands in for "subnasale instead of nasion"
+    alt_frontal = landmarks[0] + np.array([0.0, -15.0, -5.0])
+
+    without_alt = analyze_cranial(mesh, landmarks, n_vertices=3000)
+    with_alt = analyze_cranial(mesh, landmarks, alt_frontal_landmark=alt_frontal, n_vertices=3000)
+
+    assert with_alt.used_alt_frontal is True
+    # the display mesh actually changed - different pose, not just a copy
+    assert not np.allclose(
+        np.asarray(with_alt.display_mesh.vertices).mean(axis=0),
+        np.asarray(without_alt.display_mesh.vertices).mean(axis=0),
+    )
+    # but the numbers themselves are unaffected by which frame gets shown -
+    # they always come from the nasion pass, see analyze_cranial's docstring
+    assert with_alt.craniometrics.depth_mm == pytest.approx(without_alt.craniometrics.depth_mm)
+    assert with_alt.craniometrics.breadth_mm == pytest.approx(without_alt.craniometrics.breadth_mm)
+    assert with_alt.craniometrics.circumference_cm == pytest.approx(without_alt.craniometrics.circumference_cm)
+
+
+def test_analyze_cranial_hc_polygon_lands_on_display_mesh_surface():
+    mesh, landmarks = _ellipsoid_with_landmarks()
+    alt_frontal = landmarks[0] + np.array([0.0, -15.0, -5.0])
+    result = analyze_cranial(mesh, landmarks, alt_frontal_landmark=alt_frontal, n_vertices=3000)
+
+    assert result.display_hc_polygon is not None
+    # the transformed ring shouldn't be flat in Y anymore - a rotation
+    # between the two frames is exactly what "translate and angle back with
+    # the clipping plane" means
+    assert np.ptp(result.display_hc_polygon[:, 1]) > 1.0
+
+    _, dist, _ = trimesh.proximity.closest_point(result.display_mesh, result.display_hc_polygon)
+    # not pinned tighter than this - repair/resample nudge vertices around
+    # after the transform is fit, and this is a coarse synthetic mesh at
+    # n_vertices=3000, not a real high-res scan
+    assert dist.mean() < 5.0
 
 
 @pytest.mark.slow

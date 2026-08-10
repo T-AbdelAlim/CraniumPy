@@ -139,7 +139,7 @@ async function displayMesh(url) {
   });
   scene.add(object);
   currentMeshObject = object;
-  markerRadius = fitCameraToObject(object) * 0.012;
+  markerRadius = fitCameraToObject(object) * 0.01; // ~17% smaller than the old 0.012 - markers were a bit large
   applyClipPreview();
 
   document.getElementById("mesh-view-toggles").classList.remove("hidden");
@@ -203,7 +203,7 @@ function addLandmarkMarker(name, point) {
   if (landmarkMarkerObjects[name]) scene.remove(landmarkMarkerObjects[name]);
   const marker = new THREE.Mesh(
     new THREE.SphereGeometry(markerRadius, 16, 16),
-    new THREE.MeshBasicMaterial({ color: 0x4ade80 })
+    new THREE.MeshBasicMaterial({ color: LANDMARK_COLORS[name] ?? 0x4ade80 })
   );
   marker.position.set(point.x, point.y, point.z);
   scene.add(marker);
@@ -293,16 +293,33 @@ function applyAsymmetryHeatmap(heatmapValues) {
 // --- landmark picking (ctrl/cmd + click) ---
 
 const LANDMARK_NAMES = ["nasion", "left_tragus", "right_tragus"];
+// optional 4th point (cranium target only, see the "use a secondary frontal
+// landmark" checkbox) - an alternate anchor (e.g. subnasale) that takes over
+// the registration/clip/display frame while nasion above stays mandatory and
+// keeps driving the actual measurements. see pipeline.analyze_cranial for
+// why these are two different knobs, not one.
+const ALT_FRONTAL_NAME = "alt_frontal";
+// distinct colors so the marker in the 3D view and its row in the sidebar
+// list (see the matching CSS in style.css) are unambiguously the same point -
+// picking order alone wasn't enough once the labels went generic (frontal/
+// left/right landmark instead of nasion/tragus).
+const LANDMARK_COLORS = { nasion: 0x98764d, left_tragus: 0xa65c3c, right_tragus: 0x344c42, alt_frontal: 0x6b7882 };
 const pickedLandmarks = {};
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 
+let useAltFrontal = false;
+
+function activeLandmarkNames() {
+  return useAltFrontal ? [...LANDMARK_NAMES, ALT_FRONTAL_NAME] : LANDMARK_NAMES;
+}
+
 function nextUnpickedLandmark() {
-  return LANDMARK_NAMES.find((n) => !(n in pickedLandmarks));
+  return activeLandmarkNames().find((n) => !(n in pickedLandmarks));
 }
 
 function resetManualPicks() {
-  for (const n of LANDMARK_NAMES) delete pickedLandmarks[n];
+  for (const n of [...LANDMARK_NAMES, ALT_FRONTAL_NAME]) delete pickedLandmarks[n];
   clearMarkers();
   drawHcLine(null);
   updateLandmarkList();
@@ -323,6 +340,41 @@ function updateLandmarkList() {
   });
   updateAnalyzeButtonState();
 }
+
+// secondary frontal landmark is cranium-only (see AnalyzeRequest) - facial
+// registration/clipping never had a "which frontal point" ambiguity to
+// begin with, so there's nothing for it to do there.
+function updateAltFrontalVisibility() {
+  const target = document.querySelector('input[name="target"]:checked').value;
+  const row = document.getElementById("use-alt-frontal-row");
+  row.classList.toggle("hidden", target !== "cranium");
+  if (target !== "cranium" && document.getElementById("use-alt-frontal").checked) {
+    document.getElementById("use-alt-frontal").checked = false;
+    setUseAltFrontal(false);
+  }
+}
+
+function setUseAltFrontal(enabled) {
+  useAltFrontal = enabled;
+  document.getElementById("alt-frontal-item").classList.toggle("hidden", !enabled);
+  if (!enabled) {
+    delete pickedLandmarks[ALT_FRONTAL_NAME];
+    if (landmarkMarkerObjects[ALT_FRONTAL_NAME]) {
+      scene.remove(landmarkMarkerObjects[ALT_FRONTAL_NAME]);
+      delete landmarkMarkerObjects[ALT_FRONTAL_NAME];
+    }
+  }
+  updateLandmarkList();
+}
+
+document.getElementById("use-alt-frontal").addEventListener("change", (event) => {
+  setUseAltFrontal(event.target.checked);
+});
+
+document.querySelectorAll('input[name="target"]').forEach((el) => {
+  el.addEventListener("change", updateAltFrontalVisibility);
+});
+updateAltFrontalVisibility();
 
 function pointerToNdc(event) {
   const rect = canvas.getBoundingClientRect();
@@ -416,7 +468,7 @@ window.addEventListener("mouseup", () => {
 
 let sessionId = null;
 
-async function _afterSessionOpened(response) {
+async function _afterSessionOpened(response, meshPath) {
   const infoEl = document.getElementById("mesh-info");
   if (!response.ok) {
     infoEl.textContent = `couldn't open mesh: ${await response.text()}`;
@@ -426,6 +478,7 @@ async function _afterSessionOpened(response) {
   const data = await response.json();
   sessionId = data.session_id;
   infoEl.textContent = `${data.vertex_count} vertices, ${data.face_count} faces`;
+  document.getElementById("mesh-path").textContent = meshPath ?? "";
   document.getElementById("viewer-hint").classList.add("hidden");
   document.getElementById("results").classList.add("hidden");
   document.getElementById("save-status").textContent = "";
@@ -441,7 +494,7 @@ async function uploadFiles(files) {
   const formData = new FormData();
   for (const f of files) formData.append("files", f);
   try {
-    await _afterSessionOpened(await fetch("/api/sessions", { method: "POST", body: formData }));
+    await _afterSessionOpened(await fetch("/api/sessions", { method: "POST", body: formData }), primaryMeshFile(files.map((f) => f.name)));
   } catch (err) {
     document.getElementById("mesh-info").textContent = `upload failed: ${err}`;
   }
@@ -460,7 +513,10 @@ async function openFilesFromPaths(paths) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ paths }),
-      })
+      }),
+      // full path, not just the basename - this is the one case where we
+      // actually know a real filesystem location, so show it in full
+      paths.find((p) => MESH_EXTENSIONS.includes(extOf(p.split(/[\\/]/).pop())))
     );
   } catch (err) {
     document.getElementById("mesh-info").textContent = `couldn't open mesh: ${err}`;
@@ -476,6 +532,10 @@ function extOf(name) {
 
 function hasMeshFile(names) {
   return names.some((n) => MESH_EXTENSIONS.includes(extOf(n)));
+}
+
+function primaryMeshFile(names) {
+  return names.find((n) => MESH_EXTENSIONS.includes(extOf(n)));
 }
 
 function hasTextureFile(names) {
@@ -510,7 +570,7 @@ document.getElementById("file-input").addEventListener("change", (event) => {
 
 function updateAnalyzeButtonState() {
   const button = document.getElementById("analyze-button");
-  const landmarksOk = LANDMARK_NAMES.every((n) => n in pickedLandmarks);
+  const landmarksOk = activeLandmarkNames().every((n) => n in pickedLandmarks);
   button.disabled = !sessionId || !landmarksOk;
 }
 
@@ -627,6 +687,9 @@ document.getElementById("analyze-button").addEventListener("click", async () => 
     clipping: {},
     harmonize: { n_vertices: resampleMesh ? vertexCount : null, repair: repairMesh },
   };
+  if (useAltFrontal && pickedLandmarks[ALT_FRONTAL_NAME]) {
+    body.alt_frontal_landmark = pickedLandmarks[ALT_FRONTAL_NAME];
+  }
 
   if (isManualClipMode()) {
     body.clipping = {
@@ -703,6 +766,7 @@ async function showResults() {
     tr.innerHTML = `<td>${label}</td><td>${value}</td>`;
     table.appendChild(tr);
   }
+  document.getElementById("alt-frontal-note").classList.toggle("hidden", !data.used_alt_frontal);
 
   document.getElementById("template-overlay-toggle").checked = false;
   if (shippedTemplates.length === 0) await fetchShippedTemplates();
@@ -717,7 +781,9 @@ async function showResults() {
 async function displayResultMesh() {
   await displayMesh(`/api/sessions/${sessionId}/mesh/result`);
   if (!lastResultsData) return;
-  for (const p of lastResultsData.landmarks) addResultMarker(p, 0x60a5fa);
+  // landmarks always come back in [nasion, left_tragus, right_tragus] order
+  // (see api/schemas.py's ResultsResponse / results_bundle.py's report.json)
+  lastResultsData.landmarks.forEach((p, i) => addResultMarker(p, LANDMARK_COLORS[LANDMARK_NAMES[i]] ?? 0x60a5fa));
   // always call this, even with no polygon - drawHcLine(null) is what
   // clears a line left over from a previous *cranial* run before switching
   // to facial (craniometrics is only ever present for cranial results, but
@@ -825,10 +891,11 @@ function updateTemplateCustomRow() {
   }
 }
 
-document.getElementById("template-select").addEventListener("change", () => {
+document.getElementById("template-select").addEventListener("change", async () => {
   const target = document.querySelector('input[name="target"]:checked').value;
   localStorage.setItem(templateChoiceStorageKey(target), document.getElementById("template-select").value);
   updateTemplateCustomRow();
+  await refreshTemplateOverlayIfShown();
 });
 
 // browser-mode only: holds the last uploaded custom template's GLB blob URL
@@ -847,6 +914,7 @@ document.getElementById("template-browse-button").addEventListener("click", asyn
     if (!paths || paths.length === 0) return;
     localStorage.setItem(customTemplatePathStorageKey(target), paths[0]);
     updateTemplateCustomRow();
+    await refreshTemplateOverlayIfShown();
   } else {
     document.getElementById("template-custom-file-input").click();
   }
@@ -867,6 +935,7 @@ document.getElementById("template-custom-file-input").addEventListener("change",
   customTemplateBlobUrl = URL.createObjectURL(await response.blob());
   customTemplateBlobName = file.name;
   updateTemplateCustomRow();
+  await refreshTemplateOverlayIfShown();
 });
 
 let templateOverlayObject = null;
@@ -1001,6 +1070,17 @@ async function enableTemplateOverlay() {
   document.getElementById("template-offset-info").textContent =
     `center-of-gravity offset from template (${resolved.displayName}): ${d.length().toFixed(1)}mm total ` +
     `(x ${d.x.toFixed(1)}, y ${d.y.toFixed(1)}, z ${d.z.toFixed(1)})`;
+}
+
+// re-runs the overlay against whatever's now selected, but only if the
+// overlay is actually on screen - picking a different template (or a new
+// custom file) while it's off just changes what enableTemplateOverlay()
+// would show next time it's turned on, no need to touch the viewer yet.
+async function refreshTemplateOverlayIfShown() {
+  if (!sessionId || !lastResultsData) return;
+  if (!document.getElementById("template-overlay-toggle").checked) return;
+  clearTemplateOverlay();
+  await enableTemplateOverlay();
 }
 
 document.getElementById("template-overlay-toggle").addEventListener("change", async (event) => {

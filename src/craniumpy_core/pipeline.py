@@ -29,9 +29,9 @@ import trimesh
 
 from .asymmetry import AsymmetryResult, calculate_asymmetry
 from .clipping import clip_plane, cranial_clip, facial_clip
-from .craniometrics import CranioMeasurements, extract_measurements, slice_center_of_mass
-from .registration.rigid import RigidTransform, landmark_align
-from .remesh import RepairMethod, ResampleMethod, repair_mesh, resample_mesh
+from .craniometrics import CranioMeasurements, extract_measurements, hc_slice_polygon, slice_center_of_mass
+from .registration.rigid import RigidTransform, landmark_align, procrustes_fit
+from .remesh import RepairMethod, ResampleMethod, keep_largest_component, repair_mesh, resample_mesh
 
 AnalysisTarget = Literal["cranium", "face"]
 ClipMode = Literal["cranial", "facial", "manual"]
@@ -169,12 +169,23 @@ def harmonize(
     else:
         raise ValueError(f"unknown clip_mode {clip_mode!r}")
 
+    # cranial_clip/facial_clip already clean up after themselves (see
+    # clipping.py) - this is for the manual clip_mode, a single clip_plane()
+    # call that isn't wrapped by anything, but can in principle graze the
+    # surface and fragment it the same way. no-op the rest of the time.
+    result = keep_largest_component(result)
+
     if n_vertices is not None:
         _report(on_progress, "resample", f"resampling to {n_vertices} vertices ({resample_method})")
         result = resample_mesh(result, n_vertices=n_vertices, method=resample_method)
 
     if com_translation and target == "cranium":
-        com = slice_center_of_mass(result)
+        # landmarks here so the CoM slice itself skips past ear-level (see
+        # slice_center_of_mass/extract_measurements's landmarks param) -
+        # cranial_clip keeps the raw landmark-plane boundary on purpose
+        # (the ears stay attached to the clipped mesh), so this mesh can
+        # still have them.
+        com = slice_center_of_mass(result, landmarks=landmarks)
         result.vertices = result.vertices - np.array([com[0], 0.0, com[2]])
 
     return result
@@ -227,7 +238,10 @@ def analyze(
     )
 
     _report(on_progress, "analyze", "computing measurements")
-    craniometrics_result = extract_measurements(harmonized) if target == "cranium" else None
+    # landmarks here for the same reason as harmonize()'s com_translation
+    # step - the clipped mesh still has the ears attached, so the HC/BPD
+    # slice search needs to skip past them itself.
+    craniometrics_result = extract_measurements(harmonized, landmarks=reg.landmarks) if target == "cranium" else None
     asymmetry_result = calculate_asymmetry(harmonized) if target == "face" else None
     _report(on_progress, "done", "")
 
@@ -236,4 +250,126 @@ def analyze(
         landmarks=reg.landmarks,
         craniometrics=craniometrics_result,
         asymmetry=asymmetry_result,
+    )
+
+
+@dataclass
+class CranialAnalysisResult:
+    display_registered_mesh: trimesh.Trimesh  # pre-harmonize, in the display frame - viewer "registered" stage / _registered.ply
+    display_mesh: trimesh.Trimesh  # post-harmonize, in the display frame - viewer "result" stage / _final.ply
+    display_landmarks: np.ndarray  # registered landmarks in the SAME frame as display_mesh
+    display_hc_polygon: np.ndarray | None  # HC ring, carried into the display frame - see analyze_cranial
+    craniometrics: CranioMeasurements  # always computed from the nasion pass
+    nasion_mesh: trimesh.Trimesh  # post-harmonize, nasion frame - always this, for the saved 2D figure
+    nasion_landmarks: np.ndarray
+    nasion_hc_polygon: np.ndarray | None
+    used_alt_frontal: bool
+
+
+def analyze_cranial(
+    mesh: trimesh.Trimesh,
+    landmarks: np.ndarray,
+    alt_frontal_landmark: np.ndarray | None = None,
+    com_translation: bool = True,
+    clip_mode: ClipMode | None = None,
+    manual_plane_normal: np.ndarray | None = None,
+    manual_plane_origin: np.ndarray | None = None,
+    n_vertices: int | None = 10_000,
+    repair: bool = True,
+    repair_method: RepairMethod = "pymeshfix",
+    resample_method: ResampleMethod = "quadric",
+    on_progress: ProgressCallback | None = None,
+) -> CranialAnalysisResult:
+    """the cranial pipeline, with an optional second frontal landmark (e.g.
+    subnasale) that takes over as the registration/clip/display frame for
+    everything shown, downloaded, or saved - while the craniometrics numbers
+    and the saved 2D figure always come from the nasion pass, unconditionally.
+
+    nasion has to stay the anchor for those two specifically, not just be one
+    option among several: the HC circumference search (extract_measurements)
+    and the whole cranial_clip geometry were both tuned and validated against
+    a nasion-based registration. substituting a different point there doesn't
+    just move the frontal landmark - it changes which rotation the REST of
+    the mesh needs to land the (still 3-point) triangle on the same reference
+    triangle, which silently drags the whole head into a different pose. on
+    a real file, that pose change was enough to make cranial_clip's fixed
+    plane geometry graze the surface instead of cutting cleanly through the
+    neck (this is the same bug that motivated keep_largest_component - see
+    clipping.cranial_clip), and separately made the HC slice search land at
+    ear level instead of above it. both of those are exactly why nasion has
+    to be mandatory and untouchable for the actual measurement, with anything
+    else opt-in and downstream of it.
+
+    the two passes register the exact same input mesh independently, so
+    nasion_reg.mesh and alt_reg.mesh (before harmonize's repair/clip/resample
+    touches either one) are still in full 1:1 vertex correspondence -
+    fitting a rigid transform between them (procrustes_fit) is what actually
+    carries the HC ring from the nasion frame into the display frame
+    correctly, without having to reason analytically about each pass's own
+    separate com_translation offset."""
+    nasion_reg = register(mesh, landmarks, target="cranium", com_translation=com_translation, on_progress=on_progress)
+    nasion_mesh = harmonize(
+        nasion_reg.mesh,
+        target="cranium",
+        landmarks=nasion_reg.landmarks,
+        clip_mode=clip_mode,
+        manual_plane_normal=manual_plane_normal,
+        manual_plane_origin=manual_plane_origin,
+        n_vertices=n_vertices,
+        repair=repair,
+        repair_method=repair_method,
+        resample_method=resample_method,
+        com_translation=com_translation,
+        on_progress=on_progress,
+    )
+
+    _report(on_progress, "analyze", "computing measurements")
+    craniometrics = extract_measurements(nasion_mesh, landmarks=nasion_reg.landmarks)
+    nasion_hc_polygon = hc_slice_polygon(nasion_mesh, craniometrics.slice_height)
+
+    if alt_frontal_landmark is None:
+        _report(on_progress, "done", "")
+        return CranialAnalysisResult(
+            display_registered_mesh=nasion_reg.mesh,
+            display_mesh=nasion_mesh,
+            display_landmarks=nasion_reg.landmarks,
+            display_hc_polygon=nasion_hc_polygon,
+            craniometrics=craniometrics,
+            nasion_mesh=nasion_mesh,
+            nasion_landmarks=nasion_reg.landmarks,
+            nasion_hc_polygon=nasion_hc_polygon,
+            used_alt_frontal=False,
+        )
+
+    alt_landmarks = np.array([alt_frontal_landmark, landmarks[1], landmarks[2]], dtype=np.float64)
+    alt_reg = register(mesh, alt_landmarks, target="cranium", com_translation=com_translation, on_progress=on_progress)
+    alt_mesh = harmonize(
+        alt_reg.mesh,
+        target="cranium",
+        landmarks=alt_reg.landmarks,
+        clip_mode=clip_mode,
+        manual_plane_normal=manual_plane_normal,
+        manual_plane_origin=manual_plane_origin,
+        n_vertices=n_vertices,
+        repair=repair,
+        repair_method=repair_method,
+        resample_method=resample_method,
+        com_translation=com_translation,
+        on_progress=on_progress,
+    )
+
+    transform = procrustes_fit(np.asarray(nasion_reg.mesh.vertices), np.asarray(alt_reg.mesh.vertices))
+    display_hc_polygon = transform.apply(nasion_hc_polygon) if nasion_hc_polygon is not None else None
+
+    _report(on_progress, "done", "")
+    return CranialAnalysisResult(
+        display_registered_mesh=alt_reg.mesh,
+        display_mesh=alt_mesh,
+        display_landmarks=alt_reg.landmarks,
+        display_hc_polygon=display_hc_polygon,
+        craniometrics=craniometrics,
+        nasion_mesh=nasion_mesh,
+        nasion_landmarks=nasion_reg.landmarks,
+        nasion_hc_polygon=nasion_hc_polygon,
+        used_alt_frontal=True,
     )

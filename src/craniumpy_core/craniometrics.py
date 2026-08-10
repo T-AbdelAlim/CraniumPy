@@ -87,10 +87,56 @@ def _scan_slices(mesh: trimesh.Trimesh, slice_d: int = 1) -> list[SliceProfile]:
     return profiles
 
 
-def _select_slice_index(profiles: list[SliceProfile], slice_d: int = 1, breadth_limit: float = 180.0) -> int:
+def _ear_clear_mask(profiles: list[SliceProfile], min_y: float, ear_clear_fraction: float) -> np.ndarray:
+    """boolean mask, True for slices at/above min_y that have cleared the
+    ear-width plateau - see _select_slice_index's docstring for the
+    reasoning. real ears show up as a distinct plateau in the breadth
+    profile (steadily wide while the slice is still cutting through pinna
+    cartilage), ending in a sharp drop once the slice clears the top of the
+    ear and the profile is just head again - a real scan went 155mm ->
+    135mm breadth over 3mm of height right at that boundary. so above
+    min_y, find the highest breadth in that zone (the ear bulge peak) and
+    require ear_clear_fraction of it before a slice counts as past the
+    ears - a direct read of where THIS head's ears actually end, rather
+    than a guessed-at margin that has to somehow work for every ear shape
+    and every age. falls back to the plain min_y mask if nothing looks
+    cleared (no obvious bulge to clear)."""
+    ys = np.array([p.y for p in profiles])
+    breadths = np.array([p.breadth for p in profiles])
+    eligible = ys >= min_y
+    if not eligible.any():
+        return eligible
+
+    peak_idx = int(np.argmax(np.where(eligible, breadths, -np.inf)))
+    peak_breadth = breadths[peak_idx]
+    cleared_ears = breadths <= peak_breadth * ear_clear_fraction
+    cleared_ears[:peak_idx] = False  # only look for the drop-off after the peak
+    past_ears = eligible & cleared_ears
+    return past_ears if past_ears.any() else eligible
+
+
+def _select_slice_index(
+    profiles: list[SliceProfile],
+    slice_d: int = 1,
+    breadth_limit: float = 180.0,
+    min_y: float | None = None,
+    ear_clear_fraction: float = 0.9,
+) -> int:
     """find the deepest slice, but skip past ones with breadth >180mm - those are
-    almost always ears sticking out rather than actual head width."""
+    almost always ears sticking out rather than actual head width.
+
+    breadth_limit alone isn't reliable on its own: it's an absolute mm value,
+    so a small/pediatric head can have its ears included in the breadth and
+    still land under 180mm, and the loop below would never trigger - the
+    slice search just keeps whatever ear-level slice happened to be deepest.
+    min_y (when given - see extract_measurements) is where _ear_clear_mask
+    starts looking for the ears in the first place."""
     depths = np.array([p.depth for p in profiles])
+
+    if min_y is not None:
+        eligible = _ear_clear_mask(profiles, min_y, ear_clear_fraction)
+        if eligible.any():
+            depths = np.where(eligible, depths, -np.inf)
     index = int(np.argmax(depths))
 
     count = 0
@@ -168,11 +214,34 @@ def _circumference_search(mesh: trimesh.Trimesh, slice_height: float, slice_d: i
     return hc
 
 
-def extract_measurements(mesh: trimesh.Trimesh, slice_d: int = 1, max_hc_search: int = 200) -> CranioMeasurements:
+def extract_measurements(
+    mesh: trimesh.Trimesh,
+    slice_d: int = 1,
+    max_hc_search: int = 200,
+    landmarks: np.ndarray | None = None,
+    ear_safety_margin_mm: float = 5.0,
+    ear_clear_fraction: float = 0.9,
+) -> CranioMeasurements:
     """OFD/BPD/CI/circumference/volume for an already-registered mesh. same as
-    CranioMetrics.slice_mesh + extract_dimensions combined."""
+    CranioMetrics.slice_mesh + extract_dimensions combined.
+
+    landmarks (optional, [nasion, left_tragus, right_tragus] in this mesh's
+    own frame) rules out picking a slice at ear level: nothing at or below
+    max(left_tragus.y, right_tragus.y) + ear_safety_margin_mm is eligible
+    at all (the tragus landmarks themselves, plus a small buffer), and
+    above that, _select_slice_index looks for where breadth actually drops
+    off the ear-width plateau (see its docstring - ear_clear_fraction is
+    just threaded through to there). left out (None) entirely preserves
+    the old breadth-only behavior - the regression baseline in
+    tests/fixtures never had landmarks to give it in the first place,
+    since it runs on a raw, unregistered mesh."""
+    min_y = None
+    if landmarks is not None:
+        landmarks = np.asarray(landmarks)
+        min_y = float(max(landmarks[1][1], landmarks[2][1])) + ear_safety_margin_mm
+
     profiles = _scan_slices(mesh, slice_d)
-    index = _select_slice_index(profiles, slice_d)
+    index = _select_slice_index(profiles, slice_d, min_y=min_y, ear_clear_fraction=ear_clear_fraction)
     slice_height = profiles[index].y
 
     hc = _circumference_search(mesh, slice_height, slice_d, max_hc_search)
@@ -203,9 +272,12 @@ def extract_measurements(mesh: trimesh.Trimesh, slice_d: int = 1, max_hc_search:
     )
 
 
-def slice_center_of_mass(mesh: trimesh.Trimesh, slice_height: float | None = None) -> np.ndarray:
+def slice_center_of_mass(
+    mesh: trimesh.Trimesh, slice_height: float | None = None, landmarks: np.ndarray | None = None
+) -> np.ndarray:
     """plain average of the slice points at slice_height (auto-detects the
-    HC slice if you don't pass one in).
+    HC slice if you don't pass one in - see extract_measurements's landmarks
+    param for what that does with them).
 
     this is what the old com_translation / cranial_cut CoM step used
     (CranioMetrics(...).HC_s.center_of_mass() - just an unweighted mean since a
@@ -213,7 +285,7 @@ def slice_center_of_mass(mesh: trimesh.Trimesh, slice_height: float | None = Non
     different places in the pipeline with different bits of the result applied.
     """
     if slice_height is None:
-        slice_height = extract_measurements(mesh).slice_height
+        slice_height = extract_measurements(mesh, landmarks=landmarks).slice_height
     pts = _slice_points(mesh, slice_height)
     if pts is None:
         raise ValueError(f"No mesh intersection at y={slice_height}")

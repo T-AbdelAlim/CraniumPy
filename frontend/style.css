@@ -130,8 +130,33 @@ input[type="file"] {
   color: var(--accent);
 }
 
+.landmark-swatch {
+  display: inline-block;
+  width: 0.65em;
+  height: 0.65em;
+  border-radius: 50%;
+  margin-right: 0.4rem;
+}
+
+/* colors match LANDMARK_COLORS in app.js - keep these two in sync */
+#landmark-list li[data-name="nasion"] .landmark-swatch {
+  background: #98764d;
+}
+
+#landmark-list li[data-name="left_tragus"] .landmark-swatch {
+  background: #a65c3c;
+}
+
+#landmark-list li[data-name="right_tragus"] .landmark-swatch {
+  background: #344c42;
+}
+
+#landmark-list li[data-name="alt_frontal"] .landmark-swatch {
+  background: #6b7882;
+}
+
 .landmark-label {
-  display: block;
+  display: inline;
   font-weight: 600;
   color: var(--text);
 }

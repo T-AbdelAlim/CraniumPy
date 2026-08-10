@@ -22,6 +22,7 @@ else:
 SHIPPED_TEMPLATES: dict[str, str] = {
     "template_xy": "Full head (average, standard orientation)",
     "template_xy_com": "Full head (average, center-of-mass shifted)",
+    "template_xy_subanasal_com": "Full head (average, subnasale landmark variant, center-of-mass shifted)",
     "clipped_template_xy": "Cranium region only",
     "clipped_template_xy_com": "Cranium region only, center-of-mass shifted",
     "template_face": "Face region only",

@@ -42,6 +42,12 @@ class Session:
     # these get filled in as the job runs
     registered_mesh: trimesh.Trimesh | None = None
     result_mesh: trimesh.Trimesh | None = None
+    # only set for cranial analyses that used an alt_frontal_landmark -
+    # result_mesh becomes the alt-frame mesh in that case (see
+    # api/routers/mesh.py's start_analysis), so this is the one place the
+    # nasion-frame mesh survives, for the always-nasion-oriented saved 2D
+    # figure (see api/results_bundle.py's _measurement_figure).
+    nasion_result_mesh: trimesh.Trimesh | None = None
     job_status: JobStatus = "idle"
     job_error: str | None = None
     progress: dict[str, str] = field(default_factory=lambda: {"stage": "idle", "detail": ""})

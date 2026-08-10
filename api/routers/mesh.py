@@ -251,6 +251,10 @@ def open_mesh_from_paths(request: OpenFromPathsRequest) -> UploadResponse:
 def start_analysis(session_id: str, request: AnalyzeRequest) -> StatusResponse:
     session = _get_session(session_id)
     landmarks = np.array([[p.x, p.y, p.z] for p in request.landmarks])
+    alt_frontal = None
+    if request.alt_frontal_landmark is not None:
+        p = request.alt_frontal_landmark
+        alt_frontal = np.array([p.x, p.y, p.z])
 
     clip_cfg = request.clipping
     manual_normal = list(clip_cfg.manual_plane_normal) if clip_cfg.manual_plane_normal else None
@@ -259,6 +263,42 @@ def start_analysis(session_id: str, request: AnalyzeRequest) -> StatusResponse:
         raise HTTPException(status_code=400, detail="clipping.mode='manual' needs manual_plane_normal and manual_plane_origin")
 
     def _run() -> dict:
+        if request.target == "cranium":
+            # nasion (mandatory, above) always drives the actual
+            # measurements - alt_frontal (if given) only takes over the
+            # displayed/saved mesh's registration+clip frame. see
+            # pipeline.analyze_cranial's docstring for why these can't be
+            # the same knob.
+            result = pipeline.analyze_cranial(
+                session.mesh,
+                landmarks,
+                alt_frontal_landmark=alt_frontal,
+                com_translation=request.com_translation,
+                clip_mode=clip_cfg.mode,
+                manual_plane_normal=manual_normal,
+                manual_plane_origin=manual_origin,
+                n_vertices=request.harmonize.n_vertices,
+                repair=request.harmonize.repair,
+                repair_method=request.harmonize.repair_method,
+                on_progress=session.report_progress,
+            )
+            session.registered_mesh = result.display_registered_mesh
+            session.result_mesh = result.display_mesh
+            session.nasion_result_mesh = result.nasion_mesh
+            session.report_progress("done", "")
+            return {
+                "landmarks": result.display_landmarks,
+                "craniometrics": result.craniometrics,
+                "asymmetry": None,
+                "request": request,
+                "nasion_landmarks": result.nasion_landmarks if result.used_alt_frontal else None,
+                "display_hc_polygon": result.display_hc_polygon,
+                "used_alt_frontal": result.used_alt_frontal,
+            }
+
+        # facial: unaffected by alt_frontal_landmark (cranium-only, see
+        # AnalyzeRequest) - single registration, same as always.
+        session.nasion_result_mesh = None
         reg = pipeline.register(
             session.mesh,
             landmarks,
@@ -285,17 +325,18 @@ def start_analysis(session_id: str, request: AnalyzeRequest) -> StatusResponse:
 
         session.report_progress("analyze", "computing measurements")
         from craniumpy_core.asymmetry import calculate_asymmetry
-        from craniumpy_core.craniometrics import extract_measurements
 
-        craniometrics = extract_measurements(harmonized) if request.target == "cranium" else None
-        asymmetry = calculate_asymmetry(harmonized) if request.target == "face" else None
+        asymmetry = calculate_asymmetry(harmonized)
         session.report_progress("done", "")
 
         return {
             "landmarks": reg.landmarks,
-            "craniometrics": craniometrics,
+            "craniometrics": None,
             "asymmetry": asymmetry,
             "request": request,
+            "nasion_landmarks": None,
+            "display_hc_polygon": None,
+            "used_alt_frontal": False,
         }
 
     try:
@@ -325,9 +366,12 @@ def get_results(session_id: str) -> ResultsResponse:
     craniometrics = None
     if r["craniometrics"] is not None:
         m = r["craniometrics"]
-        from craniumpy_core.craniometrics import hc_slice_polygon
-
-        polygon = hc_slice_polygon(session.result_mesh, m.slice_height)
+        # precomputed at analyze time, already in whatever frame
+        # session.result_mesh is actually in (see pipeline.analyze_cranial) -
+        # recomputing it live here the way this used to work would slice
+        # the WRONG mesh at a Y that only means anything in the nasion
+        # frame, once an alt_frontal_landmark is in play.
+        polygon = r["display_hc_polygon"]
         craniometrics = CraniometricsResponse(
             slice_height=m.slice_height,
             depth_mm=m.depth_mm,
@@ -350,6 +394,7 @@ def get_results(session_id: str) -> ResultsResponse:
         vertex_count=len(session.result_mesh.vertices),
         craniometrics=craniometrics,
         asymmetry=asymmetry,
+        used_alt_frontal=r["used_alt_frontal"],
     )
 
 
@@ -397,6 +442,8 @@ def download_results_bundle(session_id: str):
         craniometrics=r["craniometrics"],
         asymmetry=r["asymmetry"],
         config=request.model_dump(),
+        nasion_mesh=session.nasion_result_mesh,
+        nasion_landmarks=r["nasion_landmarks"],
     )
     return Response(
         content=zip_bytes,
@@ -434,5 +481,7 @@ def save_results_to_source_folder(session_id: str) -> SaveResultsResponse:
         craniometrics=r["craniometrics"],
         asymmetry=r["asymmetry"],
         config=request.model_dump(),
+        nasion_mesh=session.nasion_result_mesh,
+        nasion_landmarks=r["nasion_landmarks"],
     )
     return SaveResultsResponse(saved_to=str(results_dir))
