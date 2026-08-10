@@ -45,7 +45,38 @@ def repair_mesh(mesh: trimesh.Trimesh, method: RepairMethod = "pymeshfix") -> tr
     """cleans up degenerate/duplicate faces, fixes winding, fills holes.
     pymeshfix (default) does a noticeably better job closing up real scans
     than the trimesh method - use trimesh only if you want to avoid the
-    pymeshfix dependency for some reason."""
+    pymeshfix dependency for some reason.
+
+    merges coincident vertices first, regardless of method. found out why
+    this matters the hard way: a real patient scan (photogrammetry, not the
+    clean shipped templates) came back from pymeshfix with ~75% of its
+    vertices gone and the surviving chunk badly off-center. turned out the
+    raw .obj had 18,000+ disconnected "components" - duplicate vertices at
+    the seams between reconstructed patches that were never welded in the
+    export, so most of the head was topologically split off from the rest
+    by a few unmerged points. pymeshfix's cleaning keeps only the single
+    largest connected component and silently drops everything else, so it
+    kept one patch and threw the rest of the head away. merge_vertices()
+    here only touches vertices that are already coincident (or within
+    trimesh's tight default tolerance) - not a simplification, just welding
+    what should've been welded on export. confirmed it collapses that same
+    scan's 18,000+ components down to 1 before repair ever runs.
+
+    drops any texture/UV/material before that merge, on purpose - regression
+    caught right after register() started carrying texture through
+    (previously stripped immediately, see pipeline.py). merge_vertices()
+    treats two vertices with different UV as different, even at the exact
+    same 3D position, since that's normally correct (that's what a UV seam
+    is) - but it meant a textured version of the same scan above only
+    merged about half as many duplicates as the untextured version did,
+    leaving most of the fragmentation in place and bringing the whole bug
+    back. repair can't preserve texture through pymeshfix either way
+    (clean_from_arrays only ever takes bare vertices/faces), so there's
+    nothing to lose by dropping it before the merge that actually needs to
+    see through those seams."""
+    mesh = trimesh.Trimesh(vertices=mesh.vertices, faces=mesh.faces, process=False)
+    mesh.merge_vertices()
+
     if method == "pymeshfix":
         from pymeshfix import _meshfix
 
@@ -53,7 +84,6 @@ def repair_mesh(mesh: trimesh.Trimesh, method: RepairMethod = "pymeshfix") -> tr
         return trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
 
     if method == "trimesh":
-        mesh = mesh.copy()
         mesh.process(validate=True)
         trimesh.repair.fill_holes(mesh)
         return mesh

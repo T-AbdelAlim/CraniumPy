@@ -4,35 +4,6 @@ import * as THREE from "three";
 import { OrbitControls } from "./vendor/three/controls/OrbitControls.js";
 import { GLTFLoader } from "./vendor/three/loaders/GLTFLoader.js";
 
-// --- menu bar ---
-// just the shell for now - view (split screen, pre/post-op overlay) and
-// settings (default template/config) are placeholders, nothing behind them
-// yet. wiring here is only open/close, nothing else to hook up until there's
-// an actual feature behind one of these.
-
-document.querySelectorAll(".menu-trigger").forEach((trigger) => {
-  trigger.addEventListener("click", (event) => {
-    event.stopPropagation();
-    const menu = trigger.closest(".menu");
-    const wasOpen = menu.classList.contains("open");
-    document.querySelectorAll(".menu.open").forEach((m) => {
-      m.classList.remove("open");
-      m.querySelector(".menu-dropdown").classList.add("hidden");
-    });
-    if (!wasOpen) {
-      menu.classList.add("open");
-      menu.querySelector(".menu-dropdown").classList.remove("hidden");
-    }
-  });
-});
-
-window.addEventListener("click", () => {
-  document.querySelectorAll(".menu.open").forEach((m) => {
-    m.classList.remove("open");
-    m.querySelector(".menu-dropdown").classList.add("hidden");
-  });
-});
-
 // --- scene setup ---
 
 const canvas = document.getElementById("viewer");
@@ -159,8 +130,8 @@ async function displayMesh(url) {
   document.getElementById("mesh-view-toggles").classList.remove("hidden");
   document.getElementById("wireframe-toggle").checked = false;
   const textureToggle = document.getElementById("texture-toggle");
-  textureToggle.closest("label").classList.toggle("hidden", !currentMeshHasTexture);
-  textureToggle.checked = true;
+  textureToggle.disabled = !currentMeshHasTexture;
+  textureToggle.checked = currentMeshHasTexture;
   applyWireframeState();
 
   return object;
@@ -249,6 +220,49 @@ function drawHcLine(polygonPoints) {
   const geometry = new THREE.BufferGeometry().setFromPoints(pts);
   hcLineObject = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color: 0xd1453d, linewidth: 2 }));
   scene.add(hcLineObject);
+}
+
+// facial asymmetry heatmap: one signed distance (mm) per vertex of the
+// result mesh, zeroed out on one half by design (see
+// craniumpy_core.asymmetry's module docstring) - negative means that point
+// sits closer to center than its mirrored counterpart (a dent), positive
+// means it sticks out further (protruded). blue/white/red diverging so 0 is
+// neutral, scaled to whatever the biggest deviation in this mesh actually
+// is rather than a fixed mm range, since a mild case and a severe one
+// shouldn't both max out or both wash out the same way.
+function heatmapColor(value, maxAbs) {
+  const t = maxAbs > 0 ? Math.max(-1, Math.min(1, value / maxAbs)) : 0;
+  if (t < 0) {
+    const k = 1 + t;
+    return new THREE.Color(k, k, 1);
+  }
+  const k = 1 - t;
+  return new THREE.Color(1, k, k);
+}
+
+function applyAsymmetryHeatmap(heatmapValues) {
+  if (!currentMeshObject || !heatmapValues || heatmapValues.length === 0) return;
+  const maxAbs = heatmapValues.reduce((m, v) => Math.max(m, Math.abs(v)), 1e-6);
+
+  currentMeshMaterials = [];
+  currentMeshObject.traverse((child) => {
+    if (!child.isMesh) return;
+    const count = child.geometry.attributes.position.count;
+    const colors = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      const c = heatmapColor(heatmapValues[i] ?? 0, maxAbs);
+      colors[i * 3] = c.r;
+      colors[i * 3 + 1] = c.g;
+      colors[i * 3 + 2] = c.b;
+    }
+    child.geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    // unlit, same reasoning as textured meshes - this is a precise value
+    // encoded as a color, scene lighting would just distort it
+    child.material = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
+    currentMeshMaterials.push(child.material);
+  });
+  applyWireframeState();
+  applyClipPreview();
 }
 
 // --- landmark picking (ctrl/cmd + click) ---
@@ -669,7 +683,12 @@ async function displayResultMesh() {
   await displayMesh(`/api/sessions/${sessionId}/mesh/result`);
   if (!lastResultsData) return;
   for (const p of lastResultsData.landmarks) addResultMarker(p, 0x60a5fa);
-  if (lastResultsData.craniometrics) drawHcLine(lastResultsData.craniometrics.hc_slice_polygon);
+  // always call this, even with no polygon - drawHcLine(null) is what
+  // clears a line left over from a previous *cranial* run before switching
+  // to facial (craniometrics is only ever present for cranial results, but
+  // the stale line from last time doesn't know that on its own).
+  drawHcLine(lastResultsData.craniometrics ? lastResultsData.craniometrics.hc_slice_polygon : null);
+  if (lastResultsData.asymmetry) applyAsymmetryHeatmap(lastResultsData.asymmetry.heatmap);
 }
 
 // --- template overlay: compare the final mesh (the one you'd download,

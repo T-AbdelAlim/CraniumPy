@@ -85,6 +85,11 @@ class CraniometricsResponse(BaseModel):
 
 class AsymmetryResponse(BaseModel):
     mean_asymmetry_index: float
+    # one signed distance (mm) per vertex of the result mesh, same order -
+    # see craniumpy_core.asymmetry.calculate_asymmetry. zeroed out on one
+    # half by design (see that module's docstring), for the viewer's
+    # blue(dent)/red(protruded) heatmap overlay.
+    heatmap: list[float]
 
 
 class ResultsResponse(BaseModel):

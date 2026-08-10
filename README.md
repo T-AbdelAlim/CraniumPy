@@ -129,7 +129,6 @@ The standalone .exe is built from this same code via `desktop/craniumpy.spec` an
 - Mesh volume requires a watertight mesh. Since the final mesh is intentionally left open at the clip boundary, volume is computed from a temporary capped copy; it reports 0 if that copy cannot be made watertight.
 - Resampling uses quadric decimation, not Voronoi/ACVD clustering (see `DEPENDENCIES.md`). Vertex distribution differs from the original app.
 - No automatic landmark detection.
-- Menu bar "View" and "Settings" entries are placeholders with no functionality yet.
 
 
 ## Citation

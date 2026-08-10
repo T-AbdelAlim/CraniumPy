@@ -18,7 +18,7 @@ from trimesh.resolvers import ZipResolver
 
 from craniumpy_core import pipeline
 from craniumpy_core.clipping import cranial_clip, facial_clip
-from craniumpy_core.registration.rigid import REFERENCE_TRIANGLE
+from craniumpy_core.registration.rigid import FACE_REFERENCE_TRIANGLE, REFERENCE_TRIANGLE
 from craniumpy_core.template_registry import SHIPPED_TEMPLATES, load_shipped_template
 from api.results_bundle import build_results_bundle, stem_from_filename, write_results_to_folder
 from api.schemas import (
@@ -114,11 +114,19 @@ def list_templates() -> list[TemplateInfo]:
 
 def _apply_overlay_clip(mesh: trimesh.Trimesh, clip: str | None) -> trimesh.Trimesh:
     """optionally clips a template mesh the same way the real pipeline clips
-    a patient's mesh, using REFERENCE_TRIANGLE as stand-in landmarks (a
-    template sits in the registered frame by definition, so its own
-    landmarks would land there anyway). backs the "show template overlay"
-    viewer feature - it compares against the patient's *clipped* result now,
-    so the template needs the same cut to line up.
+    a patient's mesh, using REFERENCE_TRIANGLE (or, for facial, its
+    nasion-recentered counterpart) as stand-in landmarks (a template sits in
+    the registered frame by definition, so its own landmarks would land
+    there anyway). backs the "show template overlay" viewer feature - it
+    compares against the patient's *clipped* result now, so the template
+    needs the same cut to line up.
+
+    the facial branch needs FACE_REFERENCE_TRIANGLE, not REFERENCE_TRIANGLE:
+    pipeline.register() shifts the mesh an extra step for facial targets so
+    the nasion sits at the origin, and REFERENCE_TRIANGLE was never adjusted
+    to match that shift. using the raw triangle here clipped the template
+    around z=0 while a real face-target-registered mesh's landmarks sit
+    around z=-57, so the overlay landed nowhere near the actual face.
 
     this clips live rather than shipping separate pre-clipped template
     files, on purpose: a static "clipped_template_xy_com.ply" is exactly the
@@ -134,7 +142,7 @@ def _apply_overlay_clip(mesh: trimesh.Trimesh, clip: str | None) -> trimesh.Trim
     if clip == "cranial":
         return cranial_clip(mesh, REFERENCE_TRIANGLE)
     if clip == "facial":
-        return facial_clip(mesh, REFERENCE_TRIANGLE)
+        return facial_clip(mesh, FACE_REFERENCE_TRIANGLE)
     raise HTTPException(status_code=400, detail=f"clip must be 'cranial' or 'facial', got {clip!r}")
 
 
@@ -332,7 +340,10 @@ def get_results(session_id: str) -> ResultsResponse:
 
     asymmetry = None
     if r["asymmetry"] is not None:
-        asymmetry = AsymmetryResponse(mean_asymmetry_index=r["asymmetry"].mean_asymmetry_index)
+        asymmetry = AsymmetryResponse(
+            mean_asymmetry_index=r["asymmetry"].mean_asymmetry_index,
+            heatmap=r["asymmetry"].heatmap.tolist(),
+        )
 
     return ResultsResponse(
         landmarks=[LandmarkPoint(x=p[0], y=p[1], z=p[2]) for p in r["landmarks"]],
@@ -375,6 +386,7 @@ def download_results_bundle(session_id: str):
     r = session.result
     request: AnalyzeRequest = r["request"]
     stem = stem_from_filename(session.original_filename)
+    target_suffix = "C" if request.target == "cranium" else "F"
 
     zip_bytes = build_results_bundle(
         original_filename=session.original_filename,
@@ -389,7 +401,7 @@ def download_results_bundle(session_id: str):
     return Response(
         content=zip_bytes,
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="CP_{stem}_results.zip"'},
+        headers={"Content-Disposition": f'attachment; filename="CP_{stem}_{target_suffix}_results.zip"'},
     )
 
 

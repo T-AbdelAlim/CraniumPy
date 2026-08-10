@@ -97,7 +97,11 @@ def _build_report_files(
     method writes, named {stem}_registered.ply / _final.ply / _report.json /
     _measurements.png (cranium target only)."""
     stem = stem_from_filename(original_filename)
-    folder = f"CP_{stem}_results"
+    # cranial and facial analyses of the same source mesh used to collide on
+    # one folder name, so the second save silently overwrote the first -
+    # the target's initial disambiguates them.
+    target_suffix = "C" if target == "cranium" else "F"
+    folder = f"CP_{stem}_{target_suffix}_results"
 
     report = {
         "generated": datetime.now(timezone.utc).isoformat(),

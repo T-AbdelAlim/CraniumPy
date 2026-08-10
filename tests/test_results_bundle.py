@@ -63,7 +63,7 @@ def test_write_results_to_folder_uses_shortened_stem(tmp_path, sample_result):
         asymmetry=None,
         config={},
     )
-    assert results_dir == tmp_path / "CP_1016510_20210730_edited_results"
+    assert results_dir == tmp_path / "CP_1016510_20210730_edited_C_results"
     assert (results_dir / "1016510_20210730_edited_registered.ply").exists()
     assert (results_dir / "1016510_20210730_edited_final.ply").exists()
     assert (results_dir / "1016510_20210730_edited_report.json").exists()
@@ -86,4 +86,4 @@ def test_build_results_bundle_uses_shortened_stem_too(sample_result):
     from io import BytesIO
 
     names = zipfile.ZipFile(BytesIO(zip_bytes)).namelist()
-    assert all(n.startswith("CP_1016510_20210730_edited_results/1016510_20210730_edited_") for n in names)
+    assert all(n.startswith("CP_1016510_20210730_edited_C_results/1016510_20210730_edited_") for n in names)

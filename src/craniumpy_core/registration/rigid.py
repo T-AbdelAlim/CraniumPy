@@ -114,6 +114,15 @@ REFERENCE_TRIANGLE = np.array([
     [-6.10000000e+01, 1.37562096e-01, -2.86353117e+01],
 ])
 
+# pipeline.register() re-centers the mesh an extra step for facial targets,
+# after landmark_align, shifting everything so the nasion lands at the
+# origin (see the nasion_offset subtraction there) - REFERENCE_TRIANGLE
+# itself is never adjusted for that second shift, so anything that needs to
+# describe landmark positions in the frame a face-target-registered mesh
+# actually ends up in (e.g. clipping a template for the overlay comparison)
+# needs this version instead of the raw triangle.
+FACE_REFERENCE_TRIANGLE = REFERENCE_TRIANGLE - REFERENCE_TRIANGLE[0]
+
 
 def _rodrigues_align(v1: np.ndarray, v2: np.ndarray) -> np.ndarray:
     """rotation matrix that takes unit(v1) to unit(v2)."""

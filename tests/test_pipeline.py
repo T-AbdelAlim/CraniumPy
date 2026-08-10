@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import trimesh
+from PIL import Image
 
 from craniumpy_core.craniometrics import slice_center_of_mass
 from craniumpy_core.io import load_mesh
@@ -39,6 +40,21 @@ def _ellipsoid_with_landmarks(asymmetric: bool = False) -> tuple[trimesh.Trimesh
     mesh.vertices = v * np.array([70.0, 90.0, 60.0]) + np.array([5.0, -20.0, 8.0])
     landmarks = REFERENCE_TRIANGLE * np.array([0.9, 1.1, 0.95]) + np.array([5.0, -20.0, 8.0])
     return mesh, landmarks
+
+
+def test_register_preserves_texture():
+    # regression test: register() used to rebuild the mesh as bare
+    # vertices+faces with no visual=, silently dropping texture/UV on every
+    # analysis - a rigid transform doesn't touch UV at all, so there was
+    # never a reason for that.
+    mesh, landmarks = _ellipsoid_with_landmarks()
+    uv = np.random.default_rng(0).random((len(mesh.vertices), 2))
+    material = trimesh.visual.material.SimpleMaterial(image=Image.new("RGB", (4, 4)))
+    mesh.visual = trimesh.visual.TextureVisuals(uv=uv, material=material)
+
+    result = register(mesh, landmarks, target="cranium")
+    assert result.mesh.visual.kind == "texture"
+    np.testing.assert_array_equal(result.mesh.visual.uv, uv)
 
 
 def test_register_applies_com_translation_by_default():

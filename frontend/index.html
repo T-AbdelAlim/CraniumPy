@@ -10,22 +10,6 @@
   </script>
 </head>
 <body>
-  <header id="menubar">
-    <div class="menu">
-      <button class="menu-trigger" type="button">view</button>
-      <div class="menu-dropdown hidden">
-        <button type="button" disabled>split screen (coming soon)</button>
-        <button type="button" disabled>pre/post-op overlay (coming soon)</button>
-      </div>
-    </div>
-    <div class="menu">
-      <button class="menu-trigger" type="button">settings</button>
-      <div class="menu-dropdown hidden">
-        <button type="button" disabled>default template & config (coming soon)</button>
-      </div>
-    </div>
-  </header>
-
   <div id="app">
     <aside id="panel">
       <h1>CraniumPy</h1>
@@ -36,7 +20,7 @@
         <input id="file-input" type="file" accept=".ply,.obj,.stl,.mtl,.jpg,.jpeg,.png" multiple class="hidden" />
         <div id="mesh-view-toggles" class="toggle-row hidden">
           <label class="checkbox"><input id="wireframe-toggle" type="checkbox" /> wireframe</label>
-          <label class="checkbox hidden"><input id="texture-toggle" type="checkbox" checked /> texture</label>
+          <label class="checkbox"><input id="texture-toggle" type="checkbox" disabled /> texture</label>
         </div>
         <p class="hint">for a textured .obj, multi-select (ctrl/cmd-click) the .obj, its .mtl, and the texture
           image together in the file picker.</p>
@@ -51,8 +35,8 @@
 
       <section>
         <h2>3. Preprocessing - landmarks</h2>
-        <p class="hint">click 3 points on the mesh, <strong>holding ctrl (or cmd on mac)</strong> while you click
-          so a normal click can still orbit the view. pick them in this order:</p>
+        <p class="hint"><strong>ctrl/cmd-click</strong> to place a point, <strong>alt-drag</strong> to move one.
+          pick in this order:</p>
         <ol id="landmark-list">
           <li data-name="nasion">
             <span class="landmark-label">nasion</span>

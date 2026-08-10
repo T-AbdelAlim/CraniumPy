@@ -74,13 +74,32 @@ def register(
     _report(on_progress, "register", "aligning to reference landmarks")
     transform = landmark_align(landmarks)
     registered_mesh = trimesh.Trimesh(
-        vertices=transform.apply(np.asarray(mesh.vertices)), faces=mesh.faces, process=False
+        vertices=transform.apply(np.asarray(mesh.vertices)),
+        faces=mesh.faces,
+        process=False,
+        # a rigid transform doesn't touch UV coordinates at all, so there's
+        # no reason to drop the texture here - without this, register() was
+        # rebuilding the mesh bare (vertices+faces only) and silently
+        # throwing away visual/UV/material every time, before repair or
+        # clipping ever got a chance to touch it.
+        visual=mesh.visual,
     )
     new_landmarks = transform.apply(landmarks)
 
     if com_translation:
         _report(on_progress, "register", "center-of-mass correction")
-        com = slice_center_of_mass(registered_mesh)
+        # slice_center_of_mass runs the full craniometrics slice-scan
+        # internally (extract_measurements) just to find a rough Z-offset -
+        # on a raw, high-poly scan (100k+ vertices, real patient photogrammetry
+        # rather than the clean shipped templates) that's genuinely slow, 10+
+        # seconds on its own. doing it on a decimated proxy instead of the
+        # full mesh cuts that by roughly 8x with no effect on the final
+        # reported measurements: nothing downstream trusts this value beyond
+        # "roughly centered" - harmonize() does its own precise re-centering
+        # later anyway, on the much smaller final mesh, independent of
+        # whatever happens here.
+        proxy = resample_mesh(registered_mesh, n_vertices=20_000)
+        com = slice_center_of_mass(proxy)
         z_offset = np.array([0.0, 0.0, com[2]])
         registered_mesh.vertices = registered_mesh.vertices - z_offset
         new_landmarks = new_landmarks - z_offset

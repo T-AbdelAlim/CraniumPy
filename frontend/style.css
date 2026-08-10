@@ -19,68 +19,9 @@ body {
   color: var(--text);
 }
 
-#menubar {
-  display: flex;
-  align-items: stretch;
-  height: 2.25rem;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
-  position: relative;
-  z-index: 10;
-}
-
-.menu {
-  position: relative;
-}
-
-.menu-trigger {
-  height: 100%;
-  width: auto;
-  margin: 0;
-  padding: 0 0.9rem;
-  background: transparent;
-  border: none;
-  border-radius: 0;
-  color: var(--text);
-  font-weight: 400;
-  font-size: 0.85rem;
-  cursor: pointer;
-}
-
-.menu-trigger:hover,
-.menu.open .menu-trigger {
-  background: var(--border);
-}
-
-.menu-dropdown {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  min-width: 220px;
-  padding: 0.3rem;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-}
-
-.menu-dropdown button {
-  width: 100%;
-  margin: 0;
-  padding: 0.45rem 0.6rem;
-  background: transparent;
-  border: none;
-  border-radius: 4px;
-  color: var(--muted);
-  font-weight: 400;
-  font-size: 0.85rem;
-  text-align: left;
-  cursor: not-allowed;
-}
-
 #app {
   display: flex;
-  height: calc(100vh - 2.25rem);
+  height: 100vh;
 }
 
 #panel {
@@ -122,6 +63,11 @@ label.checkbox {
   gap: 0.4rem;
 }
 
+label.checkbox:has(input:disabled) {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
 .toggle-row {
   display: flex;
   gap: 1rem;
@@ -136,6 +82,7 @@ label.checkbox {
   color: var(--muted);
   font-size: 0.8rem;
   margin: 0.4rem 0;
+  overflow-wrap: anywhere;
 }
 
 button {

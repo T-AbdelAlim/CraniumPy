@@ -251,7 +251,7 @@ def test_results_bundle_download(client, landmarks_payload):
     bundle = client.get(f"/api/sessions/{session_id}/bundle")
     assert bundle.status_code == 200
     assert bundle.headers["content-type"] == "application/zip"
-    assert "CP_template_xy_com_results.zip" in bundle.headers["content-disposition"]
+    assert "CP_template_xy_com_C_results.zip" in bundle.headers["content-disposition"]
 
     zf = zipfile.ZipFile(BytesIO(bundle.content))
     names = zf.namelist()
@@ -299,7 +299,7 @@ def test_save_results_to_source_folder(client, landmarks_payload, tmp_path):
     save_response = client.post(f"/api/sessions/{session_id}/save")
     assert save_response.status_code == 200, save_response.text
     saved_to = Path(save_response.json()["saved_to"])
-    assert saved_to == tmp_path / "CP_1016510_20210730_edited_results"
+    assert saved_to == tmp_path / "CP_1016510_20210730_edited_C_results"
     assert (saved_to / "1016510_20210730_edited_registered.ply").exists()
     assert (saved_to / "1016510_20210730_edited_final.ply").exists()
     assert (saved_to / "1016510_20210730_edited_report.json").exists()
