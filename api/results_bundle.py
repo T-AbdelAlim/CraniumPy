@@ -126,8 +126,20 @@ def _build_report_files(
     if asymmetry is not None:
         report["asymmetry"] = {"mean_asymmetry_index": asymmetry.mean_asymmetry_index}
 
+    # bare geometry only, no visual/UV - registered_mesh still carries
+    # texture data at this point (register() deliberately keeps it, for the
+    # live viewer), but trimesh's PLY writer stores UV as double-precision
+    # while vertex positions stay float, and doesn't emit a "TextureFile"
+    # comment pointing at the actual image - so the UV ends up orphaned data
+    # with no texture ever actually resolvable from the file, and the mixed
+    # float/double vertex record is exactly what made Meshmixer read the
+    # file as empty (final_mesh never has this problem: repair_mesh already
+    # strips visual data before repair runs, further up the pipeline).
+    registered_export = trimesh.Trimesh(
+        vertices=registered_mesh.vertices, faces=registered_mesh.faces, process=False
+    )
     files = {
-        f"{stem}_registered.ply": registered_mesh.export(file_type="ply"),
+        f"{stem}_registered.ply": registered_export.export(file_type="ply"),
         f"{stem}_final.ply": final_mesh.export(file_type="ply"),
         f"{stem}_report.json": json.dumps(report, indent=2).encode("utf-8"),
     }
