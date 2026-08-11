@@ -17,9 +17,7 @@ from fastapi.responses import Response
 from trimesh.resolvers import ZipResolver
 
 from craniumpy_core import pipeline
-from craniumpy_core.clipping import cranial_clip, facial_clip
 from craniumpy_core.io import strip_uninteresting_vertex_colors
-from craniumpy_core.registration.rigid import FACE_REFERENCE_TRIANGLE, REFERENCE_TRIANGLE
 from craniumpy_core.template_registry import SHIPPED_TEMPLATES, load_shipped_template
 from api.results_bundle import build_results_bundle, results_folder_name, write_results_to_folder
 from api.schemas import (
@@ -113,50 +111,19 @@ def list_templates() -> list[TemplateInfo]:
     return [TemplateInfo(name=name, description=desc) for name, desc in SHIPPED_TEMPLATES.items()]
 
 
-def _apply_overlay_clip(mesh: trimesh.Trimesh, clip: str | None) -> trimesh.Trimesh:
-    """optionally clips a template mesh the same way the real pipeline clips
-    a patient's mesh, using REFERENCE_TRIANGLE (or, for facial, its
-    nasion-recentered counterpart) as stand-in landmarks - a template sits
-    in the registered frame by definition, so its own landmarks would land
-    there anyway. backs the "show template overlay" viewer feature, which
-    compares against the patient's *clipped* result, so the template needs
-    the same cut to line up.
-
-    facial needs FACE_REFERENCE_TRIANGLE, not REFERENCE_TRIANGLE: register()
-    shifts the mesh an extra step for facial targets so the nasion sits at
-    the origin, and REFERENCE_TRIANGLE was never adjusted for that shift.
-
-    clips live instead of shipping separate pre-clipped template files, so
-    it can't drift out of sync with clipping.py the way a static
-    "clipped_template_xy_com.ply" eventually would.
-
-    trim_rear_neck=False always, for the cranial branch - not every shipped
-    template was registered with CoM correction baked into its pose, and
-    cranial_clip's rear/neck safety plane is hardcoded against the pose CoM
-    correction produces (see its docstring). skipping it here is fine: this
-    is comparison-overlay geometry, not the measurement pipeline, and the
-    sphere trim + keep_largest_component + clean_boundary already handle
-    whatever stray junk a template might have."""
-    if clip is None:
-        return mesh
-    if clip == "cranial":
-        return cranial_clip(mesh, REFERENCE_TRIANGLE, trim_rear_neck=False)
-    if clip == "facial":
-        return facial_clip(mesh, FACE_REFERENCE_TRIANGLE)
-    raise HTTPException(status_code=400, detail=f"clip must be 'cranial' or 'facial', got {clip!r}")
-
-
 # these two have to come before "/{name}/mesh" below - otherwise that route's
 # {name} would swallow "custom" and this code would never get reached.
 
 
 @templates_router.get("/custom/mesh")
-def get_custom_template_mesh(path: str, clip: str | None = None):
+def get_custom_template_mesh(path: str):
     """GLB export of a template mesh loaded straight from a local filesystem
     path - backs the desktop app's "remember this template for next time"
     flow (see desktop/app.py's pick_file / frontend/app.js). reads the file
     fresh every call, nothing kept server-side - the "remembering" happens
-    client-side, in the frontend's localStorage.
+    client-side, in the frontend's localStorage. served as-is, whatever's
+    actually in the file - the "show template overlay" viewer feature is a
+    reference comparison, not a copy of the patient's own clip.
 
     fine to trust a raw local path here since both the desktop app and the
     web-service launch bind to 127.0.0.1 - browser and server are always the
@@ -171,13 +138,12 @@ def get_custom_template_mesh(path: str, clip: str | None = None):
     if not isinstance(mesh, trimesh.Trimesh):
         raise HTTPException(status_code=400, detail="file did not contain a single triangle mesh")
     mesh = strip_uninteresting_vertex_colors(mesh)
-    mesh = _apply_overlay_clip(mesh, clip)
     glb_bytes = mesh.export(file_type="glb", include_normals=True)
     return Response(content=glb_bytes, media_type="model/gltf-binary")
 
 
 @templates_router.post("/custom/upload")
-async def upload_custom_template_mesh(files: list[UploadFile], clip: str | None = None):
+async def upload_custom_template_mesh(files: list[UploadFile]):
     """GLB export of an uploaded template mesh - the plain-browser fallback
     for when there's no pywebview file dialog to remember a path with (see
     get_custom_template_mesh above). also stateless, nothing kept
@@ -188,23 +154,18 @@ async def upload_custom_template_mesh(files: list[UploadFile], clip: str | None 
         raise HTTPException(status_code=400, detail="no files uploaded")
     primary_name, contents_by_name = _load_primary_and_resolver(files)
     mesh = _load_mesh_from_upload(primary_name, contents_by_name)
-    mesh = _apply_overlay_clip(mesh, clip)
     glb_bytes = mesh.export(file_type="glb", include_normals=True)
     return Response(content=glb_bytes, media_type="model/gltf-binary")
 
 
 @templates_router.get("/{name}/mesh")
-def get_template_mesh(name: str, clip: str | None = None):
-    """GLB export of a shipped template - used for the "show template
-    overlay" viewer feature, comparing a patient's clipped result mesh
-    against a reference. pass clip=cranial or clip=facial to get it clipped
-    live the same way (see _apply_overlay_clip) instead of picking one of
-    the separately-named clipped_template_* files, which are pre-baked and
-    can drift out of sync with clipping.py."""
+def get_template_mesh(name: str):
+    """GLB export of a shipped template, as-is - used for the "show
+    template overlay" viewer feature, comparing a patient's result mesh
+    against a reference."""
     if name not in SHIPPED_TEMPLATES:
         raise HTTPException(status_code=404, detail=f"unknown template {name!r}")
     mesh = load_shipped_template(name)
-    mesh = _apply_overlay_clip(mesh, clip)
     glb_bytes = mesh.export(file_type="glb", include_normals=True)
     return Response(content=glb_bytes, media_type="model/gltf-binary")
 

@@ -142,7 +142,7 @@ async function displayMesh(url) {
   });
   scene.add(object);
   currentMeshObject = object;
-  markerRadius = fitCameraToObject(object) * 0.01; // ~17% smaller than the old 0.012 - markers were a bit large
+  markerRadius = fitCameraToObject(object) * 0.00765; // 10% smaller again - was 0.0085
   applyClipPreview();
 
   document.getElementById("mesh-view-toggles").classList.remove("hidden");
@@ -807,21 +807,11 @@ async function displayResultMesh() {
 
 // --- template overlay: compare the final mesh (the one you'd download,
 // post clip/repair/resample - "what's in view") against a reference
-// template, with X/Y/Z axes and both centers of gravity.
-
-// template_xy_com used to be the cranium default here, but it's no longer
-// in SHIPPED_TEMPLATES (see template_registry.py) - clipped_template_xy_com
-// is the natural replacement anyway, since the overlay always compares
-// against the patient's *clipped* result mesh (see CLIP_BY_TARGET below).
+// template, with X/Y/Z axes and both centers of gravity. templates are
+// always shown exactly as stored on disk - no live clipping - so a
+// whole-head template stays a whole head even when the patient's own mesh
+// is clipped down to just the cranium or face.
 const DEFAULT_TEMPLATE_BY_TARGET = { cranium: "clipped_template_xy_com", face: "template_face" };
-
-// whatever template you pick (shipped or custom) gets clipped live, the
-// same way the real pipeline clips the patient's mesh - see
-// _apply_overlay_clip in api/routers/mesh.py. deliberately not using the
-// separately-shipped clipped_template_xy(_com).ply files for this: a
-// pre-baked file can silently drift out of sync with clipping.py, clipping
-// live can't.
-const CLIP_BY_TARGET = { cranium: "cranial", face: "facial" };
 
 let shippedTemplates = [];
 
@@ -935,10 +925,9 @@ document.getElementById("template-browse-button").addEventListener("click", asyn
 document.getElementById("template-custom-file-input").addEventListener("change", async (event) => {
   const file = event.target.files[0];
   if (!file) return;
-  const target = document.querySelector('input[name="target"]:checked').value;
   const formData = new FormData();
   formData.append("files", file);
-  const response = await fetch(`/api/templates/custom/upload?clip=${CLIP_BY_TARGET[target]}`, { method: "POST", body: formData });
+  const response = await fetch("/api/templates/custom/upload", { method: "POST", body: formData });
   if (!response.ok) {
     document.getElementById("template-custom-name").textContent = `upload failed: ${await response.text()}`;
     return;
@@ -1003,23 +992,21 @@ function addCogMarker(point, color) {
 async function resolveTemplateForOverlay() {
   const target = document.querySelector('input[name="target"]:checked').value;
   const choice = document.getElementById("template-select").value;
-  const clip = CLIP_BY_TARGET[target];
 
   if (choice !== "custom") {
-    return { object: await loadGlb(`/api/templates/${choice}/mesh?clip=${clip}`), displayName: choice };
+    return { object: await loadGlb(`/api/templates/${choice}/mesh`), displayName: choice };
   }
 
   if (isDesktopApp()) {
     const path = localStorage.getItem(customTemplatePathStorageKey(target));
     if (!path) return null;
     return {
-      object: await loadGlb(`/api/templates/custom/mesh?path=${encodeURIComponent(path)}&clip=${clip}`),
+      object: await loadGlb(`/api/templates/custom/mesh?path=${encodeURIComponent(path)}`),
       displayName: path.split(/[\\/]/).pop(),
     };
   }
 
-  // uploaded via template-custom-file-input above, already clipped for
-  // whatever target was active at upload time
+  // uploaded via template-custom-file-input above
   if (!customTemplateBlobUrl) return null;
   return { object: await loadGlb(customTemplateBlobUrl), displayName: customTemplateBlobName };
 }

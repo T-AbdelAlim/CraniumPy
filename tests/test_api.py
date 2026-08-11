@@ -102,48 +102,13 @@ def test_get_unknown_template_mesh_404s(client):
     assert response.status_code == 404
 
 
-def _glb_min_y(content: bytes) -> float:
-    mesh = trimesh.load(BytesIO(content), file_type="glb", process=False, force="mesh")
-    return float(mesh.vertices[:, 1].min())
-
-
-def test_get_template_mesh_clip_cranial_cuts_near_landmark_plane(client):
-    # regression test for the overlay comparing against a stale pre-baked
-    # clipped_template_*.ply - the live clip=cranial pass has to land at the
-    # actual landmark plane, not wherever that file happened to be cut.
-    # template_xy_com.ply isn't a shipped/dropdown template anymore (see
-    # template_registry.py) but the file's still on disk, so this goes
-    # through the custom-template-by-path endpoint instead - same live
-    # clip=cranial code path, just not gated on SHIPPED_TEMPLATES.
-    unclipped = client.get(f"/api/templates/custom/mesh?path={TEMPLATE_PATH}")
-    clipped = client.get(f"/api/templates/custom/mesh?path={TEMPLATE_PATH}&clip=cranial")
-    assert clipped.status_code == 200
-    assert _glb_min_y(unclipped.content) < -50
-    assert abs(_glb_min_y(clipped.content)) < 10
-
-
-def test_get_template_mesh_invalid_clip_400s(client):
-    response = client.get("/api/templates/clipped_template_xy_com/mesh?clip=nonsense")
-    assert response.status_code == 400
-
-
-def test_get_template_mesh_clip_cranial_no_rear_gouge_on_non_com_template(client):
-    # regression test: clipped_template_xy (no "_com" suffix - not
-    # registered with center-of-mass correction baked into its pose) used
-    # to gouge ~58mm into the occiput when the overlay's live clip=cranial
-    # pass ran with the rear/neck safety plane still active, since that
-    # plane is hardcoded against the pose CoM correction produces (see
-    # clipping.cranial_clip's docstring and _apply_overlay_clip's
-    # trim_rear_neck=False). checking boundary Y-spread stays small here
-    # the same way test_pipeline.py's com_translation-off test does.
-    from craniumpy_core.remesh import _boundary_loops
-
-    response = client.get("/api/templates/clipped_template_xy/mesh?clip=cranial")
-    assert response.status_code == 200
-    mesh = trimesh.load(BytesIO(response.content), file_type="glb", process=False, force="mesh")
-    loops = _boundary_loops(mesh)
-    assert len(loops) == 1
-    assert np.ptp(mesh.vertices[loops[0]][:, 1]) < 5.0
+def test_get_template_mesh_served_unmodified(client):
+    # templates are served exactly as stored on disk - no live clipping or
+    # any other processing, so vertex count should match the raw file.
+    response = client.get("/api/templates/clipped_template_xy_com/mesh")
+    on_disk = load_mesh(TEMPLATES_DIR / "clipped_template_xy_com.ply")
+    served = trimesh.load(BytesIO(response.content), file_type="glb", process=False, force="mesh")
+    assert len(served.vertices) == len(on_disk.vertices)
 
 
 def test_get_custom_template_mesh_from_path(client):
@@ -167,22 +132,6 @@ def test_upload_custom_template_mesh(client):
     assert response.status_code == 200
     assert response.headers["content-type"] == "model/gltf-binary"
     assert len(response.content) > 0
-
-
-def test_upload_custom_template_mesh_with_clip(client):
-    with open(TEMPLATE_PATH, "rb") as f:
-        response = client.post(
-            "/api/templates/custom/upload?clip=cranial",
-            files=[("files", ("custom_template.ply", f, "application/octet-stream"))],
-        )
-    assert response.status_code == 200
-    assert abs(_glb_min_y(response.content)) < 10
-
-
-def test_get_custom_template_mesh_with_clip(client):
-    response = client.get(f"/api/templates/custom/mesh?path={TEMPLATE_PATH}&clip=cranial")
-    assert response.status_code == 200
-    assert abs(_glb_min_y(response.content)) < 10
 
 
 def test_full_analysis_flow_rigid(client, landmarks_payload):

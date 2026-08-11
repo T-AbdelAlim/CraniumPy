@@ -16,9 +16,13 @@ from api.main import app
 HOST = "127.0.0.1"
 PORT = 8734
 
+_server: uvicorn.Server | None = None
+
 
 def _run_server() -> None:
-    uvicorn.run(app, host=HOST, port=PORT, log_level="warning")
+    global _server
+    _server = uvicorn.Server(uvicorn.Config(app, host=HOST, port=PORT, log_level="warning"))
+    _server.run()
 
 
 class Api:
@@ -75,6 +79,17 @@ def main() -> None:
     window = webview.create_window("CraniumPy", f"http://{HOST}:{PORT}", width=1280, height=800, js_api=api)
     api._window = window
     webview.start()
+
+    # webview.start() returns once the window closes, but the server thread
+    # was still running uvicorn's asyncio loop with open sockets/file handles
+    # into the pyinstaller onefile temp extraction dir - shutting it down and
+    # waiting for the thread to actually exit, instead of just letting it get
+    # killed as a daemon thread when the interpreter tears down, gives those
+    # handles a chance to close before the bootloader tries to delete that
+    # temp dir.
+    if _server is not None:
+        _server.should_exit = True
+    server_thread.join(timeout=5)
 
 
 if __name__ == "__main__":

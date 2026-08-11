@@ -30,9 +30,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# only needed to build/run the standalone exe
+# only needed to build/run the standalone desktop app
 desktop = [
     "pywebview>=5.2",
+    # pywebview's macOS backend is pyobjc-based (Cocoa/WebKit) - without
+    # this extra, "import webview" on a Mac fails with no window backend
+    # available. windows/linux don't need it, hence the marker.
+    "pywebview[cocoa]>=5.2; sys_platform == 'darwin'",
     "pyinstaller>=6.8",
 ]
 # only for local dev / CI

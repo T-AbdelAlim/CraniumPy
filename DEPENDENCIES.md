@@ -50,7 +50,8 @@ pain to install somewhere.
 | package | what it's for | replaced |
 |---|---|---|
 | `pywebview` | native window pointed at the local server - this is what makes the web app into a desktop app with one shared codebase | `PyQt5`, `pyvistaqt`, `tkinter` |
-| `pyinstaller` | builds the actual .exe | same tool the old app used |
+| `pywebview[cocoa]` (macOS only, via `sys_platform == 'darwin'` marker) | pywebview's Mac backend needs pyobjc's Cocoa/WebKit bindings - without it "import webview" just fails on a Mac | n/a, new |
+| `pyinstaller` | builds the actual .exe / macOS .app | same tool the old app used |
 
 ## `dev` extra (`pip install craniumpy[dev]`)
 

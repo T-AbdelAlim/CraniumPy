@@ -31,7 +31,7 @@ from .asymmetry import AsymmetryResult, calculate_asymmetry
 from .clipping import clip_plane, cranial_clip, facial_clip
 from .craniometrics import CranioMeasurements, extract_measurements, hc_slice_polygon, slice_center_of_mass
 from .registration.rigid import RigidTransform, landmark_align, procrustes_fit
-from .remesh import RepairMethod, ResampleMethod, keep_largest_component, repair_mesh, resample_mesh
+from .remesh import RepairMethod, ResampleMethod, clean_boundary, keep_largest_component, repair_mesh, resample_mesh
 
 AnalysisTarget = Literal["cranium", "face"]
 ClipMode = Literal["cranial", "facial", "manual"]
@@ -116,7 +116,8 @@ def harmonize(
     trim_rear_neck: bool = True,
     on_progress: ProgressCallback | None = None,
 ) -> trimesh.Trimesh:
-    """repair -> clip -> resample, on a mesh that's already been through register().
+    """repair -> clip -> resample -> boundary cleanup, on a mesh that's
+    already been through register().
 
     clip_mode defaults to whatever's normal for the target ("cranial" for
     cranium, "facial" for face). pass "manual" with manual_plane_normal /
@@ -129,9 +130,17 @@ def harmonize(
     repairing after clipping caps the open boundary with a flat patch that
     was never supposed to be there.
 
-    n_vertices=None skips resampling. repair=False skips repair (matches
-    the old facial_clip pipeline, which never repaired at all). see
-    clipping.py and remesh.py for what each method actually does.
+    boundary cleanup (clean_boundary, for cranial/facial clip_mode) runs
+    last, after resampling, not as part of clip itself - it's an iterative
+    relax+trim loop, and running it on a resampled ~10k-vertex mesh instead
+    of a raw scan's full resolution is a lot cheaper for the same result.
+    clip_plane's own output (manual clip_mode) was never boundary-cleaned
+    either, before or after this reordering.
+
+    n_vertices=None skips resampling, but boundary cleanup still runs on
+    whatever resolution the mesh is already at. repair=False skips repair
+    (matches the old facial_clip pipeline, which never repaired at all).
+    see clipping.py and remesh.py for what each method actually does.
 
     trim_rear_neck is cranial-only, passed straight through to
     cranial_clip - set False for anything registered on a landmark other
@@ -146,6 +155,7 @@ def harmonize(
         result = repair_mesh(result, method=repair_method)
 
     _report(on_progress, "clip", f"clipping ({clip_mode})")
+    needs_boundary_cleanup = clip_mode in ("cranial", "facial")
     if clip_mode == "manual":
         if manual_plane_normal is None or manual_plane_origin is None:
             raise ValueError("manual clipping needs manual_plane_normal and manual_plane_origin")
@@ -161,7 +171,7 @@ def harmonize(
     else:
         raise ValueError(f"unknown clip_mode {clip_mode!r}")
 
-    # cranial_clip/facial_clip already clean up after themselves - this
+    # cranial_clip/facial_clip already keep the largest component - this
     # covers manual clip_mode, a bare clip_plane() call that isn't
     # wrapped by anything else. no-op otherwise.
     result = keep_largest_component(result)
@@ -169,6 +179,10 @@ def harmonize(
     if n_vertices is not None:
         _report(on_progress, "resample", f"resampling to {n_vertices} vertices ({resample_method})")
         result = resample_mesh(result, n_vertices=n_vertices, method=resample_method)
+
+    if needs_boundary_cleanup:
+        _report(on_progress, "clean", "smoothing clip boundary")
+        result = clean_boundary(result)
 
     if com_translation and target == "cranium":
         # landmarks here so the CoM slice skips past ear-level (see
@@ -330,8 +344,23 @@ def analyze_cranial(
     one frame generally isn't purely Z once viewed through a differently
     rotated one, so rotating it in would leak into the alt frame's left-
     right or vertical axis instead of staying a pure depth correction.
+
+    repair runs once here, on the raw mesh, instead of once per pass
+    inside each harmonize() call - repair (merging coincident vertices,
+    filling holes) doesn't care about orientation, so repairing the same
+    topology twice under two different rotations is wasted work, not two
+    different results: verified this gives byte-identical face
+    connectivity and vertex positions agreeing to ~1e-14 either way. on a
+    dense scan repair is the single most expensive step, so doing it once
+    instead of twice roughly halves this function's total cost when
+    alt_frontal_landmark is given.
     """
     com_z = _nasion_com_z_offset(mesh, landmarks) if (alt_frontal_landmark is not None and com_translation) else None
+
+    if repair and alt_frontal_landmark is not None:
+        _report(on_progress, "repair", f"repairing mesh ({repair_method})")
+        mesh = repair_mesh(mesh, method=repair_method)
+        repair = False  # already done - both harmonize() calls below skip it
 
     nasion_reg = register(mesh, landmarks, target="cranium", com_translation=com_translation, on_progress=on_progress)
     nasion_mesh = harmonize(

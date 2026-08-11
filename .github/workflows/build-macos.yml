@@ -1,0 +1,53 @@
+name: Build macOS app
+
+# no Mac available to build/test this on locally - pyinstaller can't
+# cross-compile, so the actual .app has to come from a real macOS runner.
+# manual trigger for testing this workflow itself; also runs automatically
+# when a GitHub release is published so a mac build always accompanies the
+# windows .exe already uploaded there by hand.
+on:
+  workflow_dispatch: {}
+  release:
+    types: [published]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        # macos-13 = Intel runner, macos-14 = Apple Silicon - building both
+        # since a pyinstaller build only targets whatever CPU it's built
+        # on, not a universal2 binary, and users could have either.
+        include:
+          - runner: macos-13
+            arch: intel
+          - runner: macos-14
+            arch: apple-silicon
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install
+        run: pip install -e ".[desktop]"
+
+      - name: Build .app
+        run: pyinstaller desktop/craniumpy_mac.spec
+
+      - name: Zip .app
+        # regular zip mangles app bundle metadata (resource forks, symlinks) -
+        # ditto is the macOS-native way to zip one up intact.
+        run: ditto -c -k --sequesterRsrc --keepParent dist/CraniumPy.app "CraniumPy-macos-${{ matrix.arch }}.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CraniumPy-macos-${{ matrix.arch }}
+          path: CraniumPy-macos-${{ matrix.arch }}.zip
+
+      - name: Attach to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: CraniumPy-macos-${{ matrix.arch }}.zip

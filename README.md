@@ -37,9 +37,10 @@ Current capabilities (rigid registration and manual landmarking only - see [Regi
 
 ## Download
 
-The standalone Windows app needs no Python or dependencies. Get the latest build from the [releases page](https://github.com/T-AbdelAlim/CraniumPy/releases/latest).
+The standalone Windows and macOS apps need no Python or dependencies. Get the latest build from the [releases page](https://github.com/T-AbdelAlim/CraniumPy/releases/latest).
 
-- The .exe is unsigned, so Windows SmartScreen or your antivirus may flag it on first run. Click "More info" then "Run anyway".
+- The Windows .exe is unsigned, so SmartScreen or your antivirus may flag it on first run. Click "More info" then "Run anyway".
+- The macOS .app is unsigned/unnotarized, so Gatekeeper will refuse to open it normally. Right-click (or Ctrl-click) the app, choose "Open", then confirm in the dialog that appears - only needed the first time. There are separate builds for Apple Silicon and Intel Macs; pick the one matching your Mac.
 - In the desktop app, "Save results" writes directly next to your original file via a native file picker (see [Saving your results](#saving-your-results)).
 
 For other platforms, or to run from source, see [Running it from source](#running-it-from-source).
@@ -124,7 +125,7 @@ pip install -e ".[desktop]"
 python -m desktop.app
 ```
 
-The standalone .exe is built from this same code via `desktop/craniumpy.spec` and PyInstaller.
+The standalone Windows .exe is built from this same code via `desktop/craniumpy.spec` and PyInstaller; the macOS .app via `desktop/craniumpy_mac.spec`, same command, run on an actual Mac (PyInstaller can't cross-compile - see `.github/workflows/build-macos.yml` for the CI build).
 
 
 ## Known issues
