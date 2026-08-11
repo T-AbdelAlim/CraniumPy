@@ -31,7 +31,7 @@ from .asymmetry import AsymmetryResult, calculate_asymmetry
 from .clipping import clip_plane, cranial_clip, facial_clip
 from .craniometrics import CranioMeasurements, extract_measurements, hc_slice_polygon, slice_center_of_mass
 from .registration.rigid import RigidTransform, landmark_align, procrustes_fit
-from .remesh import RepairMethod, ResampleMethod, keep_largest_component, repair_mesh, resample_mesh
+from .remesh import RepairMethod, ResampleMethod, clean_boundary, keep_largest_component, repair_mesh, resample_mesh
 
 AnalysisTarget = Literal["cranium", "face"]
 ClipMode = Literal["cranial", "facial", "manual"]
@@ -130,13 +130,12 @@ def harmonize(
     repairing after clipping caps the open boundary with a flat patch that
     was never supposed to be there.
 
-    boundary cleanup (clean_boundary, baked into cranial_clip/facial_clip)
-    has to run before resampling, not after: quadric decimation isn't
-    boundary-aware and can fragment a still-jagged loop into pieces too
-    small to detect as a loop at all, which makes any later cleanup a
-    silent no-op - resample only ever gets to work with an already-clean
-    boundary this way. clip_plane's own output (manual clip_mode) was
-    never boundary-cleaned.
+    boundary cleanup (clean_boundary, baked into cranial_clip/facial_clip,
+    and run explicitly below for manual clip_mode) has to happen before
+    resampling, not after: quadric decimation isn't boundary-aware and can
+    fragment a still-jagged loop into pieces too small to detect as a loop
+    at all, which makes any later cleanup a silent no-op - resample only
+    ever gets to work with an already-clean boundary this way.
 
     n_vertices=None skips resampling. repair=False skips repair (matches
     the old facial_clip pipeline, which never repaired at all). see
@@ -159,6 +158,8 @@ def harmonize(
         if manual_plane_normal is None or manual_plane_origin is None:
             raise ValueError("manual clipping needs manual_plane_normal and manual_plane_origin")
         result = clip_plane(result, normal=manual_plane_normal, origin=manual_plane_origin)
+        result = keep_largest_component(result)
+        result = clean_boundary(result)
     elif clip_mode == "cranial":
         if landmarks is None:
             raise ValueError("cranial clipping needs the mesh's registered landmarks")
@@ -170,9 +171,8 @@ def harmonize(
     else:
         raise ValueError(f"unknown clip_mode {clip_mode!r}")
 
-    # cranial_clip/facial_clip already clean up after themselves - this
-    # covers manual clip_mode, a bare clip_plane() call that isn't
-    # wrapped by anything else. no-op otherwise.
+    # every branch above already cleans up after itself now - this is just
+    # a cheap no-op safety net (see keep_largest_component's own docstring).
     result = keep_largest_component(result)
 
     if n_vertices is not None:

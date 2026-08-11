@@ -10,3 +10,9 @@ __pycache__/
 .venv/
 *.egg-info/
 .pytest_cache/
+
+# "Save results" output folders (see README "Saving your results") - these
+# land next to whatever mesh you ran, so they can show up inside the repo
+# if you demo the app on resources/test_mesh/
+CP_*/
+/release_notes_*.md
