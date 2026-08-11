@@ -130,12 +130,14 @@
         </label>
 
         <div id="visualization-mode-row" class="toggle-row hidden">
-          <label id="measurements-mode-label"><input type="radio" name="visualization-mode" value="measurements" checked /> metrics</label>
+          <label id="measurements-mode-label"><input type="radio" name="visualization-mode" value="measurements" checked /> <span id="measurements-mode-text">metrics</span></label>
           <label><input type="radio" name="visualization-mode" value="template" /> alignment</label>
         </div>
 
         <p id="measurements-hint" class="hint hidden">HC/BPD/OFD drawn on the mesh, with the numbers in the panel
           over the viewer.</p>
+        <p id="asymmetry-hint" class="hint hidden">blue = dented in, red = protruding out, relative to the
+          mirrored other half - scale bar over the viewer.</p>
 
         <div id="template-controls" class="hidden">
           <div id="template-select-row">

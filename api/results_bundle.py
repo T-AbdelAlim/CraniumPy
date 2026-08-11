@@ -28,6 +28,7 @@ from matplotlib.tri import Triangulation
 
 from craniumpy_core.craniometrics import CranioMeasurements, hc_slice_polygon
 from craniumpy_core.asymmetry import AsymmetryResult
+from craniumpy_core.remesh import _boundary_loops
 
 
 def shorten_stem(stem: str) -> str:
@@ -120,6 +121,16 @@ def _asymmetry_figure(mesh: trimesh.Trimesh, asymmetry: AsymmetryResult) -> byte
 
     triangulation = Triangulation(vertices[:, 0], vertices[:, 1], faces)
     mesh_plot = ax.tripcolor(triangulation, heatmap, cmap="bwr", vmin=-max_abs, vmax=max_abs, shading="gouraud")
+
+    # the heatmap is only ever non-zero on one half (see module docstring) -
+    # 0.0 on this diverging colormap renders as pure white, indistinguishable
+    # from the plot background, so the other half reads as simply missing.
+    # the mesh's own clip-boundary loop is already roughly face-shaped (facial
+    # clipping crops around the face), so trace it as a light silhouette to
+    # keep the whole face visible regardless of which half has data.
+    for loop in _boundary_loops(mesh):
+        loop_xy = vertices[np.append(loop, loop[0])][:, :2]
+        ax.plot(loop_xy[:, 0], loop_xy[:, 1], color="#999999", linewidth=0.8, zorder=3)
 
     dent_idx = int(np.argmin(heatmap))
     protrusion_idx = int(np.argmax(heatmap))

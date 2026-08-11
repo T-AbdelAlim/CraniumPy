@@ -19,7 +19,7 @@ from craniumpy_core.io import load_mesh
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-TEST_MESH_PATH = REPO_ROOT / "resources" / "test_mesh" / "test_mesh.ply"
+TEST_MESH_PATH = REPO_ROOT / "tests" / "fixtures" / "test_mesh.ply"
 
 
 def test_clip_plane_keeps_positive_normal_side():

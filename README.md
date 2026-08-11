@@ -49,7 +49,7 @@ For other platforms, or to run from source, see [Running it from source](#runnin
 ## Usage
 
 ### Getting started
-Upload a mesh, pick 3 landmarks, register, clip, and run the analysis. `resources/test_mesh/test_mesh.ply` is included for testing.
+Upload a mesh, pick 3 landmarks, register, clip, and run the analysis. `resources/test_mesh/test_mesh_holes.ply` is included to try it out with - it has artificial holes punched into the surface, so you can see how the pipeline's repair step handles minor scan artifacts. It patches each hole based on the curvature of the surrounding mesh, rather than leaving a gap or capping it flat.
 
 For a textured .obj, select the .obj, its .mtl, and the texture image together. Once a mesh is loaded, a wireframe toggle appears, and a texture toggle if it has a texture.
 
@@ -71,9 +71,11 @@ Rigid, landmark-triangle alignment only. A non-rigid mode exists in the codebase
 - **On** (default): same alignment, plus a single depth-only translation on top, from that initial anchor to the centroid of the head-circumference slice - so the final position reflects the whole head's shape, not just 3 clicked points, giving more consistent comparisons across scans/raters. See [the validation paper](https://journals.lww.com/jcraniofacialsurgery/fulltext/10.1097/scs.0000000000009448~reliability-and-agreement-of-automated-head-measurements) for the full method and reliability data.
 
 ### Visualization
-After analysis, "Visualization" lets you show either the measurement lines or a template comparison over the result mesh - never both at once, since they'd occupy the same space on the viewer.
+After analysis, "Visualization" lets you show either the metrics/asymmetry view or a template comparison over the result mesh - never both at once, since they'd occupy the same space on the viewer.
 
-**Measurements** (cranial only, default when available): draws the HC circumference ring (red), BPD span (blue), and OFD span (green) on the mesh, the same colours as the saved 2D figure. The mesh goes semi-transparent while these are showing so a line running along the far side stays visible, and a panel over the viewer shows the numeric values.
+**Metrics** (cranial, default): draws the HC circumference ring (red), BPD span (blue), and OFD span (green) on the mesh, the same colours as the saved 2D figure. The mesh goes semi-transparent while these are showing so a line running along the far side stays visible, and a panel over the viewer shows the numeric values.
+
+**Asymmetry** (facial, default): tints the mesh with the same blue(dented in)/white/red(protruding out) heatmap as the saved 2D figure, with a colour scale bar over the viewer.
 
 **Template alignment**: displays a semi-transparent reference template over the result, with axes and center-of-gravity markers for both meshes.
 

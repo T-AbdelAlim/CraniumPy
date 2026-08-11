@@ -303,6 +303,27 @@ function disableMeasurementsVisualization() {
   hideMeasurementsPanel();
 }
 
+function enableAsymmetryVisualization() {
+  if (!lastResultsData || !lastResultsData.asymmetry) return;
+  applyAsymmetryHeatmap(lastResultsData.asymmetry.heatmap);
+}
+
+// undoes applyAsymmetryHeatmap's material tint - vertexColors=false leaves
+// the color attribute sitting on the geometry unused, cheaper than
+// reloading the mesh fresh just to drop it.
+function disableAsymmetryVisualization() {
+  hideScalarBar();
+  if (!currentMeshObject) return;
+  currentMeshObject.traverse((child) => {
+    if (!child.isMesh) return;
+    for (const mat of [child.material, child.userData.texturedMaterial, child.userData.plainMaterial]) {
+      if (!mat) continue;
+      mat.vertexColors = false;
+      mat.needsUpdate = true;
+    }
+  });
+}
+
 // facial asymmetry heatmap: one signed distance (mm) per vertex of the
 // result mesh, zeroed out on one half by design (see
 // craniumpy_core.asymmetry's module docstring) - negative means that point
@@ -312,7 +333,12 @@ function disableMeasurementsVisualization() {
 // is rather than a fixed mm range, since a mild case and a severe one
 // shouldn't both max out or both wash out the same way.
 function heatmapColor(value, maxAbs) {
-  const t = maxAbs > 0 ? Math.max(-1, Math.min(1, value / maxAbs)) : 0;
+  let t = maxAbs > 0 ? Math.max(-1, Math.min(1, value / maxAbs)) : 0;
+  // pure blue/red at the extremes are already fully saturated - it's the
+  // middle of the range that reads as washed-out near-white. a gamma <1
+  // pushes moderate deviations toward full color sooner, so more of the
+  // heatmap actually looks colored instead of pale.
+  t = Math.sign(t) * Math.abs(t) ** 0.6;
   if (t < 0) {
     const k = 1 + t;
     return new THREE.Color(k, k, 1);
@@ -850,9 +876,13 @@ async function showResults() {
   document.getElementById("alt-frontal-note").classList.toggle("hidden", !data.used_alt_frontal);
 
   document.getElementById("visualization").classList.remove("hidden");
-  const hasCraniometrics = !!data.craniometrics;
-  document.getElementById("measurements-mode-label").classList.toggle("hidden", !hasCraniometrics);
-  document.querySelector(`input[name="visualization-mode"][value="${hasCraniometrics ? "measurements" : "template"}"]`).checked = true;
+  // "measurements" mode means different things per target - HC/BPD/OFD for
+  // cranial, the asymmetry heatmap for facial - so it's always a valid
+  // choice, just relabeled rather than hidden for one target the way it
+  // used to be (which left facial results with no non-template default and
+  // silently dropped the heatmap the moment applyVisualizationMode ran).
+  document.getElementById("measurements-mode-text").textContent = data.craniometrics ? "metrics" : "asymmetry";
+  document.querySelector('input[name="visualization-mode"][value="measurements"]').checked = true;
   document.getElementById("visualization-toggle").checked = true;
 
   if (shippedTemplates.length === 0) await fetchShippedTemplates();
@@ -869,8 +899,6 @@ async function showResults() {
 // re-running the whole analysis.
 async function displayResultMesh() {
   await displayMesh(`/api/sessions/${sessionId}/mesh/result`);
-  if (!lastResultsData) return;
-  if (lastResultsData.asymmetry) applyAsymmetryHeatmap(lastResultsData.asymmetry.heatmap);
 }
 
 // --- template overlay: compare the final mesh (the one you'd download,
@@ -1175,24 +1203,30 @@ async function refreshTemplateOverlayIfShown() {
 function updateVisualizationControlsVisibility() {
   const enabled = document.getElementById("visualization-toggle").checked;
   const mode = currentVisualizationMode();
+  const hasCraniometrics = !!(lastResultsData && lastResultsData.craniometrics);
   document.getElementById("visualization-mode-row").classList.toggle("hidden", !enabled);
   document.getElementById("template-controls").classList.toggle("hidden", !enabled || mode !== "template");
-  document.getElementById("measurements-hint").classList.toggle("hidden", !enabled || mode !== "measurements");
+  document.getElementById("measurements-hint").classList.toggle("hidden", !enabled || mode !== "measurements" || !hasCraniometrics);
+  document.getElementById("asymmetry-hint").classList.toggle("hidden", !enabled || mode !== "measurements" || hasCraniometrics);
 }
 
 // only one of these is ever showing at a time - template overlay and the
-// measurement lines/opacity would just visually fight over the same mesh.
+// measurement lines/asymmetry heatmap/opacity would just visually fight
+// over the same mesh.
 async function applyVisualizationMode() {
   updateVisualizationControlsVisibility();
   disableMeasurementsVisualization();
+  disableAsymmetryVisualization();
   clearTemplateOverlay();
 
   if (!sessionId || !lastResultsData || !document.getElementById("visualization-toggle").checked) return;
 
   if (currentVisualizationMode() === "template") {
     await enableTemplateOverlay();
-  } else {
+  } else if (lastResultsData.craniometrics) {
     enableMeasurementsVisualization();
+  } else {
+    enableAsymmetryVisualization();
   }
 }
 

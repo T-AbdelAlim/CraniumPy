@@ -2,7 +2,7 @@
 the old algorithm on the same mesh.
 
 baseline came from running the unmodified old CranioMetrics math against
-resources/test_mesh/test_mesh.ply, see
+tests/fixtures/test_mesh.ply, see
 tests/fixtures/test_mesh_craniometrics_baseline.json for the details.
 
 tolerances aren't zero because trimesh's Trimesh.section and pyvista/VTK's

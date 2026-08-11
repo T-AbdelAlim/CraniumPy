@@ -1,5 +1,5 @@
 {
-  "source_mesh": "resources/test_mesh/test_mesh.ply",
+  "source_mesh": "tests/fixtures/test_mesh.ply",
   "pyvista_version": "0.48.4",
   "note": "ran the unmodified old craniometrics.py math against the raw, unregistered test mesh to get this. just a regression check that my port gives the same numbers on the same input - not a real measurement since this mesh never went through registration.",
   "slice_height": -2.220446049250313e-16,

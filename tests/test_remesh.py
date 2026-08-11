@@ -66,7 +66,7 @@ from craniumpy_core.remesh import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-TEST_MESH_PATH = REPO_ROOT / "resources" / "test_mesh" / "test_mesh.ply"
+TEST_MESH_PATH = REPO_ROOT / "tests" / "fixtures" / "test_mesh.ply"
 
 
 def test_repair_mesh_pymeshfix_reaches_watertight():

@@ -22,7 +22,7 @@ from craniumpy_core.registration.rigid import REFERENCE_TRIANGLE
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TEMPLATES_DIR = REPO_ROOT / "src" / "craniumpy_core" / "templates"
-TEST_MESH_PATH = REPO_ROOT / "resources" / "test_mesh" / "test_mesh.ply"
+TEST_MESH_PATH = REPO_ROOT / "tests" / "fixtures" / "test_mesh.ply"
 
 
 def _ellipsoid_with_landmarks(asymmetric: bool = False) -> tuple[trimesh.Trimesh, np.ndarray]:
