@@ -6,7 +6,7 @@ works on an already-registered mesh (see registration.rigid.landmark_align) -
 the plane/sphere numbers below are in that registered frame, same numbers
 the old app used, except the cranial boundary itself: the old app cut at a
 hardcoded y=-21 regardless of where the landmarks actually landed, which in
-practice cut well below the nasion-tragus plane. cranial_clip now cuts
+practice cut well below the sellion-tragus plane. cranial_clip now cuts
 through the actual registered landmark plane instead - see _landmark_plane.
 
 double checked the sign convention rather than just assuming it: trimesh's
@@ -67,7 +67,7 @@ def clip_sphere(mesh: trimesh.Trimesh, center, radius: float, keep_inside: bool 
 
 def _landmark_plane(landmarks: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """normal + origin of the plane through the 3 registered landmarks
-    (nasion, left_tragus, right_tragus), oriented so +normal points toward
+    (sellion, left_tragus, right_tragus), oriented so +normal points toward
     the top of the head - flips the cross product if it doesn't, since
     landmark order alone doesn't guarantee a consistent winding."""
     landmarks = np.asarray(landmarks, dtype=np.float64)
@@ -103,14 +103,14 @@ def cranial_clip(mesh: trimesh.Trimesh, landmarks: np.ndarray, trim_rear_neck: b
     already-clean loop.
 
     trim_rear_neck exists because the rear/neck plane's numbers are
-    hardcoded in the registered frame, tuned for a nasion-based
+    hardcoded in the registered frame, tuned for a sellion-based
     registration. landmark_align only pins the 3 chosen landmarks to
     REFERENCE_TRIANGLE - it says nothing about where the rest of the head
     ends up, so registering on a different frontal point (subnasale) or
     skipping the center-of-mass nudge (com_translation=False) both tip the
     head into a different pose, and this plane can gouge straight into the
     occiput instead of cutting through the neck. pass False for any pass
-    that isn't a plain nasion + com_translation=True registration - see
+    that isn't a plain sellion + com_translation=True registration - see
     pipeline.analyze_cranial and pipeline.analyze()."""
     mesh = clip_sphere(mesh, center=(0, 40, 0), radius=175, keep_inside=True)
     if trim_rear_neck:
@@ -123,7 +123,7 @@ def cranial_clip(mesh: trimesh.Trimesh, landmarks: np.ndarray, trim_rear_neck: b
 
 def facial_clip(mesh: trimesh.Trimesh, landmarks: np.ndarray) -> trimesh.Trimesh:
     """just the face: a depth clip through the landmark-triangle centroid plus a
-    sphere trim. landmarks = the mesh's own registered [nasion, left_tragus,
+    sphere trim. landmarks = the mesh's own registered [sellion, left_tragus,
     right_tragus]. old facial_clip did the depth clip twice, ~1mm apart -
     collapsed that into one clip at the centroid depth.
 

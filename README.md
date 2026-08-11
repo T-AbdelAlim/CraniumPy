@@ -6,7 +6,7 @@
     * [Getting started](#getting-started)
     * [Preprocessing - landmarks](#preprocessing---landmarks)
     * [Registration](#registration)
-    * [Comparing against a template](#comparing-against-a-template)
+    * [Visualization](#visualization)
     * [Clipping](#clipping)
     * [Automated measurement extraction](#automated-measurement-extraction)
     * [Facial asymmetry calculation](#facial-asymmetry-calculation)
@@ -54,19 +54,28 @@ Upload a mesh, pick 3 landmarks, register, clip, and run the analysis. `resource
 For a textured .obj, select the .obj, its .mtl, and the texture image together. Once a mesh is loaded, a wireframe toggle appears, and a texture toggle if it has a texture.
 
 ### Preprocessing - landmarks
-Click 3 points on the mesh - nasion, left tragus, right tragus, in that order - while holding **Ctrl** (**Cmd** on Mac). Alt+drag a landmark to reposition it.
+Click 3 points on the mesh - sellion, left tragus, right tragus, in that order - while holding **Ctrl** (**Cmd** on Mac). Alt+drag a landmark to reposition it.
+
+The sellion is the soft-tissue landmark at the deepest point of the nasal root depression, between the eyes - it approximates the skeletal landmark nasion, which sits underneath it and isn't directly visible on a surface scan. In the 3D photogrammetry literature the two are often used interchangeably, since only sellion is actually clickable on this kind of data.
 
 There is no automatic landmark detection; landmarks are always picked manually.
 
-For cranial analysis, a checkbox unlocks a 4th, optional landmark (e.g. subnasale). It takes over the registration/clip/display frame for the mesh you see and save, while the actual measurements and the saved 2D figure always stay anchored on nasion.
+For cranial analysis, a checkbox unlocks a 4th, optional landmark (e.g. subnasale). It takes over the registration/clip/display frame for the mesh you see and save, while the actual measurements and the saved 2D figure always stay anchored on sellion.
 
 ### Registration
 Rigid, landmark-triangle alignment only. A non-rigid mode exists in the codebase but is not exposed in the UI.
 
-"Center-of-mass correction" nudges the head forward/back to compensate for imprecise landmark clicking. It only ever moves the head along its depth axis - never sideways or vertically - and, when the optional 4th landmark is used, the same correction is always derived from the nasion plane so both the nasion measurements and the displayed mesh stay consistent with each other.
+"Center-of-mass correction" nudges the head forward/back to compensate for imprecise landmark clicking. It only ever moves the head along its depth axis - never sideways or vertically - and, when the optional 4th landmark is used, the same correction is always derived from the sellion plane so both the sellion measurements and the displayed mesh stay consistent with each other. Recommended for most use-cases.
 
-### Comparing against a template
-After analysis, "Show template overlay" displays a semi-transparent reference template over the clipped result, with axes and center-of-gravity markers for both meshes.
+- **Off**: registration is just the landmark-triangle alignment - the mesh is translated so the centroid of the 3 clicked landmarks lands on the reference frame's origin, nothing more.
+- **On** (default): same alignment, plus a single depth-only translation on top, from that initial anchor to the centroid of the head-circumference slice - so the final position reflects the whole head's shape, not just 3 clicked points, giving more consistent comparisons across scans/raters. See [the validation paper](https://journals.lww.com/jcraniofacialsurgery/fulltext/10.1097/scs.0000000000009448~reliability-and-agreement-of-automated-head-measurements) for the full method and reliability data.
+
+### Visualization
+After analysis, "Visualization" lets you show either the measurement lines or a template comparison over the result mesh - never both at once, since they'd occupy the same space on the viewer.
+
+**Measurements** (cranial only, default when available): draws the HC circumference ring (red), BPD span (blue), and OFD span (green) on the mesh, the same colours as the saved 2D figure. The mesh goes semi-transparent while these are showing so a line running along the far side stays visible, and a panel over the viewer shows the numeric values.
+
+**Template alignment**: displays a semi-transparent reference template over the result, with axes and center-of-gravity markers for both meshes.
 
 The "Compare against" dropdown selects a shipped template or a custom file, always shown exactly as stored on disk (no live clipping to match your own mesh). Shipped templates: a clipped cranium reference (with and without center-of-mass correction), a subnasale-landmark full-head reference (with and without center-of-mass correction), and a face reference. The default selection matches your own settings automatically - the subnasale full-head reference if you used the secondary frontal landmark, the clipped cranium reference otherwise, both picking the center-of-mass variant to match your own "center-of-mass correction" checkbox. In the desktop app, custom template paths are remembered per target (cranial/facial). In the web app, they are not.
 
@@ -91,7 +100,7 @@ Mirrors a facially-registered mesh across the midline and measures per-vertex di
 The heatmap and MFAI describe opposite halves of the face by default - a quirk carried over from the original algorithm (see `src/craniumpy_core/asymmetry.py`).
 
 ### Mesh cleanup
-After registration: repair (optional, unchecked by default), clip, then resample to a target vertex count (optional, default 10000). The measurement algorithm was validated at 10000 vertices.
+After registration: repair (always on - a real scan can be thousands of disconnected pieces, and repair is what makes it one usable surface), clip, then resample to a target vertex count (optional, default 10000). The measurement algorithm was validated at 10000 vertices.
 
 ### Saving your results
 Desktop app: "Save results" writes a `CP_{name}_{C|F}_{3|4}[_CoM]/` folder next to the original file, containing the registered mesh, the final mesh, a JSON report, and the measurement figure. `C`/`F` is cranial/facial, `3`/`4` is how many landmarks were used, and `_CoM` is only appended if center-of-mass correction was on - so two runs with different settings on the same file land in different folders instead of overwriting each other.

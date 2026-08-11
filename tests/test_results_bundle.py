@@ -65,8 +65,8 @@ def test_write_results_to_folder_uses_shortened_stem(tmp_path, sample_result):
         config={},
     )
     assert results_dir == tmp_path / "CP_1016510_20210730_edited_C_3"
-    assert (results_dir / "1016510_20210730_edited_registered.ply").exists()
-    assert (results_dir / "1016510_20210730_edited_final.ply").exists()
+    assert (results_dir / "1016510_20210730_edited_rg.ply").exists()
+    assert (results_dir / "1016510_20210730_edited_rg_C.ply").exists()
     assert (results_dir / "1016510_20210730_edited_report.json").exists()
     assert (results_dir / "1016510_20210730_edited_measurements.png").exists()
 

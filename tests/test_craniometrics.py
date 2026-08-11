@@ -96,33 +96,6 @@ def test_select_slice_index_min_y_floor_excludes_ear_level_slice():
     assert _select_slice_index(profiles, min_y=10) == 2
 
 
-def test_select_slice_index_clears_ear_plateau_not_just_landmark_floor():
-    # shaped after a real breadth-vs-height profile that still measured
-    # through the ears with only a fixed margin above the tragus landmarks:
-    # breadth stays on a wide plateau (~150mm) all the way through the
-    # pinna, then drops sharply (~150 -> 135mm) once the slice actually
-    # clears the top of the ear, and stays down from there. a bare min_y
-    # floor a few mm above the tragus lands well inside that plateau -
-    # ear_clear_fraction is what actually rules the whole ear zone out.
-    profiles = [
-        SliceProfile(y=0, depth=190.0, breadth=155.0, x_min=-77, x_max=78, z_min=-95, z_max=95),
-        SliceProfile(y=5, depth=192.0, breadth=152.0, x_min=-76, x_max=76, z_min=-96, z_max=96),
-        SliceProfile(y=10, depth=196.0, breadth=154.0, x_min=-77, x_max=77, z_min=-98, z_max=98),
-        SliceProfile(y=15, depth=198.0, breadth=155.0, x_min=-78, x_max=77, z_min=-99, z_max=99),
-        SliceProfile(y=20, depth=196.0, breadth=150.0, x_min=-75, x_max=75, z_min=-98, z_max=98),
-        SliceProfile(y=25, depth=195.0, breadth=143.0, x_min=-71, x_max=72, z_min=-97, z_max=98),
-        SliceProfile(y=28, depth=194.0, breadth=135.0, x_min=-68, x_max=68, z_min=-97, z_max=97),
-        SliceProfile(y=35, depth=193.0, breadth=137.0, x_min=-69, x_max=68, z_min=-96, z_max=97),
-    ]
-    # a small floor (min_y=5, well above y=0) still lands inside the ear
-    # plateau and picks the deepest slice there (y=15, depth 198 - the
-    # plateau's own peak) if ear-clearing isn't applied
-    assert _select_slice_index(profiles, min_y=5, ear_clear_fraction=1.0) == 3  # y=15
-    # with ear-clearing on, the same floor rules out the whole plateau and
-    # lands past the drop, at y=28 (breadth 135 <= 90% of the 155mm peak)
-    assert _select_slice_index(profiles, min_y=5, ear_clear_fraction=0.9) == 6  # y=28
-
-
 def test_select_slice_index_min_y_noop_when_nothing_eligible():
     # if every slice is below the floor (a degenerate/tiny mesh), fall back
     # to the plain deepest-slice pick rather than raising or picking nothing

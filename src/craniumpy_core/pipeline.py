@@ -6,7 +6,7 @@ craniometrics/calculate_asymmetry did, just as plain functions that pass
 meshes around in memory - no disk round-tripping between every step, no GUI
 code tangled in with the math.
 
-landmarks always come from the user now (nasion, left tragus, right tragus).
+landmarks always come from the user now (sellion, left tragus, right tragus).
 I did try automatic detection at one point - deforming a full head template
 onto the scan and reading the landmarks back off it - but it took several
 minutes with zero feedback on what was happening, and I couldn't find a way
@@ -47,7 +47,7 @@ def _report(on_progress: ProgressCallback | None, stage: str, detail: str = "") 
 @dataclass
 class RegistrationResult:
     mesh: trimesh.Trimesh
-    landmarks: np.ndarray  # (3, 3) [nasion, left_tragus, right_tragus], post-rigid-alignment
+    landmarks: np.ndarray  # (3, 3) [sellion, left_tragus, right_tragus], post-rigid-alignment
     transform: RigidTransform
 
 
@@ -58,18 +58,18 @@ def register(
     com_translation: bool = True,
     on_progress: ProgressCallback | None = None,
 ) -> RegistrationResult:
-    """rigidly registers the mesh using the 3 landmarks you give it (nasion,
+    """rigidly registers the mesh using the 3 landmarks you give it (sellion,
     left_tragus, right_tragus, in the mesh's own coordinates).
 
     same as the old gui_methods.register, including the two extra
     translations it did beyond the landmark alignment itself: an optional
     Z-only center-of-mass nudge (helps smooth out variance from imprecise
-    landmark picking), and for facial targets, re-centering so the nasion
+    landmark picking), and for facial targets, re-centering so the sellion
     ends up sitting at the origin.
     """
     landmarks = np.asarray(landmarks, dtype=np.float64)
     if landmarks.shape != (3, 3):
-        raise ValueError(f"expected 3 landmarks (nasion, left_tragus, right_tragus), got shape {landmarks.shape}")
+        raise ValueError(f"expected 3 landmarks (sellion, left_tragus, right_tragus), got shape {landmarks.shape}")
 
     _report(on_progress, "register", "aligning to reference landmarks")
     transform = landmark_align(landmarks)
@@ -94,9 +94,9 @@ def register(
         new_landmarks = new_landmarks - z_offset
 
     if target == "face":
-        nasion_offset = new_landmarks[0].copy()
-        registered_mesh.vertices = registered_mesh.vertices - nasion_offset
-        new_landmarks = new_landmarks - nasion_offset
+        sellion_offset = new_landmarks[0].copy()
+        registered_mesh.vertices = registered_mesh.vertices - sellion_offset
+        new_landmarks = new_landmarks - sellion_offset
 
     return RegistrationResult(mesh=registered_mesh, landmarks=new_landmarks, transform=transform)
 
@@ -144,7 +144,7 @@ def harmonize(
 
     trim_rear_neck is cranial-only, passed straight through to
     cranial_clip - set False for anything registered on a landmark other
-    than nasion (see cranial_clip's docstring for why).
+    than sellion (see cranial_clip's docstring for why).
     """
     if clip_mode is None:
         clip_mode = "cranial" if target == "cranium" else "facial"
@@ -260,20 +260,20 @@ def analyze(
     )
 
 
-def _nasion_com_z_offset(mesh: trimesh.Trimesh, landmarks: np.ndarray) -> float:
+def _sellion_com_z_offset(mesh: trimesh.Trimesh, landmarks: np.ndarray) -> float:
     """the center-of-mass Z-nudge register()'s com_translation branch
-    computes, in the nasion-tragus-aligned frame - a plain float, not a
+    computes, in the sellion-tragus-aligned frame - a plain float, not a
     vector, since analyze_cranial needs to reuse this magnitude along
     each frame's own Z axis, not carry a rotated vector between frames.
 
     exists so the alt-frontal pass can reuse the same correction the
-    nasion pass would use, instead of scanning slices in whatever frame
+    sellion pass would use, instead of scanning slices in whatever frame
     its own (e.g. subnasale-tragus) triangle produced - "center of mass
     of the head" shouldn't depend on which frontal point you clicked.
     """
-    nasion_align = landmark_align(landmarks)
+    sellion_align = landmark_align(landmarks)
     aligned_mesh = trimesh.Trimesh(
-        vertices=nasion_align.apply(np.asarray(mesh.vertices)), faces=mesh.faces, process=False
+        vertices=sellion_align.apply(np.asarray(mesh.vertices)), faces=mesh.faces, process=False
     )
     proxy = resample_mesh(aligned_mesh, n_vertices=20_000)
     com = slice_center_of_mass(proxy)
@@ -282,14 +282,15 @@ def _nasion_com_z_offset(mesh: trimesh.Trimesh, landmarks: np.ndarray) -> float:
 
 @dataclass
 class CranialAnalysisResult:
-    display_registered_mesh: trimesh.Trimesh  # pre-harmonize, in the display frame - viewer "registered" stage / _registered.ply
-    display_mesh: trimesh.Trimesh  # post-harmonize, in the display frame - viewer "result" stage / _final.ply
+    display_registered_mesh: trimesh.Trimesh  # pre-harmonize, in the display frame - viewer "registered" stage / _rg.ply
+    display_mesh: trimesh.Trimesh  # post-harmonize, in the display frame - viewer "result" stage / _rg_{C|F}.ply
     display_landmarks: np.ndarray  # registered landmarks in the SAME frame as display_mesh
     display_hc_polygon: np.ndarray | None  # HC ring, carried into the display frame - see analyze_cranial
-    craniometrics: CranioMeasurements  # always computed from the nasion pass
-    nasion_mesh: trimesh.Trimesh  # post-harmonize, nasion frame - always this, for the saved 2D figure
-    nasion_landmarks: np.ndarray
-    nasion_hc_polygon: np.ndarray | None
+    display_bpd_ofd_points: np.ndarray  # (front_opt, occ_opt, lh_opt, rh_opt), carried into the display frame same as display_hc_polygon
+    craniometrics: CranioMeasurements  # always computed from the sellion pass
+    sellion_mesh: trimesh.Trimesh  # post-harmonize, sellion frame - always this, for the saved 2D figure
+    sellion_landmarks: np.ndarray
+    sellion_hc_polygon: np.ndarray | None
     used_alt_frontal: bool
 
 
@@ -310,32 +311,32 @@ def analyze_cranial(
     """the cranial pipeline, with an optional second frontal landmark (e.g.
     subnasale) that takes over as the registration/clip/display frame for
     everything shown, downloaded, or saved - while the craniometrics
-    numbers and the saved 2D figure always come from the nasion pass.
+    numbers and the saved 2D figure always come from the sellion pass.
 
-    nasion stays the anchor for those two because the HC circumference
+    sellion stays the anchor for those two because the HC circumference
     search and the cranial_clip geometry are both tuned against a
-    nasion-based registration. swapping in a different frontal point
+    sellion-based registration. swapping in a different frontal point
     doesn't just move that one landmark - landmark_align still pins all 3
     points to the same reference triangle, so the REST of the head has to
     rotate differently to make that work, dragging the whole mesh into a
     different pose. cranial_clip's rear/neck safety plane and the HC
-    slice search both assume the nasion pose specifically, so anything
+    slice search both assume the sellion pose specifically, so anything
     else needs its own handling (trim_rear_neck=False for the alt pass,
-    see cranial_clip's docstring) rather than trusting nasion-tuned
+    see cranial_clip's docstring) rather than trusting sellion-tuned
     geometry blindly.
 
     the two passes register the same input mesh independently, so
-    nasion_reg.mesh and alt_reg.mesh (before harmonize touches either
+    sellion_reg.mesh and alt_reg.mesh (before harmonize touches either
     one) are still in full 1:1 vertex correspondence - fitting a rigid
     transform between them (procrustes_fit) is what carries the HC ring
-    from the nasion frame into the display frame.
+    from the sellion frame into the display frame.
 
-    com_translation is nasion-anchored too: _nasion_com_z_offset computes
-    the correction's magnitude once, from nasion-tragus. the nasion pass
+    com_translation is sellion-anchored too: _sellion_com_z_offset computes
+    the correction's magnitude once, from sellion-tragus. the sellion pass
     is untouched (register() handles its own com_translation as usual);
     the alt pass reuses that same number along its own Z axis after its
     own alignment, never through register()'s independent logic and
-    never rotated in from the nasion frame - a vector that's purely Z in
+    never rotated in from the sellion frame - a vector that's purely Z in
     one frame generally isn't purely Z once viewed through a differently
     rotated one, so rotating it in would leak into the alt frame's left-
     right or vertical axis instead of staying a pure depth correction.
@@ -350,18 +351,18 @@ def analyze_cranial(
     instead of twice roughly halves this function's total cost when
     alt_frontal_landmark is given.
     """
-    com_z = _nasion_com_z_offset(mesh, landmarks) if (alt_frontal_landmark is not None and com_translation) else None
+    com_z = _sellion_com_z_offset(mesh, landmarks) if (alt_frontal_landmark is not None and com_translation) else None
 
     if repair and alt_frontal_landmark is not None:
         _report(on_progress, "repair", f"repairing mesh ({repair_method})")
         mesh = repair_mesh(mesh, method=repair_method)
         repair = False  # already done - both harmonize() calls below skip it
 
-    nasion_reg = register(mesh, landmarks, target="cranium", com_translation=com_translation, on_progress=on_progress)
-    nasion_mesh = harmonize(
-        nasion_reg.mesh,
+    sellion_reg = register(mesh, landmarks, target="cranium", com_translation=com_translation, on_progress=on_progress)
+    sellion_mesh = harmonize(
+        sellion_reg.mesh,
         target="cranium",
-        landmarks=nasion_reg.landmarks,
+        landmarks=sellion_reg.landmarks,
         clip_mode=clip_mode,
         manual_plane_normal=manual_plane_normal,
         manual_plane_origin=manual_plane_origin,
@@ -375,20 +376,24 @@ def analyze_cranial(
     )
 
     _report(on_progress, "analyze", "computing measurements")
-    craniometrics = extract_measurements(nasion_mesh, landmarks=nasion_reg.landmarks)
-    nasion_hc_polygon = hc_slice_polygon(nasion_mesh, craniometrics.slice_height)
+    craniometrics = extract_measurements(sellion_mesh, landmarks=sellion_reg.landmarks)
+    sellion_hc_polygon = hc_slice_polygon(sellion_mesh, craniometrics.slice_height)
+    sellion_bpd_ofd_points = np.array(
+        [craniometrics.front_opt, craniometrics.occ_opt, craniometrics.lh_opt, craniometrics.rh_opt]
+    )
 
     if alt_frontal_landmark is None:
         _report(on_progress, "done", "")
         return CranialAnalysisResult(
-            display_registered_mesh=nasion_reg.mesh,
-            display_mesh=nasion_mesh,
-            display_landmarks=nasion_reg.landmarks,
-            display_hc_polygon=nasion_hc_polygon,
+            display_registered_mesh=sellion_reg.mesh,
+            display_mesh=sellion_mesh,
+            display_landmarks=sellion_reg.landmarks,
+            display_hc_polygon=sellion_hc_polygon,
+            display_bpd_ofd_points=sellion_bpd_ofd_points,
             craniometrics=craniometrics,
-            nasion_mesh=nasion_mesh,
-            nasion_landmarks=nasion_reg.landmarks,
-            nasion_hc_polygon=nasion_hc_polygon,
+            sellion_mesh=sellion_mesh,
+            sellion_landmarks=sellion_reg.landmarks,
+            sellion_hc_polygon=sellion_hc_polygon,
             used_alt_frontal=False,
         )
 
@@ -417,18 +422,25 @@ def analyze_cranial(
         on_progress=on_progress,
     )
 
-    transform = procrustes_fit(np.asarray(nasion_reg.mesh.vertices), np.asarray(alt_reg.mesh.vertices))
-    display_hc_polygon = transform.apply(nasion_hc_polygon) if nasion_hc_polygon is not None else None
-    if display_hc_polygon is not None:
-        # transform is exact for the pre-harmonize registered meshes, but
-        # nasion_mesh and alt_mesh each go through their own independent
-        # repair/clip/resample after that, which doesn't preserve vertex
-        # correspondence - so the transformed ring can end up a couple mm
-        # off the display mesh's actual surface. snapping onto alt_mesh's
-        # surface here guarantees the drawn line always sits exactly on
-        # the mesh being shown, regardless of how much the two passes'
-        # post-processing diverged.
-        display_hc_polygon, _, _ = trimesh.proximity.closest_point(alt_mesh, display_hc_polygon)
+    transform = procrustes_fit(np.asarray(sellion_reg.mesh.vertices), np.asarray(alt_reg.mesh.vertices))
+    # HC polygon and the 4 BPD/OFD optima both need the same treatment: the
+    # transform is exact for the pre-harmonize registered meshes, but
+    # sellion_mesh and alt_mesh each go through their own independent
+    # repair/clip/resample after that, which doesn't preserve vertex
+    # correspondence - so the transformed points can end up a couple mm off
+    # the display mesh's actual surface. snapping onto alt_mesh's surface
+    # here guarantees the drawn lines always sit exactly on the mesh being
+    # shown. batched into one closest_point call rather than two.
+    to_transform = (
+        np.vstack([sellion_hc_polygon, sellion_bpd_ofd_points]) if sellion_hc_polygon is not None else sellion_bpd_ofd_points
+    )
+    transformed, _, _ = trimesh.proximity.closest_point(alt_mesh, transform.apply(to_transform))
+    if sellion_hc_polygon is not None:
+        display_hc_polygon = transformed[: len(sellion_hc_polygon)]
+        display_bpd_ofd_points = transformed[len(sellion_hc_polygon) :]
+    else:
+        display_hc_polygon = None
+        display_bpd_ofd_points = transformed
 
     _report(on_progress, "done", "")
     return CranialAnalysisResult(
@@ -436,9 +448,10 @@ def analyze_cranial(
         display_mesh=alt_mesh,
         display_landmarks=alt_reg.landmarks,
         display_hc_polygon=display_hc_polygon,
+        display_bpd_ofd_points=display_bpd_ofd_points,
         craniometrics=craniometrics,
-        nasion_mesh=nasion_mesh,
-        nasion_landmarks=nasion_reg.landmarks,
-        nasion_hc_polygon=nasion_hc_polygon,
+        sellion_mesh=sellion_mesh,
+        sellion_landmarks=sellion_reg.landmarks,
+        sellion_hc_polygon=sellion_hc_polygon,
         used_alt_frontal=True,
     )

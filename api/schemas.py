@@ -28,15 +28,15 @@ class HarmonizeConfig(BaseModel):
 
 class AnalyzeRequest(BaseModel):
     target: Literal["cranium", "face"] = "cranium"
-    # nasion, left_tragus, right_tragus in that order, in the mesh's own
+    # sellion, left_tragus, right_tragus in that order, in the mesh's own
     # coordinates. always required now, always picked manually - see
     # pipeline.py for why I dropped automatic detection
     landmarks: list[LandmarkPoint] = Field(min_length=3, max_length=3)
     # optional, cranium-only: an alternate frontal point (e.g. subnasale)
     # that takes over as the registration/clip/display frame for
-    # everything shown/saved, while nasion (still mandatory above) stays
+    # everything shown/saved, while sellion (still mandatory above) stays
     # the anchor for the actual measurements and the saved 2D figure - see
-    # craniumpy_core.pipeline.analyze_cranial for why nasion can't just be
+    # craniumpy_core.pipeline.analyze_cranial for why sellion can't just be
     # swapped out for this instead of adding it alongside.
     alt_frontal_landmark: LandmarkPoint | None = None
     com_translation: bool = True
@@ -88,6 +88,13 @@ class CraniometricsResponse(BaseModel):
     # the HC slice outline, so the viewer can draw the red line overlay -
     # see craniumpy_core.craniometrics.hc_slice_polygon
     hc_slice_polygon: list[LandmarkPoint]
+    # the 4 optima the BPD/OFD spans run between - same points the saved
+    # 2D figure marks (see api/results_bundle.py's _measurement_figure) -
+    # so the live viewer can draw the same two lines.
+    front_opt: LandmarkPoint
+    occ_opt: LandmarkPoint
+    lh_opt: LandmarkPoint
+    rh_opt: LandmarkPoint
 
 
 class AsymmetryResponse(BaseModel):
@@ -105,5 +112,5 @@ class ResultsResponse(BaseModel):
     craniometrics: CraniometricsResponse | None = None
     asymmetry: AsymmetryResponse | None = None
     # True when an alt_frontal_landmark was given and the shown/saved mesh
-    # is in that frame instead of the nasion one - see AnalyzeRequest
+    # is in that frame instead of the sellion one - see AnalyzeRequest
     used_alt_frontal: bool = False

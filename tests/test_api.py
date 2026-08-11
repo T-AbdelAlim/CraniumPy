@@ -162,7 +162,7 @@ def test_full_analysis_flow_rigid(client, landmarks_payload):
 
 
 def test_analyze_cranial_with_alt_frontal_landmark(client, landmarks_payload):
-    # stands in for "subnasale instead of nasion" - a different point,
+    # stands in for "subnasale instead of sellion" - a different point,
     # clearly outside the real landmark triangle
     alt_frontal = {
         "x": landmarks_payload[0]["x"],
@@ -192,7 +192,7 @@ def test_analyze_cranial_with_alt_frontal_landmark(client, landmarks_payload):
     assert alt_results["used_alt_frontal"] is True
 
     # the numbers themselves never change based on which frame gets shown -
-    # they always come from the mandatory nasion landmark
+    # they always come from the mandatory sellion landmark
     assert alt_results["craniometrics"]["depth_mm"] == pytest.approx(plain_results["craniometrics"]["depth_mm"])
     assert alt_results["craniometrics"]["breadth_mm"] == pytest.approx(plain_results["craniometrics"]["breadth_mm"])
     assert alt_results["craniometrics"]["circumference_cm"] == pytest.approx(
@@ -218,9 +218,9 @@ def test_analyze_cranial_with_alt_frontal_landmark(client, landmarks_payload):
     report = json.loads(zf.read(report_name))
     assert "display_frontal_landmark" in report
     # com_translation nudges Z a little, so not an exact match to
-    # REFERENCE_TRIANGLE - just confirms the report's "nasion" entry is the
-    # nasion-frame landmark, not the alt one
-    np.testing.assert_allclose(report["landmarks"]["nasion"], list(REFERENCE_TRIANGLE[0]), atol=2.0)
+    # REFERENCE_TRIANGLE - just confirms the report's "sellion" entry is the
+    # sellion-frame landmark, not the alt one
+    np.testing.assert_allclose(report["landmarks"]["sellion"], list(REFERENCE_TRIANGLE[0]), atol=2.0)
 
 
 def test_analyze_progress_is_reported(client, landmarks_payload):
@@ -291,8 +291,8 @@ def test_results_bundle_download(client, landmarks_payload):
 
     zf = zipfile.ZipFile(BytesIO(bundle.content))
     names = zf.namelist()
-    assert any(n.endswith("_registered.ply") for n in names)
-    assert any(n.endswith("_final.ply") for n in names)
+    assert any(n.endswith("_rg.ply") for n in names)
+    assert any(n.endswith("_rg_C.ply") for n in names)
     assert any(n.endswith("_report.json") for n in names)
     assert any(n.endswith("_measurements.png") for n in names)
 
@@ -336,6 +336,6 @@ def test_save_results_to_source_folder(client, landmarks_payload, tmp_path):
     assert save_response.status_code == 200, save_response.text
     saved_to = Path(save_response.json()["saved_to"])
     assert saved_to == tmp_path / "CP_1016510_20210730_edited_C_3_CoM"
-    assert (saved_to / "1016510_20210730_edited_registered.ply").exists()
-    assert (saved_to / "1016510_20210730_edited_final.ply").exists()
+    assert (saved_to / "1016510_20210730_edited_rg.ply").exists()
+    assert (saved_to / "1016510_20210730_edited_rg_C.ply").exists()
     assert (saved_to / "1016510_20210730_edited_report.json").exists()

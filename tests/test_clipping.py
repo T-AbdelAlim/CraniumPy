@@ -88,7 +88,7 @@ def test_cranial_clip_respects_all_three_constraints(test_mesh):
 
 def test_cranial_clip_trim_rear_neck_false_skips_that_plane(test_mesh):
     # regression test for the alt-frontal-landmark bug: the rear/neck plane
-    # is hardcoded in the registered frame, tuned against nasion-based
+    # is hardcoded in the registered frame, tuned against sellion-based
     # registration - registering on a different frontal landmark (e.g.
     # subnasale) tips the whole head into a different pose in that same
     # fixed frame, and on a real scan this plane ended up gouging into the

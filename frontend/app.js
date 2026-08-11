@@ -70,6 +70,7 @@ let currentMeshObject = null;
 let currentMeshMaterials = [];
 let currentMeshHasTexture = false;
 let markerRadius = 2;
+let lineRadius = 1;
 
 // whether the current session's file selection actually included a texture
 // image, set once at upload/open time (see uploadFiles/openFilesFromPaths
@@ -101,6 +102,9 @@ async function displayMesh(url) {
   }
   clearMarkers();
   clearTemplateOverlay();
+  drawHcLine(null);
+  clearBpdOfdLines();
+  hideMeasurementsPanel();
   hideScalarBar(); // same reasoning as drawHcLine(null) below - reset stale
   // state from a previous *facial* result before a fresh mesh (or a
   // cranial result, which never calls applyAsymmetryHeatmap) shows up
@@ -143,6 +147,7 @@ async function displayMesh(url) {
   scene.add(object);
   currentMeshObject = object;
   markerRadius = fitCameraToObject(object) * 0.00765; // 10% smaller again - was 0.0085
+  lineRadius = markerRadius * 0.35 * 1.3; // 30% thicker than the plain-tube baseline
   applyClipPreview();
 
   document.getElementById("mesh-view-toggles").classList.remove("hidden");
@@ -207,6 +212,18 @@ function addLandmarkMarker(name, point) {
   return marker;
 }
 
+// measurement lines (HC ring + BPD/OFD spans) as actual tube geometry, not
+// THREE.Line - LineBasicMaterial's linewidth is a screen-space pixel count
+// that most WebGL backends just ignore and always render at 1px, so it's
+// not a real way to make a line look thicker. a tube has genuine 3D
+// thickness that scales with the mesh like everything else in the scene.
+function makeTube(points, radius, color, closed) {
+  const curve = new THREE.CatmullRomCurve3(points, closed, "catmullrom", 0.0);
+  const tubularSegments = Math.max(8, points.length * 4);
+  const geometry = new THREE.TubeGeometry(curve, tubularSegments, radius, 8, closed);
+  return new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color }));
+}
+
 let hcLineObject = null;
 
 function drawHcLine(polygonPoints) {
@@ -216,10 +233,74 @@ function drawHcLine(polygonPoints) {
   }
   if (!polygonPoints || polygonPoints.length < 3) return;
   const pts = polygonPoints.map((p) => new THREE.Vector3(p.x, p.y, p.z));
-  pts.push(pts[0]); // close the loop
-  const geometry = new THREE.BufferGeometry().setFromPoints(pts);
-  hcLineObject = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color: 0xd1453d, linewidth: 2 }));
+  hcLineObject = makeTube(pts, lineRadius, 0xd1453d, true);
   scene.add(hcLineObject);
+}
+
+let bpdOfdLineObjects = [];
+
+function clearBpdOfdLines() {
+  for (const obj of bpdOfdLineObjects) scene.remove(obj);
+  bpdOfdLineObjects = [];
+}
+
+// BPD (breadth, left<->right optima) in blue, OFD (depth, front<->occiput
+// optima) in green - same colors as the saved 2D figure (see
+// api/results_bundle.py's _measurement_figure) so the live view and the
+// downloaded one read the same way.
+function drawBpdOfdLines(frontOpt, occOpt, lhOpt, rhOpt) {
+  clearBpdOfdLines();
+  if (!frontOpt || !occOpt || !lhOpt || !rhOpt) return;
+  const bpd = makeTube(
+    [new THREE.Vector3(lhOpt.x, lhOpt.y, lhOpt.z), new THREE.Vector3(rhOpt.x, rhOpt.y, rhOpt.z)],
+    lineRadius, 0x2563eb, false
+  );
+  const ofd = makeTube(
+    [new THREE.Vector3(frontOpt.x, frontOpt.y, frontOpt.z), new THREE.Vector3(occOpt.x, occOpt.y, occOpt.z)],
+    lineRadius, 0x16a34a, false
+  );
+  bpdOfdLineObjects = [bpd, ofd];
+  scene.add(bpd, ofd);
+}
+
+function hideMeasurementsPanel() {
+  document.getElementById("measurements-panel").classList.add("hidden");
+}
+
+function showMeasurementsPanel(c) {
+  document.getElementById("mp-hc").textContent = `${c.circumference_cm} cm`;
+  document.getElementById("mp-bpd").textContent = `${c.breadth_mm} mm`;
+  document.getElementById("mp-ofd").textContent = `${c.depth_mm} mm`;
+  document.getElementById("mp-ci").textContent = c.cephalic_index;
+  document.getElementById("mp-volume").textContent = `${c.mesh_volume_cc} cc`;
+  document.getElementById("measurements-panel").classList.remove("hidden");
+}
+
+// dims the mesh a bit while measurement lines are showing, so a line
+// running along the far side (behind the surface, from this angle) doesn't
+// just disappear into it - full opacity (1.0) is the normal/default state.
+function setMeshOpacity(opacity) {
+  for (const mat of currentMeshMaterials) {
+    mat.transparent = opacity < 1;
+    mat.opacity = opacity;
+    mat.needsUpdate = true;
+  }
+}
+
+function enableMeasurementsVisualization() {
+  if (!lastResultsData || !lastResultsData.craniometrics) return;
+  const c = lastResultsData.craniometrics;
+  drawHcLine(c.hc_slice_polygon);
+  drawBpdOfdLines(c.front_opt, c.occ_opt, c.lh_opt, c.rh_opt);
+  setMeshOpacity(0.75);
+  showMeasurementsPanel(c);
+}
+
+function disableMeasurementsVisualization() {
+  drawHcLine(null);
+  clearBpdOfdLines();
+  setMeshOpacity(1.0);
+  hideMeasurementsPanel();
 }
 
 // facial asymmetry heatmap: one signed distance (mm) per vertex of the
@@ -287,18 +368,18 @@ function applyAsymmetryHeatmap(heatmapValues) {
 
 // --- landmark picking (ctrl/cmd + click) ---
 
-const LANDMARK_NAMES = ["nasion", "left_tragus", "right_tragus"];
+const LANDMARK_NAMES = ["sellion", "left_tragus", "right_tragus"];
 // optional 4th point (cranium target only, see the "use a secondary frontal
 // landmark" checkbox) - an alternate anchor (e.g. subnasale) that takes over
-// the registration/clip/display frame while nasion above stays mandatory and
+// the registration/clip/display frame while sellion above stays mandatory and
 // keeps driving the actual measurements. see pipeline.analyze_cranial for
 // why these are two different knobs, not one.
 const ALT_FRONTAL_NAME = "alt_frontal";
 // distinct colors so the marker in the 3D view and its row in the sidebar
 // list (see the matching CSS in style.css) are unambiguously the same point -
 // picking order alone wasn't enough once the labels went generic (frontal/
-// left/right landmark instead of nasion/tragus).
-const LANDMARK_COLORS = { nasion: 0x344c42, left_tragus: 0xa65c3c, right_tragus: 0x98764d, alt_frontal: 0x2a4d80 };
+// left/right landmark instead of sellion/tragus).
+const LANDMARK_COLORS = { sellion: 0x1a4922, left_tragus: 0xa65c3c, right_tragus: 0xd4af37, alt_frontal: 0x2a4d80 };
 const pickedLandmarks = {};
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
@@ -671,7 +752,6 @@ document.getElementById("analyze-button").addEventListener("click", async () => 
 
   const target = document.querySelector('input[name="target"]:checked').value;
   const comTranslation = document.getElementById("com-translation").checked;
-  const repairMesh = document.getElementById("repair-mesh").checked;
   const resampleMesh = document.getElementById("resample-mesh").checked;
   const vertexCount = Number(document.getElementById("vertex-count").value) || 10000;
 
@@ -680,7 +760,13 @@ document.getElementById("analyze-button").addEventListener("click", async () => 
     landmarks: LANDMARK_NAMES.map((n) => pickedLandmarks[n]),
     com_translation: comTranslation,
     clipping: {},
-    harmonize: { n_vertices: resampleMesh ? vertexCount : null, repair: repairMesh },
+    // always on - a real scan (photogrammetry especially) can come in with
+    // thousands of disconnected patches from the reconstruction process;
+    // repair_mesh's merge+pymeshfix pass is what turns that into a single
+    // usable surface. skipping it isn't a quality tradeoff, it can leave
+    // keep_largest_component picking an arbitrary small fragment instead
+    // of the actual head.
+    harmonize: { n_vertices: resampleMesh ? vertexCount : null, repair: true },
   };
   if (useAltFrontal && pickedLandmarks[ALT_FRONTAL_NAME]) {
     body.alt_frontal_landmark = pickedLandmarks[ALT_FRONTAL_NAME];
@@ -763,25 +849,27 @@ async function showResults() {
   }
   document.getElementById("alt-frontal-note").classList.toggle("hidden", !data.used_alt_frontal);
 
-  document.getElementById("template-overlay-toggle").checked = false;
+  document.getElementById("visualization").classList.remove("hidden");
+  const hasCraniometrics = !!data.craniometrics;
+  document.getElementById("measurements-mode-label").classList.toggle("hidden", !hasCraniometrics);
+  document.querySelector(`input[name="visualization-mode"][value="${hasCraniometrics ? "measurements" : "template"}"]`).checked = true;
+  document.getElementById("visualization-toggle").checked = true;
+
   if (shippedTemplates.length === 0) await fetchShippedTemplates();
   populateTemplateSelect();
   await displayResultMesh();
+  await applyVisualizationMode();
 }
 
-// shows the final (post clip/repair/resample) mesh with the HC line, if
-// there is one - no landmark markers, the mesh itself is the point once
-// registration/clipping is done. pulled out of showResults() so the
-// template-overlay toggle can get back to this same view without
+// shows the final (post clip/repair/resample) mesh, no landmark markers -
+// the mesh itself is the point once registration/clipping is done.
+// measurement lines/template overlay are layered on separately by
+// applyVisualizationMode - see showResults. pulled out of showResults() so
+// visualization mode switches can get back to this same view without
 // re-running the whole analysis.
 async function displayResultMesh() {
   await displayMesh(`/api/sessions/${sessionId}/mesh/result`);
   if (!lastResultsData) return;
-  // always call this, even with no polygon - drawHcLine(null) is what
-  // clears a line left over from a previous *cranial* run before switching
-  // to facial (craniometrics is only ever present for cranial results, but
-  // the stale line from last time doesn't know that on its own).
-  drawHcLine(lastResultsData.craniometrics ? lastResultsData.craniometrics.hc_slice_polygon : null);
   if (lastResultsData.asymmetry) applyAsymmetryHeatmap(lastResultsData.asymmetry.heatmap);
 }
 
@@ -795,7 +883,7 @@ async function displayResultMesh() {
 // which template makes the most sense to compare against depends on more
 // than just the target - a cranial result registered on the secondary
 // frontal landmark (4 picks) needs a full-head reference, since
-// clipped_template_xy is built in the nasion frame and won't line up; a
+// clipped_template_xy is built in the sellion frame and won't line up; a
 // plain 3-landmark cranial result wants the clipped cranium reference
 // instead. either way it should match whether center-of-mass correction
 // ran, since that's baked into the template's own pose too.
@@ -948,6 +1036,7 @@ function clearTemplateOverlay() {
   if (cogLine) scene.remove(cogLine);
   templateOverlayObject = axesObject = cogMeshMarker = cogTemplateMarker = cogLine = null;
   document.getElementById("template-offset-info").textContent = "";
+  document.getElementById("template-legend").classList.add("hidden");
 }
 
 // plain vertex-average centroid - not the slice-based center-of-mass the
@@ -1010,7 +1099,8 @@ async function enableTemplateOverlay() {
   const resolved = await resolveTemplateForOverlay();
   if (!resolved) {
     document.getElementById("template-offset-info").textContent = "pick a custom template file first.";
-    document.getElementById("template-overlay-toggle").checked = false;
+    document.getElementById("visualization-toggle").checked = false;
+    updateVisualizationControlsVisibility();
     return;
   }
 
@@ -1064,6 +1154,11 @@ async function enableTemplateOverlay() {
   document.getElementById("template-offset-info").textContent =
     `center-of-gravity offset from template (${resolved.displayName}): ${d.length().toFixed(1)}mm total ` +
     `(x ${d.x.toFixed(1)}, y ${d.y.toFixed(1)}, z ${d.z.toFixed(1)})`;
+  document.getElementById("template-legend").classList.remove("hidden");
+}
+
+function currentVisualizationMode() {
+  return document.querySelector('input[name="visualization-mode"]:checked')?.value;
 }
 
 // re-runs the overlay against whatever's now selected, but only if the
@@ -1072,23 +1167,39 @@ async function enableTemplateOverlay() {
 // would show next time it's turned on, no need to touch the viewer yet.
 async function refreshTemplateOverlayIfShown() {
   if (!sessionId || !lastResultsData) return;
-  if (!document.getElementById("template-overlay-toggle").checked) return;
+  if (!document.getElementById("visualization-toggle").checked || currentVisualizationMode() !== "template") return;
   clearTemplateOverlay();
   await enableTemplateOverlay();
 }
 
-document.getElementById("template-overlay-toggle").addEventListener("change", async (event) => {
-  if (!sessionId || !lastResultsData) {
-    event.target.checked = false;
-    return;
-  }
+function updateVisualizationControlsVisibility() {
+  const enabled = document.getElementById("visualization-toggle").checked;
+  const mode = currentVisualizationMode();
+  document.getElementById("visualization-mode-row").classList.toggle("hidden", !enabled);
+  document.getElementById("template-controls").classList.toggle("hidden", !enabled || mode !== "template");
+  document.getElementById("measurements-hint").classList.toggle("hidden", !enabled || mode !== "measurements");
+}
+
+// only one of these is ever showing at a time - template overlay and the
+// measurement lines/opacity would just visually fight over the same mesh.
+async function applyVisualizationMode() {
+  updateVisualizationControlsVisibility();
+  disableMeasurementsVisualization();
   clearTemplateOverlay();
-  if (event.target.checked) {
+
+  if (!sessionId || !lastResultsData || !document.getElementById("visualization-toggle").checked) return;
+
+  if (currentVisualizationMode() === "template") {
     await enableTemplateOverlay();
   } else {
-    await displayResultMesh();
+    enableMeasurementsVisualization();
   }
-});
+}
+
+document.getElementById("visualization-toggle").addEventListener("change", applyVisualizationMode);
+for (const el of document.querySelectorAll('input[name="visualization-mode"]')) {
+  el.addEventListener("change", applyVisualizationMode);
+}
 
 document.getElementById("download-bundle-button").addEventListener("click", async () => {
   if (!sessionId) return;

@@ -139,8 +139,8 @@ input[type="file"] {
 }
 
 /* colors match LANDMARK_COLORS in app.js - keep these two in sync */
-#landmark-list li[data-name="nasion"] .landmark-swatch {
-  background: #344c42;
+#landmark-list li[data-name="sellion"] .landmark-swatch {
+  background: #1a4922;
 }
 
 #landmark-list li[data-name="left_tragus"] .landmark-swatch {
@@ -148,7 +148,7 @@ input[type="file"] {
 }
 
 #landmark-list li[data-name="right_tragus"] .landmark-swatch {
-  background: #98764d;
+  background: #d4af37;
 }
 
 #landmark-list li[data-name="alt_frontal"] .landmark-swatch {
@@ -210,7 +210,6 @@ input[type="number"]:disabled {
 }
 
 button#reset-landmarks,
-button#download-bundle-button,
 button#template-browse-button {
   background: transparent;
   color: var(--text);
@@ -314,4 +313,44 @@ select {
   height: 140px;
   border-radius: 3px;
   background: linear-gradient(to top, #0000ff, #ffffff, #ff0000);
+}
+
+/* floating readout for the HC/BPD/OFD measurement lines, shown alongside
+   them when "measurements" visualization mode is on - same corner/style as
+   the scalar bar above, just the opposite side since the two never show
+   at the same time (measurements vs. asymmetry heatmap are different
+   targets) but could in principle overlap. template-legend shares the same
+   slot/style - it's the "alignment" mode's equivalent panel, and the two
+   visualization modes are mutually exclusive so they never need the corner
+   at the same time either. */
+#measurements-panel,
+#template-legend {
+  position: absolute;
+  top: 1rem;
+  left: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.5rem 0.6rem;
+  background: rgba(20, 22, 26, 0.7);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.75rem;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.measurement-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.measurement-swatch {
+  display: inline-block;
+  width: 0.65em;
+  height: 0.65em;
+  border-radius: 50%;
+  flex-shrink: 0;
 }

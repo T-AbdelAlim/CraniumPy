@@ -114,7 +114,7 @@ def procrustes_icp(
 # tests/test_rigid.py.
 # --------------------------------------------------------------------------
 
-# landmarks[0] = nasion, [1] = left tragus, [2] = right tragus, in whatever
+# landmarks[0] = sellion, [1] = left tragus, [2] = right tragus, in whatever
 # frame the templates are built in. this triangle's centroid sits right
 # around (0, 0, 0) by construction.
 REFERENCE_TRIANGLE = np.array([
@@ -124,8 +124,8 @@ REFERENCE_TRIANGLE = np.array([
 ])
 
 # pipeline.register() re-centers the mesh an extra step for facial targets,
-# after landmark_align, shifting everything so the nasion lands at the
-# origin (see the nasion_offset subtraction there) - REFERENCE_TRIANGLE
+# after landmark_align, shifting everything so the sellion lands at the
+# origin (see the sellion_offset subtraction there) - REFERENCE_TRIANGLE
 # itself is never adjusted for that second shift, so anything that needs to
 # describe landmark positions in the frame a face-target-registered mesh
 # actually ends up in (e.g. clipping a template for the overlay comparison)
@@ -166,9 +166,9 @@ def _face_normal(triangle: np.ndarray) -> np.ndarray:
 
 
 def landmark_align(landmarks: np.ndarray, reference_triangle: np.ndarray = REFERENCE_TRIANGLE) -> RigidTransform:
-    """lines up a patient's 3 landmarks (nasion, left tragus, right tragus, in
+    """lines up a patient's 3 landmarks (sellion, left tragus, right tragus, in
     that order) onto the reference triangle. moves the landmark centroid to
-    the reference centroid, then two rotations - first line up the nasion
+    the reference centroid, then two rotations - first line up the sellion
     vector, then the face normal. same two-step approach the old app used.
     """
     landmarks = np.asarray(landmarks, dtype=np.float64)
@@ -178,7 +178,7 @@ def landmark_align(landmarks: np.ndarray, reference_triangle: np.ndarray = REFER
     translation = ref_centroid - lm_centroid
     translated = landmarks + translation
 
-    # step 1: line up the centroid->nasion vector with the template's
+    # step 1: line up the centroid->sellion vector with the template's
     R1 = _rodrigues_align(translated[0] - ref_centroid, reference_triangle[0] - ref_centroid)
     stage1 = translated @ R1.T
 

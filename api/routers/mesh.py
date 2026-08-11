@@ -225,7 +225,7 @@ def start_analysis(session_id: str, request: AnalyzeRequest) -> StatusResponse:
 
     def _run() -> dict:
         if request.target == "cranium":
-            # nasion (mandatory, above) always drives the actual
+            # sellion (mandatory, above) always drives the actual
             # measurements - alt_frontal (if given) only takes over the
             # displayed/saved mesh's registration+clip frame. see
             # pipeline.analyze_cranial's docstring for why these can't be
@@ -245,21 +245,22 @@ def start_analysis(session_id: str, request: AnalyzeRequest) -> StatusResponse:
             )
             session.registered_mesh = result.display_registered_mesh
             session.result_mesh = result.display_mesh
-            session.nasion_result_mesh = result.nasion_mesh
+            session.sellion_result_mesh = result.sellion_mesh
             session.report_progress("done", "")
             return {
                 "landmarks": result.display_landmarks,
                 "craniometrics": result.craniometrics,
                 "asymmetry": None,
                 "request": request,
-                "nasion_landmarks": result.nasion_landmarks if result.used_alt_frontal else None,
+                "sellion_landmarks": result.sellion_landmarks if result.used_alt_frontal else None,
                 "display_hc_polygon": result.display_hc_polygon,
+                "display_bpd_ofd_points": result.display_bpd_ofd_points,
                 "used_alt_frontal": result.used_alt_frontal,
             }
 
         # facial: unaffected by alt_frontal_landmark (cranium-only, see
         # AnalyzeRequest) - single registration, same as always.
-        session.nasion_result_mesh = None
+        session.sellion_result_mesh = None
         reg = pipeline.register(
             session.mesh,
             landmarks,
@@ -295,8 +296,9 @@ def start_analysis(session_id: str, request: AnalyzeRequest) -> StatusResponse:
             "craniometrics": None,
             "asymmetry": asymmetry,
             "request": request,
-            "nasion_landmarks": None,
+            "sellion_landmarks": None,
             "display_hc_polygon": None,
+            "display_bpd_ofd_points": None,
             "used_alt_frontal": False,
         }
 
@@ -330,9 +332,10 @@ def get_results(session_id: str) -> ResultsResponse:
         # precomputed at analyze time, already in whatever frame
         # session.result_mesh is actually in (see pipeline.analyze_cranial) -
         # recomputing it live here would slice the wrong mesh at a Y that
-        # only means anything in the nasion frame, once an alt_frontal_landmark
+        # only means anything in the sellion frame, once an alt_frontal_landmark
         # is in play.
         polygon = r["display_hc_polygon"]
+        front_opt, occ_opt, lh_opt, rh_opt = r["display_bpd_ofd_points"]
         craniometrics = CraniometricsResponse(
             slice_height=m.slice_height,
             depth_mm=m.depth_mm,
@@ -341,6 +344,10 @@ def get_results(session_id: str) -> ResultsResponse:
             circumference_cm=m.circumference_cm,
             mesh_volume_cc=float(m.mesh_volume_cc),
             hc_slice_polygon=[LandmarkPoint(x=p[0], y=p[1], z=p[2]) for p in (polygon if polygon is not None else [])],
+            front_opt=LandmarkPoint(x=front_opt[0], y=front_opt[1], z=front_opt[2]),
+            occ_opt=LandmarkPoint(x=occ_opt[0], y=occ_opt[1], z=occ_opt[2]),
+            lh_opt=LandmarkPoint(x=lh_opt[0], y=lh_opt[1], z=lh_opt[2]),
+            rh_opt=LandmarkPoint(x=rh_opt[0], y=rh_opt[1], z=rh_opt[2]),
         )
 
     asymmetry = None
@@ -402,8 +409,8 @@ def download_results_bundle(session_id: str):
         craniometrics=r["craniometrics"],
         asymmetry=r["asymmetry"],
         config=config,
-        nasion_mesh=session.nasion_result_mesh,
-        nasion_landmarks=r["nasion_landmarks"],
+        sellion_mesh=session.sellion_result_mesh,
+        sellion_landmarks=r["sellion_landmarks"],
     )
     return Response(
         content=zip_bytes,
@@ -442,7 +449,7 @@ def save_results_to_source_folder(session_id: str) -> SaveResultsResponse:
         craniometrics=r["craniometrics"],
         asymmetry=r["asymmetry"],
         config=request.model_dump(),
-        nasion_mesh=session.nasion_result_mesh,
-        nasion_landmarks=r["nasion_landmarks"],
+        sellion_mesh=session.sellion_result_mesh,
+        sellion_landmarks=r["sellion_landmarks"],
     )
     return SaveResultsResponse(saved_to=str(results_dir))

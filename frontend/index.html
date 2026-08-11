@@ -39,9 +39,9 @@
         <p class="hint"><strong>ctrl/cmd-click</strong> to place a point, <strong>alt-drag</strong> to move one.
           pick in this order:</p>
         <ol id="landmark-list">
-          <li data-name="nasion">
+          <li data-name="sellion">
             <span class="landmark-swatch"></span>
-            <span class="landmark-label">nasion</span>
+            <span class="landmark-label">sellion</span>
             <span class="landmark-desc">bridge of the nose, between the eyes</span>
             <span class="landmark-value">not picked</span>
           </li>
@@ -60,8 +60,8 @@
           <li data-name="alt_frontal" id="alt-frontal-item" class="hidden">
             <span class="landmark-swatch"></span>
             <span class="landmark-label">secondary frontal landmark (optional, e.g. subnasale)</span>
-            <span class="landmark-desc">an alternate anchor point - the displayed/saved mesh is registered
-              and clipped using this point instead of nasion, but measurements always stay based on nasion</span>
+            <span class="landmark-desc">becomes the clipping plane for the displayed/saved mesh instead of
+              sellion; measurements stay sellion-based</span>
             <span class="landmark-value">not picked</span>
           </li>
         </ol>
@@ -95,17 +95,20 @@
 
       <section>
         <h2>5. Mesh cleanup</h2>
-        <label class="checkbox"><input id="repair-mesh" type="checkbox" /> repair (fill holes, fix winding)</label>
         <label class="checkbox"><input id="resample-mesh" type="checkbox" /> resample</label>
         <label for="vertex-count">to</label>
         <input id="vertex-count" type="number" min="500" max="200000" step="500" value="10000" /> vertices
-        <p class="hint">leave it at 10000 if you're not sure - that's what the pipeline was validated with. uncheck
-          if you want to keep the mesh's original vertex count.</p>
+        <p class="hint">simplifies the mesh to roughly this many vertices, for a smaller, faster file.</p>
       </section>
 
       <section>
         <h2>6. Run it</h2>
         <label class="checkbox"><input id="com-translation" type="checkbox" checked /> center-of-mass correction</label>
+        <p class="hint">recommended for most use-cases. off: aligns on the centroid of the 3 landmarks only. on:
+          same alignment, plus a depth-only nudge toward the head-circumference slice centroid, for more
+          consistent shape comparisons - <a
+            href="https://journals.lww.com/jcraniofacialsurgery/fulltext/10.1097/scs.0000000000009448~reliability-and-agreement-of-automated-head-measurements"
+            target="_blank" rel="noopener">details</a>.</p>
         <button id="analyze-button" type="button" disabled>run analysis</button>
         <p id="job-status" class="hint"></p>
       </section>
@@ -114,31 +117,43 @@
         <h2>results</h2>
         <table id="results-table"></table>
         <p id="alt-frontal-note" class="hint hidden">showing the mesh registered to the secondary frontal
-          landmark - measurements above and the saved 2D figure are still based on nasion.</p>
+          landmark - measurements above and the saved 2D figure are still based on sellion.</p>
         <button id="download-bundle-button" type="button">download results (mesh + report + figure)</button>
         <p id="save-status" class="hint"></p>
+      </section>
 
-        <div id="template-select-row">
-          <label for="template-select">compare against</label>
-          <select id="template-select"></select>
-        </div>
-        <div id="template-custom-row" class="hidden">
-          <button id="template-browse-button" type="button">browse...</button>
-          <input id="template-custom-file-input" type="file" accept=".ply,.obj,.stl" class="hidden" />
-          <span id="template-custom-name" class="hint"></span>
-        </div>
-        <p id="template-custom-hint" class="hint hidden">this app can't remember a real file path here - you'll
-          need to pick the file again next time you want this comparison. the downloadable desktop app can
-          remember it for you instead.</p>
-
+      <section id="visualization" class="hidden">
+        <h2>7. Visualization</h2>
         <label class="checkbox">
-          <input id="template-overlay-toggle" type="checkbox" />
-          show template overlay
+          <input id="visualization-toggle" type="checkbox" />
+          show visualization
         </label>
-        <p class="hint">shows the final mesh (the one you'd download) with the template above overlaid on it
-          (blue, semi-transparent), draws the X/Y/Z axes through the origin (red/green/blue), and marks each
-          mesh's center of gravity (orange = your mesh, blue = template).</p>
-        <p id="template-offset-info" class="hint"></p>
+
+        <div id="visualization-mode-row" class="toggle-row hidden">
+          <label id="measurements-mode-label"><input type="radio" name="visualization-mode" value="measurements" checked /> metrics</label>
+          <label><input type="radio" name="visualization-mode" value="template" /> alignment</label>
+        </div>
+
+        <p id="measurements-hint" class="hint hidden">HC/BPD/OFD drawn on the mesh, with the numbers in the panel
+          over the viewer.</p>
+
+        <div id="template-controls" class="hidden">
+          <div id="template-select-row">
+            <label for="template-select">compare against</label>
+            <select id="template-select"></select>
+          </div>
+          <div id="template-custom-row" class="hidden">
+            <button id="template-browse-button" type="button">browse...</button>
+            <input id="template-custom-file-input" type="file" accept=".ply,.obj,.stl" class="hidden" />
+            <span id="template-custom-name" class="hint"></span>
+          </div>
+          <p id="template-custom-hint" class="hint hidden">this app can't remember a real file path here - you'll
+            need to pick the file again next time you want this comparison. the downloadable desktop app can
+            remember it for you instead.</p>
+          <p class="hint">the template overlaid on the mesh, with X/Y/Z axes and each one's center of gravity
+            (see legend in the viewer).</p>
+          <p id="template-offset-info" class="hint"></p>
+        </div>
       </section>
     </aside>
 
@@ -149,6 +164,17 @@
         <span id="scalar-bar-max">0.0 mm</span>
         <div id="scalar-bar-gradient"></div>
         <span id="scalar-bar-min">0.0 mm</span>
+      </div>
+      <div id="measurements-panel" class="hidden">
+        <div class="measurement-row"><span class="measurement-swatch" style="background:#d1453d"></span>HC <span id="mp-hc"></span></div>
+        <div class="measurement-row"><span class="measurement-swatch" style="background:#2563eb"></span>BPD <span id="mp-bpd"></span></div>
+        <div class="measurement-row"><span class="measurement-swatch" style="background:#16a34a"></span>OFD <span id="mp-ofd"></span></div>
+        <div class="measurement-row">CI <span id="mp-ci"></span></div>
+        <div class="measurement-row">volume <span id="mp-volume"></span></div>
+      </div>
+      <div id="template-legend" class="hidden">
+        <div class="measurement-row"><span class="measurement-swatch" style="background:#ffa500"></span>your mesh</div>
+        <div class="measurement-row"><span class="measurement-swatch" style="background:#60a5fa"></span>template</div>
       </div>
     </main>
   </div>

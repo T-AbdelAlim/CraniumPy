@@ -76,7 +76,7 @@ def test_register_skips_com_translation_when_disabled():
     assert abs(com_without[2]) > 3.0
 
 
-def test_register_face_target_centers_nasion_at_origin():
+def test_register_face_target_centers_sellion_at_origin():
     mesh, landmarks = _ellipsoid_with_landmarks()
     result = register(mesh, landmarks, target="face", com_translation=True)
     np.testing.assert_allclose(result.landmarks[0], [0.0, 0.0, 0.0], atol=1e-8)
@@ -179,21 +179,21 @@ def test_harmonize_repair_false_skips_repair():
     assert len(result.vertices) > 0
 
 
-def test_analyze_cranial_without_alt_frontal_uses_nasion_mesh_as_display():
+def test_analyze_cranial_without_alt_frontal_uses_sellion_mesh_as_display():
     mesh, landmarks = _ellipsoid_with_landmarks()
     result = analyze_cranial(mesh, landmarks, n_vertices=3000)
 
     assert result.used_alt_frontal is False
-    assert result.display_mesh is result.nasion_mesh
-    np.testing.assert_array_equal(result.display_landmarks, result.nasion_landmarks)
-    if result.nasion_hc_polygon is not None:
-        np.testing.assert_array_equal(result.display_hc_polygon, result.nasion_hc_polygon)
+    assert result.display_mesh is result.sellion_mesh
+    np.testing.assert_array_equal(result.display_landmarks, result.sellion_landmarks)
+    if result.sellion_hc_polygon is not None:
+        np.testing.assert_array_equal(result.display_hc_polygon, result.sellion_hc_polygon)
 
 
 def test_analyze_cranial_with_alt_frontal_uses_alt_mesh_as_display():
     mesh, landmarks = _ellipsoid_with_landmarks()
     # a different point on the ellipsoid surface, well clear of the real
-    # landmark triangle - stands in for "subnasale instead of nasion"
+    # landmark triangle - stands in for "subnasale instead of sellion"
     alt_frontal = landmarks[0] + np.array([0.0, -15.0, -5.0])
 
     without_alt = analyze_cranial(mesh, landmarks, n_vertices=3000)
@@ -206,18 +206,18 @@ def test_analyze_cranial_with_alt_frontal_uses_alt_mesh_as_display():
         np.asarray(without_alt.display_mesh.vertices).mean(axis=0),
     )
     # but the numbers themselves are unaffected by which frame gets shown -
-    # they always come from the nasion pass, see analyze_cranial's docstring
+    # they always come from the sellion pass, see analyze_cranial's docstring
     assert with_alt.craniometrics.depth_mm == pytest.approx(without_alt.craniometrics.depth_mm)
     assert with_alt.craniometrics.breadth_mm == pytest.approx(without_alt.craniometrics.breadth_mm)
     assert with_alt.craniometrics.circumference_cm == pytest.approx(without_alt.craniometrics.circumference_cm)
 
 
-def test_analyze_cranial_com_correction_nasion_pass_unaffected_by_alt_frontal():
-    # regression test: the nasion pass has to come out byte-identical
+def test_analyze_cranial_com_correction_sellion_pass_unaffected_by_alt_frontal():
+    # regression test: the sellion pass has to come out byte-identical
     # whether or not an alt_frontal_landmark is given - analyze_cranial's
-    # com_translation fix bakes the nasion-tragus-plane CoM correction into
+    # com_translation fix bakes the sellion-tragus-plane CoM correction into
     # the raw mesh once, up front, specifically so it doesn't disturb the
-    # nasion pass's own result (see the function's docstring). asymmetric
+    # sellion pass's own result (see the function's docstring). asymmetric
     # ellipsoid so the CoM correction actually moves something, not a no-op.
     mesh, landmarks = _ellipsoid_with_landmarks(asymmetric=True)
     alt_frontal = landmarks[0] + np.array([0.0, -15.0, -5.0])
@@ -226,21 +226,21 @@ def test_analyze_cranial_com_correction_nasion_pass_unaffected_by_alt_frontal():
     with_alt = analyze_cranial(mesh, landmarks, alt_frontal_landmark=alt_frontal, com_translation=True, n_vertices=3000)
 
     np.testing.assert_allclose(
-        np.asarray(without_alt.nasion_mesh.vertices), np.asarray(with_alt.nasion_mesh.vertices), atol=1e-6
+        np.asarray(without_alt.sellion_mesh.vertices), np.asarray(with_alt.sellion_mesh.vertices), atol=1e-6
     )
-    np.testing.assert_allclose(without_alt.nasion_landmarks, with_alt.nasion_landmarks, atol=1e-6)
+    np.testing.assert_allclose(without_alt.sellion_landmarks, with_alt.sellion_landmarks, atol=1e-6)
     assert without_alt.craniometrics.depth_mm == with_alt.craniometrics.depth_mm
     assert without_alt.craniometrics.breadth_mm == with_alt.craniometrics.breadth_mm
     assert without_alt.craniometrics.circumference_cm == with_alt.craniometrics.circumference_cm
 
 
-def test_analyze_cranial_alt_frontal_com_uses_nasion_plane_not_independent():
+def test_analyze_cranial_alt_frontal_com_uses_sellion_plane_not_independent():
     # regression test: the alt-frontal pass used to call register() with its
     # own independent com_translation, scanning slices in whatever frame the
     # alt (e.g. subnasale-tragus) triangle produced - a genuinely different,
-    # more forward-tilted plane than nasion-tragus. now it always reuses the
-    # nasion-plane-derived correction (see analyze_cranial's docstring /
-    # _nasion_com_z_offset). checking the alt DISPLAY registration lands
+    # more forward-tilted plane than sellion-tragus. now it always reuses the
+    # sellion-plane-derived correction (see analyze_cranial's docstring /
+    # _sellion_com_z_offset). checking the alt DISPLAY registration lands
     # somewhere different from what independently-computed alt-plane CoM
     # would have given confirms the correction source actually changed, not
     # just that com_translation still does *something*.
@@ -259,9 +259,9 @@ def test_analyze_cranial_alt_frontal_com_uses_nasion_plane_not_independent():
 
 
 def test_analyze_cranial_alt_frontal_com_correction_does_not_leak_into_x_or_y():
-    # a vector that's purely Z in the nasion-aligned frame generally has
+    # a vector that's purely Z in the sellion-aligned frame generally has
     # nonzero X/Y once expressed in the alt frame's own (differently
-    # rotated) coordinates - _nasion_com_z_offset avoids that by applying
+    # rotated) coordinates - _sellion_com_z_offset avoids that by applying
     # the same Z magnitude along each frame's own Z axis separately, never
     # rotating it between frames. checking here that turning com_translation
     # on only ever moves the alt registration's mesh centroid in Z, never X
@@ -305,10 +305,10 @@ def test_analyze_cranial_hc_polygon_lands_on_display_mesh_surface():
 
 @pytest.mark.slow
 def test_analyze_cranial_alt_frontal_display_mesh_has_no_rear_gouge():
-    # registering on subnasale instead of nasion tips the whole head into a
+    # registering on subnasale instead of sellion tips the whole head into a
     # different pose (landmark_align only pins the 3 chosen points to
     # REFERENCE_TRIANGLE, not the rest of the anatomy), and cranial_clip's
-    # rear/neck safety plane is hardcoded for the nasion pose - it'll gouge
+    # rear/neck safety plane is hardcoded for the sellion pose - it'll gouge
     # the occiput instead of cutting cleanly through the neck unless
     # analyze_cranial's alt pass calls harmonize with trim_rear_neck=False
     # (see clipping.cranial_clip's docstring).
@@ -316,11 +316,11 @@ def test_analyze_cranial_alt_frontal_display_mesh_has_no_rear_gouge():
     from craniumpy_core.template_registry import load_shipped_template
 
     mesh = load_shipped_template("template_xy_subanasal_com")
-    nasion = np.array([0.38218775629162527, -0.4543644444793813, 80.3018352613874])
+    sellion = np.array([0.38218775629162527, -0.4543644444793813, 80.3018352613874])
     left_tragus = np.array([61.0, -1.2, -4.1])
     right_tragus = np.array([-60.6, -1.7, -6.3])
     subnasale = np.array([0.2, -37.4, 73.4])
-    landmarks = np.array([nasion, left_tragus, right_tragus])
+    landmarks = np.array([sellion, left_tragus, right_tragus])
 
     result = analyze_cranial(mesh, landmarks, alt_frontal_landmark=subnasale, n_vertices=None)
 
@@ -328,9 +328,9 @@ def test_analyze_cranial_alt_frontal_display_mesh_has_no_rear_gouge():
     assert len(loops) == 1
     boundary_y = result.display_mesh.vertices[loops[0]][:, 1]
     # some Y-spread here is legitimate and expected even on a clean cut -
-    # the alt-frame boundary is genuinely tilted relative to the nasion
+    # the alt-frame boundary is genuinely tilted relative to the sellion
     # frame (see analyze_cranial's docstring, "angle back with the clipping
-    # plane"), so this can't be pinned as tight as the nasion-only case's
+    # plane"), so this can't be pinned as tight as the sellion-only case's
     # couple-mm bound. 20mm is comfortably above normal tilt noise and
     # comfortably below what a real rear gouge produces.
     assert np.ptp(boundary_y) < 20.0
@@ -344,11 +344,11 @@ def test_analyze_cranial_alt_frontal_hc_ring_flush_with_real_click_coords():
     from craniumpy_core.template_registry import load_shipped_template
 
     mesh = load_shipped_template("template_xy_subanasal_com")
-    nasion = np.array([0.15707502561413453, -3.7892594673064153, 80.08047788925751])
+    sellion = np.array([0.15707502561413453, -3.7892594673064153, 80.08047788925751])
     left_tragus = np.array([61.086913285524034, -0.20366638084653843, -3.517742714574581])
     right_tragus = np.array([-60.78038313441493, -0.7896673874549753, -5.6494919282106935])
     subnasale = np.array([0.28453607942679215, -36.80986701817919, 73.6710765540875])
-    landmarks = np.array([nasion, left_tragus, right_tragus])
+    landmarks = np.array([sellion, left_tragus, right_tragus])
 
     result = analyze_cranial(mesh, landmarks, alt_frontal_landmark=subnasale, n_vertices=None)
     _, dist, _ = trimesh.proximity.closest_point(result.display_mesh, result.display_hc_polygon)

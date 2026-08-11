@@ -160,45 +160,46 @@ def _build_report_files(
     craniometrics: CranioMeasurements | None,
     asymmetry: AsymmetryResult | None,
     config: dict,
-    nasion_mesh: trimesh.Trimesh | None = None,
-    nasion_landmarks: np.ndarray | None = None,
+    sellion_mesh: trimesh.Trimesh | None = None,
+    sellion_landmarks: np.ndarray | None = None,
 ) -> tuple[str, dict[str, bytes]]:
     """(folder_name, {filename: bytes}) - the same 4 files either delivery
-    method writes, named {stem}_registered.ply / _final.ply / _report.json /
-    _measurements.png (cranium target only).
+    method writes, named {stem}_rg.ply / _rg_{C|F}.ply / _report.json /
+    _measurements.png (cranium target only). {C|F} is cranial/facial, same
+    convention as results_folder_name.
 
-    nasion_mesh/nasion_landmarks are only given for a cranial analysis that
+    sellion_mesh/sellion_landmarks are only given for a cranial analysis that
     used an alt_frontal_landmark - final_mesh and landmarks are the ALT
     frame in that case (deliberately, that's what gets exported as the
     mesh - see analyze_cranial), but the saved 2D figure still has to come
-    from the nasion-frame mesh: it's a static picture, so it can't "rotate
+    from the sellion-frame mesh: it's a static picture, so it can't "rotate
     with the viewer" the way the display frame does, and craniometrics was
-    computed against nasion in the first place. left None (the default),
+    computed against sellion in the first place. left None (the default),
     this is just final_mesh/landmarks again - the ordinary single-frame
     case."""
     stem = stem_from_filename(original_filename)
     folder = results_folder_name(original_filename, target, config)
 
-    figure_mesh = nasion_mesh if nasion_mesh is not None else final_mesh
-    report_landmarks = nasion_landmarks if nasion_landmarks is not None else landmarks
+    figure_mesh = sellion_mesh if sellion_mesh is not None else final_mesh
+    report_landmarks = sellion_landmarks if sellion_landmarks is not None else landmarks
 
     report = {
         "generated": datetime.now(timezone.utc).isoformat(),
         "source_file": original_filename,
         "target": target,
         # always the landmarks craniometrics was actually computed from
-        # (nasion, always - see analyze_cranial) - NOT necessarily the
+        # (sellion, always - see analyze_cranial) - NOT necessarily the
         # frame the exported mesh below is in.
         "landmarks": {
-            "nasion": report_landmarks[0].tolist(),
+            "sellion": report_landmarks[0].tolist(),
             "left_tragus": report_landmarks[1].tolist(),
             "right_tragus": report_landmarks[2].tolist(),
         },
         "settings": config,
     }
-    if nasion_landmarks is not None:
+    if sellion_landmarks is not None:
         # the exported mesh's own frame, only present when it differs from
-        # the nasion one above
+        # the sellion one above
         report["display_frontal_landmark"] = landmarks[0].tolist()
     if craniometrics is not None:
         report["craniometrics"] = {
@@ -224,9 +225,10 @@ def _build_report_files(
     registered_export = trimesh.Trimesh(
         vertices=registered_mesh.vertices, faces=registered_mesh.faces, process=False
     )
+    target_suffix = "C" if target == "cranium" else "F"
     files = {
-        f"{stem}_registered.ply": registered_export.export(file_type="ply"),
-        f"{stem}_final.ply": final_mesh.export(file_type="ply"),
+        f"{stem}_rg.ply": registered_export.export(file_type="ply"),
+        f"{stem}_rg_{target_suffix}.ply": final_mesh.export(file_type="ply"),
         f"{stem}_report.json": json.dumps(report, indent=2).encode("utf-8"),
     }
     if craniometrics is not None:
@@ -246,14 +248,14 @@ def build_results_bundle(
     craniometrics: CranioMeasurements | None,
     asymmetry: AsymmetryResult | None,
     config: dict,
-    nasion_mesh: trimesh.Trimesh | None = None,
-    nasion_landmarks: np.ndarray | None = None,
+    sellion_mesh: trimesh.Trimesh | None = None,
+    sellion_landmarks: np.ndarray | None = None,
 ) -> bytes:
     """zip bytes for the results folder (see results_folder_name) - the
     browser-download path."""
     folder, files = _build_report_files(
         original_filename, registered_mesh, final_mesh, landmarks, target, craniometrics, asymmetry, config,
-        nasion_mesh, nasion_landmarks,
+        sellion_mesh, sellion_landmarks,
     )
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -272,8 +274,8 @@ def write_results_to_folder(
     craniometrics: CranioMeasurements | None,
     asymmetry: AsymmetryResult | None,
     config: dict,
-    nasion_mesh: trimesh.Trimesh | None = None,
-    nasion_landmarks: np.ndarray | None = None,
+    sellion_mesh: trimesh.Trimesh | None = None,
+    sellion_landmarks: np.ndarray | None = None,
 ) -> Path:
     """writes the results folder (see results_folder_name) straight into
     dest_dir - the desktop app's "save next to the original mesh" path, no
@@ -281,7 +283,7 @@ def write_results_to_folder(
     in. returns the folder written."""
     folder, files = _build_report_files(
         original_filename, registered_mesh, final_mesh, landmarks, target, craniometrics, asymmetry, config,
-        nasion_mesh, nasion_landmarks,
+        sellion_mesh, sellion_landmarks,
     )
     results_dir = dest_dir / folder
     results_dir.mkdir(parents=True, exist_ok=True)
