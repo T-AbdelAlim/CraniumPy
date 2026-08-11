@@ -1,0 +1,57 @@
+{
+  "generated": "2026-08-11T21:52:40.264644+00:00",
+  "source_file": "test_mesh_holes.ply",
+  "target": "face",
+  "landmarks": {
+    "sellion": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "left_tragus": [
+      60.31784621217936,
+      0.3931267220751842,
+      -81.8343610017245
+    ],
+    "right_tragus": [
+      -60.317846212368266,
+      0.3863974968630721,
+      -80.43358660933781
+    ]
+  },
+  "settings": {
+    "target": "face",
+    "landmarks": [
+      {
+        "x": 60.251399540049306,
+        "y": 12.115825829700228,
+        "z": 34.88103423969892
+      },
+      {
+        "x": 103.94299371724054,
+        "y": 53.1079688188381,
+        "z": -47.25268948125506
+      },
+      {
+        "x": -14.228128399851727,
+        "y": 43.325636183630245,
+        "z": -25.00804143431327
+      }
+    ],
+    "alt_frontal_landmark": null,
+    "com_translation": true,
+    "clipping": {
+      "mode": null,
+      "manual_plane_normal": null,
+      "manual_plane_origin": null
+    },
+    "harmonize": {
+      "n_vertices": null,
+      "repair": true,
+      "repair_method": "pymeshfix"
+    }
+  },
+  "asymmetry": {
+    "mean_asymmetry_index": 0.233600023623146
+  }
+}

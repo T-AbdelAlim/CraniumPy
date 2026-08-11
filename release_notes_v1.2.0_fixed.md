@@ -1,0 +1,1 @@
+Landmark renamed nasion -> sellion. New Visualization section: HC/BPD/OFD lines with a metrics panel, or template alignment. Repair is mandatory again and runs in background during analysis. Fixed clip boundary smoothing regression. Landmark colors updated, result file naming simplified (_rg/_rg_C/_rg_F), UI polish.
