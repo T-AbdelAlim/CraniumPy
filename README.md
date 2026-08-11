@@ -68,7 +68,7 @@ Rigid, landmark-triangle alignment only. A non-rigid mode exists in the codebase
 ### Comparing against a template
 After analysis, "Show template overlay" displays a semi-transparent reference template over the clipped result, with axes and center-of-gravity markers for both meshes.
 
-The "Compare against" dropdown selects a shipped template or a custom file. Shipped templates: a clipped cranium reference (with and without center-of-mass correction), the subnasale-landmark full-head variant, and a face reference (standard and subnasale variant). In the desktop app, custom template paths are remembered per target (cranial/facial). In the web app, they are not.
+The "Compare against" dropdown selects a shipped template or a custom file, always shown exactly as stored on disk (no live clipping to match your own mesh). Shipped templates: a clipped cranium reference (with and without center-of-mass correction), a subnasale-landmark full-head reference (with and without center-of-mass correction), and a face reference. The default selection matches your own settings automatically - the subnasale full-head reference if you used the secondary frontal landmark, the clipped cranium reference otherwise, both picking the center-of-mass variant to match your own "center-of-mass correction" checkbox. In the desktop app, custom template paths are remembered per target (cranial/facial). In the web app, they are not.
 
 ### Clipping
 Choose **cranial**, **facial**, or **manual** clipping. The clip boundary is left open, not capped - repair runs before clipping, so exported meshes may appear open at the cut.
@@ -91,7 +91,7 @@ Mirrors a facially-registered mesh across the midline and measures per-vertex di
 The heatmap and MFAI describe opposite halves of the face by default - a quirk carried over from the original algorithm (see `src/craniumpy_core/asymmetry.py`).
 
 ### Mesh cleanup
-After registration: repair (optional), clip, then resample to a target vertex count (optional, default 10000). The measurement algorithm was validated at 10000 vertices.
+After registration: repair (optional, unchecked by default), clip, then resample to a target vertex count (optional, default 10000). The measurement algorithm was validated at 10000 vertices.
 
 ### Saving your results
 Desktop app: "Save results" writes a `CP_{name}_{C|F}_{3|4}[_CoM]/` folder next to the original file, containing the registered mesh, the final mesh, a JSON report, and the measurement figure. `C`/`F` is cranial/facial, `3`/`4` is how many landmarks were used, and `_CoM` is only appended if center-of-mass correction was on - so two runs with different settings on the same file land in different folders instead of overwriting each other.

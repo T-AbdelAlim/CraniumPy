@@ -177,13 +177,12 @@ document.getElementById("texture-toggle").addEventListener("change", (event) => 
   applyClipPreview();
 });
 
-// --- landmark / result markers ---
-// landmark markers (green, draggable via alt+drag) are tracked by name so a
-// drag can look up and move the right one. result markers (blue, just a
-// display of what the backend actually used) are a flat list.
+// --- landmark markers ---
+// green, draggable via alt+drag, tracked by name so a drag can look up and
+// move the right one. cleared once the result mesh is shown - see
+// displayResultMesh.
 
 let landmarkMarkerObjects = {};
-let resultMarkers = [];
 
 function clearLandmarkMarkers() {
   for (const name of Object.keys(landmarkMarkerObjects)) {
@@ -192,14 +191,8 @@ function clearLandmarkMarkers() {
   landmarkMarkerObjects = {};
 }
 
-function clearResultMarkers() {
-  for (const m of resultMarkers) scene.remove(m);
-  resultMarkers = [];
-}
-
 function clearMarkers() {
   clearLandmarkMarkers();
-  clearResultMarkers();
 }
 
 function addLandmarkMarker(name, point) {
@@ -211,17 +204,6 @@ function addLandmarkMarker(name, point) {
   marker.position.set(point.x, point.y, point.z);
   scene.add(marker);
   landmarkMarkerObjects[name] = marker;
-  return marker;
-}
-
-function addResultMarker(point, color) {
-  const marker = new THREE.Mesh(
-    new THREE.SphereGeometry(markerRadius, 16, 16),
-    new THREE.MeshBasicMaterial({ color })
-  );
-  marker.position.set(point.x, point.y, point.z);
-  scene.add(marker);
-  resultMarkers.push(marker);
   return marker;
 }
 
@@ -787,16 +769,14 @@ async function showResults() {
   await displayResultMesh();
 }
 
-// shows the final (post clip/repair/resample) mesh with the landmarks the
-// backend actually used and the HC line, if there is one. pulled out of
-// showResults() so the template-overlay toggle can get back to this same
-// view without re-running the whole analysis.
+// shows the final (post clip/repair/resample) mesh with the HC line, if
+// there is one - no landmark markers, the mesh itself is the point once
+// registration/clipping is done. pulled out of showResults() so the
+// template-overlay toggle can get back to this same view without
+// re-running the whole analysis.
 async function displayResultMesh() {
   await displayMesh(`/api/sessions/${sessionId}/mesh/result`);
   if (!lastResultsData) return;
-  // landmarks always come back in [nasion, left_tragus, right_tragus] order
-  // (see api/schemas.py's ResultsResponse / results_bundle.py's report.json)
-  lastResultsData.landmarks.forEach((p, i) => addResultMarker(p, LANDMARK_COLORS[LANDMARK_NAMES[i]] ?? 0x60a5fa));
   // always call this, even with no polygon - drawHcLine(null) is what
   // clears a line left over from a previous *cranial* run before switching
   // to facial (craniometrics is only ever present for cranial results, but
@@ -811,7 +791,22 @@ async function displayResultMesh() {
 // always shown exactly as stored on disk - no live clipping - so a
 // whole-head template stays a whole head even when the patient's own mesh
 // is clipped down to just the cranium or face.
-const DEFAULT_TEMPLATE_BY_TARGET = { cranium: "clipped_template_xy_com", face: "template_face" };
+
+// which template makes the most sense to compare against depends on more
+// than just the target - a cranial result registered on the secondary
+// frontal landmark (4 picks) needs a full-head reference, since
+// clipped_template_xy is built in the nasion frame and won't line up; a
+// plain 3-landmark cranial result wants the clipped cranium reference
+// instead. either way it should match whether center-of-mass correction
+// ran, since that's baked into the template's own pose too.
+function defaultTemplateForCurrentResult() {
+  const target = document.querySelector('input[name="target"]:checked').value;
+  if (target === "face") return "template_face";
+  const usedAltFrontal = lastResultsData ? lastResultsData.used_alt_frontal : false;
+  const comOn = document.getElementById("com-translation").checked;
+  if (usedAltFrontal) return comOn ? "template_xy_subanasal_com" : "template_xy_subanasal";
+  return comOn ? "clipped_template_xy_com" : "clipped_template_xy";
+}
 
 let shippedTemplates = [];
 
@@ -859,7 +854,7 @@ function populateTemplateSelect() {
   for (const t of shippedTemplates) {
     const option = document.createElement("option");
     option.value = t.name;
-    option.textContent = `${t.name} - ${t.description}`;
+    option.textContent = t.description;
     select.appendChild(option);
   }
   const customOption = document.createElement("option");
@@ -870,7 +865,7 @@ function populateTemplateSelect() {
   const remembered = localStorage.getItem(templateChoiceStorageKey(target));
   select.value = remembered && [...select.options].some((o) => o.value === remembered)
     ? remembered
-    : (DEFAULT_TEMPLATE_BY_TARGET[target] || shippedTemplates[0]?.name || "custom");
+    : (defaultTemplateForCurrentResult() || shippedTemplates[0]?.name || "custom");
   updateTemplateCustomRow();
 }
 

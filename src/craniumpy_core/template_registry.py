@@ -20,15 +20,15 @@ else:
     TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 
 SHIPPED_TEMPLATES: dict[str, str] = {
-    # plain (no "_com") full-head templates aren't listed - they're just
-    # intermediate assets the clipped/face variants were built from, not
-    # something worth offering in the comparison dropdown. still on disk,
-    # tests load them directly by path.
-    "template_xy_subanasal_com": "Full head (average, subnasale landmark variant, center-of-mass shifted)",
-    "clipped_template_xy": "Cranium region only",
-    "clipped_template_xy_com": "Cranium region only, center-of-mass shifted",
-    "template_face": "Face region only",
-    "template_face_subnasale": "Face region only (subnasale variant)",
+    # template_xy.ply/template_xy_com.ply (no "subanasal") aren't listed -
+    # they're just intermediate assets the clipped variants were built
+    # from, not something worth offering in the comparison dropdown. still
+    # on disk, tests load them directly by path.
+    "template_xy_subanasal_com": "Full head (subnasale, CoM)",
+    "template_xy_subanasal": "Full head (subnasale)",
+    "clipped_template_xy": "Cranium only",
+    "clipped_template_xy_com": "Cranium only (CoM)",
+    "template_face": "Face only",
 }
 
 

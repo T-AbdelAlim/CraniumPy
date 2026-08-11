@@ -37,7 +37,7 @@ import numpy as np
 import trimesh
 from trimesh.intersections import slice_mesh_plane
 
-from .remesh import keep_largest_component
+from .remesh import clean_boundary, keep_largest_component
 
 
 def clip_plane(mesh: trimesh.Trimesh, normal, origin, invert: bool = False) -> trimesh.Trimesh:
@@ -94,11 +94,13 @@ def cranial_clip(mesh: trimesh.Trimesh, landmarks: np.ndarray, trim_rear_neck: b
     surface at a shallow angle on an unusually-shaped head, leaving
     disconnected debris behind - keep_largest_component cleans that up
     here. a shallow graze can also leave a sawtooth along the boundary
-    itself; that's remesh.clean_boundary's job, but it's deliberately not
-    called here - pipeline.harmonize runs it after resampling instead, so
-    it works on a far smaller mesh. callers that clip outside harmonize
-    (e.g. the template overlay endpoint) need to call clean_boundary
-    themselves if they want a smooth boundary.
+    itself; that's remesh.clean_boundary's job, called here too, before
+    any resampling - quadric decimation isn't boundary-aware, and running
+    it on a still-jagged boundary can fragment the loop into pieces too
+    small for _boundary_loops to even recognize as a loop afterward,
+    which silently defeats any later boundary cleanup entirely. smoothing
+    the boundary first means resample only ever simplifies an
+    already-clean loop.
 
     trim_rear_neck exists because the rear/neck plane's numbers are
     hardcoded in the registered frame, tuned for a nasion-based
@@ -115,7 +117,8 @@ def cranial_clip(mesh: trimesh.Trimesh, landmarks: np.ndarray, trim_rear_neck: b
         mesh = clip_plane(mesh, normal=[0, 0.6, 1], origin=[0, -60, -50], invert=False)
     normal, origin = _landmark_plane(landmarks)
     mesh = clip_plane(mesh, normal=normal, origin=origin, invert=False)
-    return keep_largest_component(mesh)
+    mesh = keep_largest_component(mesh)
+    return clean_boundary(mesh)
 
 
 def facial_clip(mesh: trimesh.Trimesh, landmarks: np.ndarray) -> trimesh.Trimesh:
@@ -124,11 +127,11 @@ def facial_clip(mesh: trimesh.Trimesh, landmarks: np.ndarray) -> trimesh.Trimesh
     right_tragus]. old facial_clip did the depth clip twice, ~1mm apart -
     collapsed that into one clip at the centroid depth.
 
-    same keep_largest_component cleanup as cranial_clip - two chained
-    clips can graze a surface and fragment it on an unlucky head shape
-    here too. see cranial_clip's docstring for why clean_boundary isn't
-    called here."""
+    same keep_largest_component/clean_boundary cleanup as cranial_clip -
+    two chained clips can graze a surface and fragment it on an unlucky
+    head shape here too."""
     centroid = np.mean(landmarks, axis=0)
     mesh = clip_plane(mesh, normal=[0, 0, 1], origin=[0, 20, centroid[2]], invert=False)
     mesh = clip_sphere(mesh, center=(0, 25, -25), radius=115, keep_inside=True)
-    return keep_largest_component(mesh)
+    mesh = keep_largest_component(mesh)
+    return clean_boundary(mesh)

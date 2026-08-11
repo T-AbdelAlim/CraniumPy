@@ -31,7 +31,7 @@ from .asymmetry import AsymmetryResult, calculate_asymmetry
 from .clipping import clip_plane, cranial_clip, facial_clip
 from .craniometrics import CranioMeasurements, extract_measurements, hc_slice_polygon, slice_center_of_mass
 from .registration.rigid import RigidTransform, landmark_align, procrustes_fit
-from .remesh import RepairMethod, ResampleMethod, clean_boundary, keep_largest_component, repair_mesh, resample_mesh
+from .remesh import RepairMethod, ResampleMethod, keep_largest_component, repair_mesh, resample_mesh
 
 AnalysisTarget = Literal["cranium", "face"]
 ClipMode = Literal["cranial", "facial", "manual"]
@@ -116,8 +116,8 @@ def harmonize(
     trim_rear_neck: bool = True,
     on_progress: ProgressCallback | None = None,
 ) -> trimesh.Trimesh:
-    """repair -> clip -> resample -> boundary cleanup, on a mesh that's
-    already been through register().
+    """repair -> clip (incl. boundary cleanup) -> resample, on a mesh
+    that's already been through register().
 
     clip_mode defaults to whatever's normal for the target ("cranial" for
     cranium, "facial" for face). pass "manual" with manual_plane_normal /
@@ -130,17 +130,17 @@ def harmonize(
     repairing after clipping caps the open boundary with a flat patch that
     was never supposed to be there.
 
-    boundary cleanup (clean_boundary, for cranial/facial clip_mode) runs
-    last, after resampling, not as part of clip itself - it's an iterative
-    relax+trim loop, and running it on a resampled ~10k-vertex mesh instead
-    of a raw scan's full resolution is a lot cheaper for the same result.
-    clip_plane's own output (manual clip_mode) was never boundary-cleaned
-    either, before or after this reordering.
+    boundary cleanup (clean_boundary, baked into cranial_clip/facial_clip)
+    has to run before resampling, not after: quadric decimation isn't
+    boundary-aware and can fragment a still-jagged loop into pieces too
+    small to detect as a loop at all, which makes any later cleanup a
+    silent no-op - resample only ever gets to work with an already-clean
+    boundary this way. clip_plane's own output (manual clip_mode) was
+    never boundary-cleaned.
 
-    n_vertices=None skips resampling, but boundary cleanup still runs on
-    whatever resolution the mesh is already at. repair=False skips repair
-    (matches the old facial_clip pipeline, which never repaired at all).
-    see clipping.py and remesh.py for what each method actually does.
+    n_vertices=None skips resampling. repair=False skips repair (matches
+    the old facial_clip pipeline, which never repaired at all). see
+    clipping.py and remesh.py for what each method actually does.
 
     trim_rear_neck is cranial-only, passed straight through to
     cranial_clip - set False for anything registered on a landmark other
@@ -155,7 +155,6 @@ def harmonize(
         result = repair_mesh(result, method=repair_method)
 
     _report(on_progress, "clip", f"clipping ({clip_mode})")
-    needs_boundary_cleanup = clip_mode in ("cranial", "facial")
     if clip_mode == "manual":
         if manual_plane_normal is None or manual_plane_origin is None:
             raise ValueError("manual clipping needs manual_plane_normal and manual_plane_origin")
@@ -171,7 +170,7 @@ def harmonize(
     else:
         raise ValueError(f"unknown clip_mode {clip_mode!r}")
 
-    # cranial_clip/facial_clip already keep the largest component - this
+    # cranial_clip/facial_clip already clean up after themselves - this
     # covers manual clip_mode, a bare clip_plane() call that isn't
     # wrapped by anything else. no-op otherwise.
     result = keep_largest_component(result)
@@ -179,10 +178,6 @@ def harmonize(
     if n_vertices is not None:
         _report(on_progress, "resample", f"resampling to {n_vertices} vertices ({resample_method})")
         result = resample_mesh(result, n_vertices=n_vertices, method=resample_method)
-
-    if needs_boundary_cleanup:
-        _report(on_progress, "clean", "smoothing clip boundary")
-        result = clean_boundary(result)
 
     if com_translation and target == "cranium":
         # landmarks here so the CoM slice skips past ear-level (see
