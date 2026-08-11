@@ -42,15 +42,13 @@ def procrustes_fit(source_pts: np.ndarray, target_pts: np.ndarray) -> RigidTrans
     flips it back.
 
     public (not just an internal step of procrustes_icp below) since it's
-    also the simplest correct way to recover the rigid transform between two
-    independent registrations of the same mesh - see pipeline.analyze_cranial,
-    which registers a mesh twice (once per frontal landmark choice) and needs
-    the exact transform between the two resulting frames to carry the HC ring
-    drawn in one frame over into the other. composing the two registrations'
-    own landmark_align transforms would need also accounting for each pass's
-    separate com_translation offset - fitting directly on the two (fully
-    corresponding, since it's the same mesh either way) vertex sets sidesteps
-    that entirely."""
+    also the simplest way to recover the rigid transform between two
+    independent registrations of the same mesh - see
+    pipeline.analyze_cranial, which registers a mesh twice (once per
+    frontal landmark choice) and needs the exact transform between the two
+    resulting frames to carry the HC ring from one into the other. fitting
+    directly on the two (fully corresponding) vertex sets is simpler than
+    composing each pass's own landmark_align transform by hand."""
     u1 = source_pts.mean(axis=0)
     u2 = target_pts.mean(axis=0)
     pp1 = source_pts - u1

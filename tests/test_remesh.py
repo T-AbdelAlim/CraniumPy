@@ -6,64 +6,45 @@ between the two repair methods rather than just saying so in a comment -
 pymeshfix gets the real test mesh fully watertight, trimesh's own repair
 only manages consistent winding.
 
-test_repair_mesh_reconnects_seam_duplicated_vertices is a regression test
-for a real bug: a patient scan (photogrammetry, not the clean shipped
-templates) had 18,000+ vertices duplicated at seams between reconstructed
-patches, never welded on export. pymeshfix's cleaning keeps only the single
-largest connected component and drops the rest - on that scan it kept one
-fragment and threw away most of the actual head. repair_mesh merges
-coincident vertices before handing off to pymeshfix now, specifically to
-avoid this.
+test_repair_mesh_reconnects_seam_duplicated_vertices covers unwelded seam
+vertices from photogrammetry exports: pymeshfix's cleaning keeps only the
+largest connected component, so unwelded duplicates at patch seams can
+throw away most of a scan. repair_mesh merges coincident vertices before
+handing off to pymeshfix to avoid that.
 
-test_repair_mesh_reconnects_seam_duplicated_vertices_with_texture is a
-regression test for the fix above breaking again the moment register()
-started carrying texture through: merge_vertices() treats two coincident
-vertices with different UV as different (correct for an intentional UV
-seam), so a textured mesh only got about half its duplicate seam vertices
-merged, leaving most of the fragmentation - and the original bug - back in
-place. repair_mesh drops visual data before merging now, since pymeshfix
-can't preserve it through repair anyway.
+test_repair_mesh_reconnects_seam_duplicated_vertices_with_texture covers
+the textured case: merge_vertices() treats two coincident vertices with
+different UV as different (correct for an intentional UV seam), so a
+textured mesh only gets about half its duplicate seam vertices merged
+unless repair_mesh drops visual data before merging - pymeshfix can't
+preserve it through repair anyway.
 
-test_keep_largest_component_* are regression tests for a real bug found on
-a real template file: clipping.py's cranial_clip chains an extra angled
-plane clip meant to trim stray rear/neck geometry, and on that particular
-head's proportions the plane grazed the actual cranium surface at a
-shallow angle instead of passing cleanly through the neck - slicing a mesh
-at a near-tangent angle leaves behind a scatter of tiny disconnected
-slivers (went from 1 component to 225 by the time all of cranial_clip's
-stages ran, checked stage by stage on the actual file). repair can't fix
-this - it runs before clip on purpose (see pipeline.harmonize's
-docstring). resample happened to hide it as a total accident of how
-quadric decimation works, which is exactly why it only became visible
-once resample defaulted to off.
+test_keep_largest_component_* cover cranial_clip's extra angled rear/neck
+plane grazing the cranium surface at a shallow angle instead of passing
+cleanly through the neck - a near-tangent slice leaves a scatter of tiny
+disconnected slivers behind. repair can't fix this since it runs before
+clip on purpose (see pipeline.harmonize's docstring), and resample only
+hides it as a side effect of quadric decimation, so it needs its own
+cleanup step regardless of resample settings.
 
-test_trim_boundary_slivers_* cover the sibling bug: even where a shallow
-graze doesn't fully disconnect debris, it still leaves the *boundary
-itself* jagged - a saw-tooth fringe of thin triangles right at the open
-edge, visible in the viewer as spikes along the clip line. found on a
-real subnasale template where the landmark plane grazes near the chin
-(boundary triangle aspect ratio up to 344). trim_boundary_slivers erodes
-that fringe back to the next real edge loop.
+test_trim_boundary_slivers_* cover the boundary-jaggedness side of the
+same grazing-cut problem: even where debris doesn't fully disconnect, the
+boundary itself is left jagged - a saw-tooth fringe of thin triangles
+right at the open edge. trim_boundary_slivers erodes that fringe back to
+the next real edge loop.
 
-test_clean_boundary_* cover the sequel bug: on a real scan, the ragged
-boundary wasn't just a few extreme slivers near one grazing spot - the
-landmark plane ran close to tangent to the head's surface for its *whole*
-length, so the fringe was hundreds of perfectly ordinary-shaped triangles
-each stepping up/down a couple mm. no aspect-ratio threshold touches an
-ordinary triangle, so trim_boundary_slivers alone left the sawtooth
-untouched. the fix that seemed obvious - relax the boundary loop toward a
-smooth curve - turned out to be actively dangerous on its own:
-test_relax_boundary_loops_alone_can_create_new_slivers is a regression
-test for that, since a boundary triangle often has two of its three
-vertices ON the loop, and moving those two independently (each toward
-ITS OWN loop neighbors, with no idea they share a triangle) can collapse
-a perfectly normal triangle into something worse than the raw clip left
-behind - checked on the real file, boundary max aspect ratio went from
-344 (raw) to 1521 after 20 rounds of relaxation with no cleanup between
-them, and the 2D silhouette that "proved" it was fixed didn't reveal any
-of this since the collapsing triangles are edge-on to that view.
-clean_boundary interleaves relaxation with a same-round sliver trim so
-the two can't compound.
+test_clean_boundary_* cover the case where the landmark plane runs close
+to tangent to the head's surface for its whole length, not just one
+grazing spot - the fringe becomes hundreds of ordinary-shaped triangles
+each stepping up/down a couple mm, which no aspect-ratio threshold alone
+catches. relaxing the boundary loop toward a smooth curve isn't safe on
+its own either: a boundary triangle often has two of its three vertices
+ON the loop, and moving those two independently (each toward its own loop
+neighbors, with no idea they share a triangle) can collapse a normal
+triangle into something worse than the raw clip left behind -
+test_relax_boundary_loops_alone_can_create_new_slivers covers exactly
+that. clean_boundary interleaves relaxation with a same-round sliver trim
+so the two can't compound.
 """
 
 from pathlib import Path

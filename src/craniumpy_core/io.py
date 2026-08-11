@@ -18,22 +18,17 @@ def strip_uninteresting_vertex_colors(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
     plain white) vertex-color visual, in place - mutates and returns the
     same mesh for convenient chaining at a load call site.
 
-    some real .ply files (not textured, not really vertex-painted either)
-    still carry an explicit but uniform vertex-color array - every vertex
-    literally [255, 255, 255, 255]. trimesh happily keeps that as real
-    per-vertex color data (visual.kind == "vertex"), which round-trips into
-    an exported GLB as a COLOR_0 attribute, which the frontend then
-    reasonably treats as "this mesh has real vertex colors" and renders
-    through a plain white material instead of the app's usual beige -
-    looking flatly grey under the scene lighting, and inconsistent with
-    every OTHER stage of the same mesh (repair_mesh drops all visual data
-    before it ever gets that far, so the registered/clipped/final stages
-    always render beige regardless). a real per-vertex-painted scan varies
-    from vertex to vertex; nothing legitimate is uniformly one flat color
-    across 100% of its surface - clearing the visual here (not silently
-    overriding it to some other color) means the frontend's own default
-    beige fallback is what applies, matching every later stage of the
-    same mesh. leaves a real texture (visual.kind == "texture") alone."""
+    some .ply files carry an explicit but uniform vertex-color array (every
+    vertex literally [255, 255, 255, 255]) even though they're not really
+    vertex-painted. trimesh keeps that as real per-vertex color data, which
+    round-trips into the exported GLB as a COLOR_0 attribute - the frontend
+    then renders it through a plain white material instead of the usual
+    beige, which looks grey and doesn't match the later pipeline stages
+    (repair_mesh drops visual data, so registered/clipped/final always
+    render beige). a real per-vertex-painted scan varies from vertex to
+    vertex, so a uniform color is never legitimate data - clearing it here
+    means the frontend's own beige fallback applies everywhere, not just
+    after repair. leaves a real texture (visual.kind == "texture") alone."""
     if mesh.visual.kind == "vertex":
         colors = mesh.visual.vertex_colors
         if len(colors) > 0 and np.all(colors == colors[0]):

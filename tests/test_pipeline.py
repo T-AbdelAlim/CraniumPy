@@ -259,20 +259,13 @@ def test_analyze_cranial_alt_frontal_com_uses_nasion_plane_not_independent():
 
 
 def test_analyze_cranial_alt_frontal_com_correction_does_not_leak_into_x_or_y():
-    # regression test for a real bug: an earlier version of the com fix
-    # computed the nasion-plane Z-offset as a raw-mesh-space vector
-    # (rotating [0,0,z] by the nasion alignment's own rotation) and applied
-    # that SAME rotated vector to the alt pass - which is wrong, because a
-    # vector that's purely Z in the nasion-aligned frame generally has
-    # nonzero X and Y components once expressed in the alt frame's OWN
-    # (differently rotated) coordinates. visually this showed up as the
-    # alt-registered display mesh floating noticeably above a nasion-plane
-    # reference overlay instead of sitting flush at the same height. fixed
-    # by applying the same Z MAGNITUDE along each frame's own Z axis
-    # separately, never rotating it between frames (see
-    # _nasion_com_z_offset's docstring). checking here that turning
-    # com_translation on only ever moves the alt registration's mesh
-    # centroid in Z, never X or Y, relative to turning it off.
+    # a vector that's purely Z in the nasion-aligned frame generally has
+    # nonzero X/Y once expressed in the alt frame's own (differently
+    # rotated) coordinates - _nasion_com_z_offset avoids that by applying
+    # the same Z magnitude along each frame's own Z axis separately, never
+    # rotating it between frames. checking here that turning com_translation
+    # on only ever moves the alt registration's mesh centroid in Z, never X
+    # or Y, relative to turning it off.
     mesh, landmarks = _ellipsoid_with_landmarks(asymmetric=True)
     alt_frontal = landmarks[0] + np.array([0.0, -15.0, -5.0])
 
@@ -301,27 +294,24 @@ def test_analyze_cranial_hc_polygon_lands_on_display_mesh_surface():
     assert np.ptp(result.display_hc_polygon[:, 1]) > 1.0
 
     # analyze_cranial snaps the transformed ring onto alt_mesh's own surface
-    # after fitting the rigid transform (see its docstring / the git history
-    # here) - regression test for a real bug where the two independent
-    # passes' repair/clip/resample steps left up to ~4mm of gap between the
-    # transformed ring and the display mesh on a real scan, worst near the
-    # boundary where clean_boundary reshapes things most. should be exact
-    # (up to floating point) now, not just "close."
+    # after fitting the rigid transform (see its docstring) - the two
+    # independent passes' repair/clip/resample steps don't stay in exact
+    # correspondence on their own, so without the snap there'd be a gap
+    # between ring and mesh, worst near the boundary. should be exact (up
+    # to floating point), not just close.
     _, dist, _ = trimesh.proximity.closest_point(result.display_mesh, result.display_hc_polygon)
     assert dist.max() < 1e-6
 
 
 @pytest.mark.slow
 def test_analyze_cranial_alt_frontal_display_mesh_has_no_rear_gouge():
-    # regression test for a real bug found on the shipped subnasale
-    # template: registering on subnasale instead of nasion tips the whole
-    # head into a different pose (landmark_align only pins the 3 chosen
-    # points to REFERENCE_TRIANGLE, not the rest of the anatomy), and
-    # cranial_clip's rear/neck safety plane - hardcoded for the nasion
-    # pose - ended up gouging a ~30mm notch into the actual occiput
-    # instead of cutting cleanly through the neck. analyze_cranial's alt
-    # pass now calls harmonize with trim_rear_neck=False specifically to
-    # avoid this (see clipping.cranial_clip's docstring).
+    # registering on subnasale instead of nasion tips the whole head into a
+    # different pose (landmark_align only pins the 3 chosen points to
+    # REFERENCE_TRIANGLE, not the rest of the anatomy), and cranial_clip's
+    # rear/neck safety plane is hardcoded for the nasion pose - it'll gouge
+    # the occiput instead of cutting cleanly through the neck unless
+    # analyze_cranial's alt pass calls harmonize with trim_rear_neck=False
+    # (see clipping.cranial_clip's docstring).
     from craniumpy_core.remesh import _boundary_loops
     from craniumpy_core.template_registry import load_shipped_template
 
@@ -337,25 +327,20 @@ def test_analyze_cranial_alt_frontal_display_mesh_has_no_rear_gouge():
     loops = _boundary_loops(result.display_mesh)
     assert len(loops) == 1
     boundary_y = result.display_mesh.vertices[loops[0]][:, 1]
-    # a real notch at the back measured ~30mm of Y-spread in this same
-    # loop before the fix. some Y-spread here is legitimate and expected
-    # even on a clean cut - the alt-frame boundary is genuinely tilted
-    # relative to the nasion frame (see analyze_cranial's docstring, "angle
-    # back with the clipping plane"), so this can't be pinned as tight as
-    # the nasion-only case's couple-mm bound. 20mm is comfortably above the
-    # tilt noise measured on the current shipped template and comfortably
-    # below the ~30mm the actual gouge produced.
+    # some Y-spread here is legitimate and expected even on a clean cut -
+    # the alt-frame boundary is genuinely tilted relative to the nasion
+    # frame (see analyze_cranial's docstring, "angle back with the clipping
+    # plane"), so this can't be pinned as tight as the nasion-only case's
+    # couple-mm bound. 20mm is comfortably above normal tilt noise and
+    # comfortably below what a real rear gouge produces.
     assert np.ptp(boundary_y) < 20.0
 
 
 @pytest.mark.slow
 def test_analyze_cranial_alt_frontal_hc_ring_flush_with_real_click_coords():
-    # regression test using the exact landmark coordinates from a real user
-    # session's saved report.json (not an idealized guess) - with those,
-    # the pre-snap ring landed mean 2.2mm / max 4.3mm off the display
-    # mesh's surface, visibly a gap hanging off the head in the viewer even
-    # though the rear-gouge bug above was already fixed. see
-    # analyze_cranial's snap-onto-alt_mesh-surface step.
+    # uses real landmark coordinates from a saved report.json rather than an
+    # idealized guess - exercises analyze_cranial's snap-onto-alt_mesh-surface
+    # step against actual click precision, not just synthetic points.
     from craniumpy_core.template_registry import load_shipped_template
 
     mesh = load_shipped_template("template_xy_subanasal_com")
@@ -372,20 +357,14 @@ def test_analyze_cranial_alt_frontal_hc_ring_flush_with_real_click_coords():
 
 @pytest.mark.slow
 def test_analyze_cranial_com_translation_off_has_no_gash():
-    # regression test for a real bug: with com_translation=False, the raw
-    # landmark-only registration (no Z-nudge) left the head sitting ~25mm
-    # further back than register()'s CoM correction normally puts it - on
-    # the shipped subnasale template, that was enough for BOTH
-    # cranial_clip's sphere trim (old radius 125, center (0,40,0)) and its
-    # rear/neck safety plane to start cutting into real occiput instead of
-    # background junk/neck, since both are hardcoded against the pose the
-    # CoM nudge produces. the sphere trim doesn't disconnect what it cuts
-    # (it's still attached to the main component), so keep_largest_component
-    # can't catch it - it shows up as a genuine torn gash reaching most of
-    # the way up the back of the head (measured up to Y=125 in that same
-    # loop, versus <2mm for a clean cut). fixed by widening the sphere trim
-    # (125 -> 175) and tying trim_rear_neck to com_translation, not just to
-    # which landmark drove registration (see clipping.cranial_clip and
+    # with com_translation=False, the raw landmark-only registration (no
+    # Z-nudge) leaves the head sitting further back than the CoM-corrected
+    # pose - both cranial_clip's sphere trim and its rear/neck safety plane
+    # are hardcoded against the CoM-corrected pose, so without matching
+    # trim_rear_neck to com_translation they cut into real occiput instead
+    # of background/neck junk. the sphere trim doesn't disconnect what it
+    # cuts, so keep_largest_component can't catch it either - it shows up
+    # as a genuine torn gash (see clipping.cranial_clip and
     # pipeline.analyze_cranial's docstrings).
     #
     # uses template_xy_com.ply (RAW, unclipped) rather than the shipped

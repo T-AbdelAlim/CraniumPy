@@ -26,11 +26,11 @@ CraniumPy registers and analyzes craniofacial 3D scans (.ply, .obj, .stl): landm
 Runs as a local web app or a standalone desktop app. The legacy PyQt5 version is on the `legacy-craniumpy` branch.
 
 Current capabilities (rigid registration and manual landmarking only - see [Registration](#registration)):
-- Rigid, landmark-based registration.
+- Rigid, landmark-based registration, with an optional secondary frontal landmark (e.g. subnasale) for the displayed/saved mesh.
 - Template overlay comparison with center-of-gravity offset.
 - Mesh repair ([PyMeshFix](https://pymeshfix.pyvista.org/)) and optional resampling to a target vertex count.
 - [Validated](http://dx.doi.org/10.1097/SCS.0000000000009448) automated head measurements.
-- Facial asymmetry scoring.
+- Facial asymmetry scoring, with an in-viewer colour scale.
 
 ![Reconstruction](resources/CraniumPy_info.png)
 
@@ -57,13 +57,17 @@ Click 3 points on the mesh - nasion, left tragus, right tragus, in that order - 
 
 There is no automatic landmark detection; landmarks are always picked manually.
 
+For cranial analysis, a checkbox unlocks a 4th, optional landmark (e.g. subnasale). It takes over the registration/clip/display frame for the mesh you see and save, while the actual measurements and the saved 2D figure always stay anchored on nasion.
+
 ### Registration
 Rigid, landmark-triangle alignment only. A non-rigid mode exists in the codebase but is not exposed in the UI.
+
+"Center-of-mass correction" nudges the head forward/back to compensate for imprecise landmark clicking. It only ever moves the head along its depth axis - never sideways or vertically - and, when the optional 4th landmark is used, the same correction is always derived from the nasion plane so both the nasion measurements and the displayed mesh stay consistent with each other.
 
 ### Comparing against a template
 After analysis, "Show template overlay" displays a semi-transparent reference template over the clipped result, with axes and center-of-gravity markers for both meshes.
 
-The "Compare against" dropdown selects a shipped template or a custom file. In the desktop app, custom template paths are remembered per target (cranial/facial). In the web app, they are not.
+The "Compare against" dropdown selects a shipped template or a custom file. Shipped templates: a clipped cranium reference (with and without center-of-mass correction), the subnasale-landmark full-head variant, and a face reference (standard and subnasale variant). In the desktop app, custom template paths are remembered per target (cranial/facial). In the web app, they are not.
 
 ### Clipping
 Choose **cranial**, **facial**, or **manual** clipping. The clip boundary is left open, not capped - repair runs before clipping, so exported meshes may appear open at the cut.
@@ -81,7 +85,7 @@ From a cranially-registered mesh:
 Validated for pediatric heads only; hard-coded sanity bounds apply (see `src/craniumpy_core/craniometrics.py`).
 
 ### Facial asymmetry calculation
-Mirrors a facially-registered mesh across the midline and measures per-vertex distance to the mirrored surface, producing a heatmap (mm) and a mean facial asymmetry index (MFAI).
+Mirrors a facially-registered mesh across the midline and measures per-vertex distance to the mirrored surface, producing a heatmap (mm) and a mean facial asymmetry index (MFAI). The viewer shows a colour scale bar alongside the heatmap; the saved figure has its own.
 
 The heatmap and MFAI describe opposite halves of the face by default - a quirk carried over from the original algorithm (see `src/craniumpy_core/asymmetry.py`).
 
@@ -89,7 +93,7 @@ The heatmap and MFAI describe opposite halves of the face by default - a quirk c
 After registration: repair (optional), clip, then resample to a target vertex count (optional, default 10000). The measurement algorithm was validated at 10000 vertices.
 
 ### Saving your results
-Desktop app: "Save results" writes a `CP_{name}_results/` folder next to the original file, containing the registered mesh, the final mesh, a JSON report, and the measurement figure.
+Desktop app: "Save results" writes a `CP_{name}_{C|F}_{3|4}[_CoM]/` folder next to the original file, containing the registered mesh, the final mesh, a JSON report, and the measurement figure. `C`/`F` is cranial/facial, `3`/`4` is how many landmarks were used, and `_CoM` is only appended if center-of-mass correction was on - so two runs with different settings on the same file land in different folders instead of overwriting each other.
 
 Web app: the same folder is downloaded as a zip.
 
@@ -103,7 +107,6 @@ Requires Python 3.11+.
 ```
 git clone https://github.com/T-AbdelAlim/CraniumPy.git
 cd CraniumPy
-git checkout rewrite-craniumpy
 python -m venv .venv
 .venv\Scripts\Activate.ps1      # windows/powershell. bash: source .venv/Scripts/activate. mac/linux: source .venv/bin/activate
 pip install -e .

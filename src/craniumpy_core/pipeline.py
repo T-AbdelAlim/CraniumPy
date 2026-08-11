@@ -77,27 +77,16 @@ def register(
         vertices=transform.apply(np.asarray(mesh.vertices)),
         faces=mesh.faces,
         process=False,
-        # a rigid transform doesn't touch UV coordinates at all, so there's
-        # no reason to drop the texture here - without this, register() was
-        # rebuilding the mesh bare (vertices+faces only) and silently
-        # throwing away visual/UV/material every time, before repair or
-        # clipping ever got a chance to touch it.
+        # rigid transform, doesn't touch UV - keep the texture/visual data
         visual=mesh.visual,
     )
     new_landmarks = transform.apply(landmarks)
 
     if com_translation:
         _report(on_progress, "register", "center-of-mass correction")
-        # slice_center_of_mass runs the full craniometrics slice-scan
-        # internally (extract_measurements) just to find a rough Z-offset -
-        # on a raw, high-poly scan (100k+ vertices, real patient photogrammetry
-        # rather than the clean shipped templates) that's genuinely slow, 10+
-        # seconds on its own. doing it on a decimated proxy instead of the
-        # full mesh cuts that by roughly 8x with no effect on the final
-        # reported measurements: nothing downstream trusts this value beyond
-        # "roughly centered" - harmonize() does its own precise re-centering
-        # later anyway, on the much smaller final mesh, independent of
-        # whatever happens here.
+        # decimated proxy so this stays fast on a raw 100k+-vertex scan -
+        # nothing downstream needs this precise, harmonize() re-centers
+        # again later on the small final mesh anyway
         proxy = resample_mesh(registered_mesh, n_vertices=20_000)
         com = slice_center_of_mass(proxy)
         z_offset = np.array([0.0, 0.0, com[2]])
@@ -135,21 +124,18 @@ def harmonize(
     interactive widget in the viewer) - keeps the +normal side, same as
     clipping.clip_plane.
 
-    repair runs BEFORE clipping, not after - repair fixes real defects in the
-    scan, and clipping is left open on purpose (see clipping.py). doing it the
-    other way around, like this used to, meant repair "fixed" the hole that
-    clipping had just cut, capping off the cranium's bottom or the face's back
-    with a flat patch that was never supposed to be there.
+    repair runs before clipping, not after: repair fixes real scan defects,
+    and the clip boundary is left open on purpose (see clipping.py).
+    repairing after clipping caps the open boundary with a flat patch that
+    was never supposed to be there.
 
-    n_vertices=None skips resampling. repair=False skips repair (this
-    matches what the old facial_clip pipeline did - it never repaired at
-    all). see clipping.py and remesh.py for what each method is actually
-    doing under the hood.
+    n_vertices=None skips resampling. repair=False skips repair (matches
+    the old facial_clip pipeline, which never repaired at all). see
+    clipping.py and remesh.py for what each method actually does.
 
-    trim_rear_neck is cranial-only and passed straight through to
+    trim_rear_neck is cranial-only, passed straight through to
     cranial_clip - set False for anything registered on a landmark other
-    than nasion (see cranial_clip's docstring for why that plane can't be
-    trusted outside the frame it was tuned against).
+    than nasion (see cranial_clip's docstring for why).
     """
     if clip_mode is None:
         clip_mode = "cranial" if target == "cranium" else "facial"
@@ -175,10 +161,9 @@ def harmonize(
     else:
         raise ValueError(f"unknown clip_mode {clip_mode!r}")
 
-    # cranial_clip/facial_clip already clean up after themselves (see
-    # clipping.py) - this is for the manual clip_mode, a single clip_plane()
-    # call that isn't wrapped by anything, but can in principle graze the
-    # surface and fragment it the same way. no-op the rest of the time.
+    # cranial_clip/facial_clip already clean up after themselves - this
+    # covers manual clip_mode, a bare clip_plane() call that isn't
+    # wrapped by anything else. no-op otherwise.
     result = keep_largest_component(result)
 
     if n_vertices is not None:
@@ -186,20 +171,15 @@ def harmonize(
         result = resample_mesh(result, n_vertices=n_vertices, method=resample_method)
 
     if com_translation and target == "cranium":
-        # landmarks here so the CoM slice itself skips past ear-level (see
-        # slice_center_of_mass/extract_measurements's landmarks param) -
-        # cranial_clip keeps the raw landmark-plane boundary on purpose
-        # (the ears stay attached to the clipped mesh), so this mesh can
-        # still have them.
+        # landmarks here so the CoM slice skips past ear-level (see
+        # slice_center_of_mass/extract_measurements) - the clip keeps the
+        # raw landmark plane on purpose, so the ears are still attached.
         #
-        # Z (depth) only - same axis register()'s own com_translation step
-        # corrects, on purpose. this used to also subtract com[0] (X, left-
-        # right), which was wrong: com_translation is there to compensate
-        # for how far forward/back imprecise landmark picking left the head
-        # sitting, not to re-center it side to side or vertically (Y was
-        # already never touched) - a real leftward or rightward CoM offset
-        # is often genuine anatomy (plagiocephaly, facial asymmetry), not
-        # something to silently erase by nudging the whole mesh sideways.
+        # Z (depth) only, same as register()'s own com_translation - this
+        # step exists to compensate for imprecise landmark picking along
+        # depth, not to re-center the head side to side or vertically. a
+        # real left/right CoM offset is often genuine anatomy
+        # (plagiocephaly, facial asymmetry) and shouldn't get erased.
         com = slice_center_of_mass(result, landmarks=landmarks)
         result.vertices = result.vertices - np.array([0.0, 0.0, com[2]])
 
@@ -249,18 +229,16 @@ def analyze(
         repair_method=repair_method,
         resample_method=resample_method,
         com_translation=com_translation,
-        # trim_rear_neck tied to com_translation, not just hardcoded True -
-        # see clipping.cranial_clip's docstring: that safety plane assumes a
-        # pose register()'s CoM nudge is what actually produces, and turning
-        # the nudge off drags real cranium into its path.
+        # tied to com_translation, not hardcoded True - cranial_clip's
+        # rear/neck safety plane assumes the pose the CoM nudge produces
         trim_rear_neck=com_translation,
         on_progress=on_progress,
     )
 
     _report(on_progress, "analyze", "computing measurements")
-    # landmarks here for the same reason as harmonize()'s com_translation
-    # step - the clipped mesh still has the ears attached, so the HC/BPD
-    # slice search needs to skip past them itself.
+    # landmarks here for the same reason as harmonize()'s com_translation -
+    # the clipped mesh still has the ears attached, so the HC/BPD slice
+    # search needs to skip past them itself
     craniometrics_result = extract_measurements(harmonized, landmarks=reg.landmarks) if target == "cranium" else None
     asymmetry_result = calculate_asymmetry(harmonized) if target == "face" else None
     _report(on_progress, "done", "")
@@ -274,31 +252,16 @@ def analyze(
 
 
 def _nasion_com_z_offset(mesh: trimesh.Trimesh, landmarks: np.ndarray) -> float:
-    """the same center-of-mass Z-nudge register()'s com_translation branch
-    computes (see its docstring) - a rough Z-offset from a decimated proxy's
-    slice scan, in the nasion-tragus-aligned frame.
+    """the center-of-mass Z-nudge register()'s com_translation branch
+    computes, in the nasion-tragus-aligned frame - a plain float, not a
+    vector, since analyze_cranial needs to reuse this magnitude along
+    each frame's own Z axis, not carry a rotated vector between frames.
 
-    exists so analyze_cranial's alt-frontal pass can reuse the SAME
-    magnitude the nasion pass would use, instead of computing its own:
-    calling register()'s independent com_translation logic separately for
-    the alt pass scans slices in whatever frame THAT pass's own landmark
-    triangle produced, and subnasale-tragus defines a genuinely different
-    (more forward-tilted) plane than nasion-tragus does. "center of mass of
-    the head" isn't supposed to depend on which frontal point you happened
-    to click.
-
-    deliberately returns a bare float (not a raw-mesh-space vector) - see
-    analyze_cranial's docstring for why an earlier version of this that
-    rotated the offset into raw space, so it could be applied once before
-    either landmark triangle got aligned, was wrong: the same physical
-    vector decomposes differently into X/Y/Z depending which frame you
-    view it through, so "purely Z in the nasion frame" became a mix of
-    all three axes once rotated into the alt frame - visibly, the alt
-    display mesh floated up/sideways relative to a nasion-plane reference
-    instead of sitting flat like the nasion frame does. applying this
-    SAME NUMBER along each frame's own Z axis separately (never rotating
-    it) is what actually keeps X and Y untouched in both frames, same
-    convention as harmonize()'s own com_translation step."""
+    exists so the alt-frontal pass can reuse the same correction the
+    nasion pass would use, instead of scanning slices in whatever frame
+    its own (e.g. subnasale-tragus) triangle produced - "center of mass
+    of the head" shouldn't depend on which frontal point you clicked.
+    """
     nasion_align = landmark_align(landmarks)
     aligned_mesh = trimesh.Trimesh(
         vertices=nasion_align.apply(np.asarray(mesh.vertices)), faces=mesh.faces, process=False
@@ -337,53 +300,37 @@ def analyze_cranial(
 ) -> CranialAnalysisResult:
     """the cranial pipeline, with an optional second frontal landmark (e.g.
     subnasale) that takes over as the registration/clip/display frame for
-    everything shown, downloaded, or saved - while the craniometrics numbers
-    and the saved 2D figure always come from the nasion pass, unconditionally.
+    everything shown, downloaded, or saved - while the craniometrics
+    numbers and the saved 2D figure always come from the nasion pass.
 
-    nasion has to stay the anchor for those two specifically, not just be one
-    option among several: the HC circumference search (extract_measurements)
-    and the whole cranial_clip geometry were both tuned and validated against
-    a nasion-based registration. substituting a different point there doesn't
-    just move the frontal landmark - it changes which rotation the REST of
-    the mesh needs to land the (still 3-point) triangle on the same reference
-    triangle, which silently drags the whole head into a different pose. on
-    a real file, that pose change was enough to make cranial_clip's fixed
-    rear/neck safety plane gouge straight into the actual occiput instead of
-    cutting cleanly through the neck - not debris this time (keep_largest_
-    component's job), a genuine notch carved into the kept cranium, since
-    the surface dents inward without ever fully disconnecting. that's why
-    the alt pass below calls harmonize with trim_rear_neck=False - see
-    clipping.cranial_clip's docstring for the full story. separately, using
-    something other than nasion also made the HC slice search land at ear
-    level instead of above it. both of those are exactly why nasion has to
-    be mandatory and untouchable for the actual measurement, with anything
-    else opt-in and downstream of it.
+    nasion stays the anchor for those two because the HC circumference
+    search and the cranial_clip geometry are both tuned against a
+    nasion-based registration. swapping in a different frontal point
+    doesn't just move that one landmark - landmark_align still pins all 3
+    points to the same reference triangle, so the REST of the head has to
+    rotate differently to make that work, dragging the whole mesh into a
+    different pose. cranial_clip's rear/neck safety plane and the HC
+    slice search both assume the nasion pose specifically, so anything
+    else needs its own handling (trim_rear_neck=False for the alt pass,
+    see cranial_clip's docstring) rather than trusting nasion-tuned
+    geometry blindly.
 
-    the two passes register the exact same input mesh independently, so
-    nasion_reg.mesh and alt_reg.mesh (before harmonize's repair/clip/resample
-    touches either one) are still in full 1:1 vertex correspondence -
-    fitting a rigid transform between them (procrustes_fit) is what actually
-    carries the HC ring from the nasion frame into the display frame
-    correctly, without having to reason analytically about each pass's own
-    separate com_translation offset.
+    the two passes register the same input mesh independently, so
+    nasion_reg.mesh and alt_reg.mesh (before harmonize touches either
+    one) are still in full 1:1 vertex correspondence - fitting a rigid
+    transform between them (procrustes_fit) is what carries the HC ring
+    from the nasion frame into the display frame.
 
-    com_translation is nasion-anchored too, same reasoning: register()'s own
-    com_translation logic scans horizontal slices in whatever frame ITS
-    landmark triangle produced, so calling it independently for the alt pass
-    would measure "center of mass" against the subnasale-tragus plane
-    instead of the anatomically standard nasion-tragus one - a genuinely
-    different, more forward-tilted cut. _nasion_com_z_offset computes that
-    correction's MAGNITUDE once, from nasion-tragus - the nasion pass below
-    is otherwise untouched (register() handles its own com_translation
-    exactly like it always has), and the alt pass reuses that same number,
-    applied along its OWN Z axis after its OWN alignment (never routed
-    through register()'s independent com_translation, and never rotated
-    into raw mesh space first - see _nasion_com_z_offset's docstring for why
-    that's the part that actually matters: the same physical shift, viewed
-    through two differently-rotated frames, doesn't decompose into the same
-    X/Y/Z split in both, so "purely Z" in one frame can leak into the
-    other's left-right or vertical axis if you're not careful about which
-    frame you apply it in)."""
+    com_translation is nasion-anchored too: _nasion_com_z_offset computes
+    the correction's magnitude once, from nasion-tragus. the nasion pass
+    is untouched (register() handles its own com_translation as usual);
+    the alt pass reuses that same number along its own Z axis after its
+    own alignment, never through register()'s independent logic and
+    never rotated in from the nasion frame - a vector that's purely Z in
+    one frame generally isn't purely Z once viewed through a differently
+    rotated one, so rotating it in would leak into the alt frame's left-
+    right or vertical axis instead of staying a pure depth correction.
+    """
     com_z = _nasion_com_z_offset(mesh, landmarks) if (alt_frontal_landmark is not None and com_translation) else None
 
     nasion_reg = register(mesh, landmarks, target="cranium", com_translation=com_translation, on_progress=on_progress)
@@ -399,10 +346,6 @@ def analyze_cranial(
         repair_method=repair_method,
         resample_method=resample_method,
         com_translation=com_translation,
-        # see clipping.cranial_clip's docstring - trim_rear_neck=False for
-        # the alt pass below isn't the only case that needs it off; turning
-        # com_translation off drags the SAME plane into real cranium even
-        # in the nasion frame.
         trim_rear_neck=com_translation,
         on_progress=on_progress,
     )
@@ -426,12 +369,9 @@ def analyze_cranial(
         )
 
     alt_landmarks = np.array([alt_frontal_landmark, landmarks[1], landmarks[2]], dtype=np.float64)
-    # com_translation=False here always - never let register() derive its
-    # own independent correction from the subnasale-tragus plane. when
-    # com_z is set (com_translation was on), it gets applied right below,
-    # along the alt frame's own Z axis specifically - not routed through
-    # register() and not rotated in from another frame (see this function's
-    # docstring / _nasion_com_z_offset's for why that distinction matters).
+    # com_translation=False here always - register() never derives its own
+    # correction from the subnasale-tragus plane. com_z (if set) gets
+    # applied below instead, along the alt frame's own Z axis.
     alt_reg = register(mesh, alt_landmarks, target="cranium", com_translation=False, on_progress=on_progress)
     if com_z is not None:
         z_offset = np.array([0.0, 0.0, com_z])
@@ -456,18 +396,14 @@ def analyze_cranial(
     transform = procrustes_fit(np.asarray(nasion_reg.mesh.vertices), np.asarray(alt_reg.mesh.vertices))
     display_hc_polygon = transform.apply(nasion_hc_polygon) if nasion_hc_polygon is not None else None
     if display_hc_polygon is not None:
-        # transform is exact for the raw registered meshes (same points,
-        # differently posed - see the class docstring), but nasion_mesh and
-        # alt_mesh have each been through their own independent repair/clip/
-        # resample after that, which doesn't preserve correspondence. on a
-        # real scan (subnasale template) that was enough for the ring to
-        # land a couple mm off the display mesh's actual surface, worse
-        # near the boundary where clean_boundary does the most local
-        # reshaping - visibly a gap in the viewer even though the anatomy
-        # underneath is right. snapping onto alt_mesh's own surface here
-        # guarantees the drawn line is always exactly where the mesh being
-        # shown actually is, regardless of how much the two passes'
-        # post-processing happened to diverge.
+        # transform is exact for the pre-harmonize registered meshes, but
+        # nasion_mesh and alt_mesh each go through their own independent
+        # repair/clip/resample after that, which doesn't preserve vertex
+        # correspondence - so the transformed ring can end up a couple mm
+        # off the display mesh's actual surface. snapping onto alt_mesh's
+        # surface here guarantees the drawn line always sits exactly on
+        # the mesh being shown, regardless of how much the two passes'
+        # post-processing diverged.
         display_hc_polygon, _, _ = trimesh.proximity.closest_point(alt_mesh, display_hc_polygon)
 
     _report(on_progress, "done", "")

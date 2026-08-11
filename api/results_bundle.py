@@ -47,16 +47,13 @@ def stem_from_filename(filename: str) -> str:
 
 
 def results_folder_name(original_filename: str, target: str, config: dict) -> str:
-    """CP_{stem}_{C|F}_{3|4}[_CoM] - what actually went into this run, not a
-    generic "_results" suffix. landmark count is 4 when an
-    alt_frontal_landmark was given (see pipeline.analyze_cranial - that's a
-    genuinely different registration/clip/display frame, not just a label),
-    and _CoM records whether center-of-mass correction ran (see
-    pipeline.register - turning it off measurably changes where the head
-    lands before clipping). two runs against the same source file with
-    different settings now land in different folders instead of one
-    silently overwriting the other, and the folder name itself tells you
-    which run is which without having to open report.json."""
+    """CP_{stem}_{C|F}_{3|4}[_CoM] - what actually went into this run, not
+    a generic "_results" suffix: landmark count (4 when an
+    alt_frontal_landmark was given, see pipeline.analyze_cranial) and
+    whether center-of-mass correction ran. two runs with different
+    settings on the same file land in different folders instead of one
+    overwriting the other, and the name tells you which is which without
+    opening report.json."""
     stem = stem_from_filename(original_filename)
     target_suffix = "C" if target == "cranium" else "F"
     landmark_count = 4 if config.get("alt_frontal_landmark") else 3
@@ -171,19 +168,15 @@ def _build_report_files(
     _measurements.png (cranium target only).
 
     nasion_mesh/nasion_landmarks are only given for a cranial analysis that
-    used an alt_frontal_landmark (see pipeline.analyze_cranial) - final_mesh
-    and landmarks are the ALT frame in that case (that's deliberately what
-    gets exported as the actual mesh - see the docstring on analyze_cranial
-    for why), but the saved 2D figure still has to be built from the
-    nasion-frame mesh, unconditionally: it's a static picture, so it can't
-    "rotate with the viewer" as the display frame does, and craniometrics
-    was computed against nasion in the first place. left None (the default),
-    this is just final_mesh/landmarks again - the ordinary single-frame case."""
+    used an alt_frontal_landmark - final_mesh and landmarks are the ALT
+    frame in that case (deliberately, that's what gets exported as the
+    mesh - see analyze_cranial), but the saved 2D figure still has to come
+    from the nasion-frame mesh: it's a static picture, so it can't "rotate
+    with the viewer" the way the display frame does, and craniometrics was
+    computed against nasion in the first place. left None (the default),
+    this is just final_mesh/landmarks again - the ordinary single-frame
+    case."""
     stem = stem_from_filename(original_filename)
-    # cranial and facial analyses of the same source mesh used to collide on
-    # one folder name, so the second save silently overwrote the first -
-    # results_folder_name's target/landmark-count/CoM suffix disambiguates
-    # them (and any other settings combination run against the same file).
     folder = results_folder_name(original_filename, target, config)
 
     figure_mesh = nasion_mesh if nasion_mesh is not None else final_mesh
@@ -222,12 +215,12 @@ def _build_report_files(
     # bare geometry only, no visual/UV - registered_mesh still carries
     # texture data at this point (register() deliberately keeps it, for the
     # live viewer), but trimesh's PLY writer stores UV as double-precision
-    # while vertex positions stay float, and doesn't emit a "TextureFile"
-    # comment pointing at the actual image - so the UV ends up orphaned data
-    # with no texture ever actually resolvable from the file, and the mixed
-    # float/double vertex record is exactly what made Meshmixer read the
-    # file as empty (final_mesh never has this problem: repair_mesh already
-    # strips visual data before repair runs, further up the pipeline).
+    # while vertex positions stay float, and never writes a "TextureFile"
+    # comment pointing at the actual image - so the UV is orphaned data with
+    # no texture resolvable from the file, and the mixed float/double
+    # vertex record makes some tools (Meshmixer) read the file as empty.
+    # final_mesh never has this problem since repair_mesh already strips
+    # visual data before repair runs, further up the pipeline.
     registered_export = trimesh.Trimesh(
         vertices=registered_mesh.vertices, faces=registered_mesh.faces, process=False
     )
@@ -256,7 +249,8 @@ def build_results_bundle(
     nasion_mesh: trimesh.Trimesh | None = None,
     nasion_landmarks: np.ndarray | None = None,
 ) -> bytes:
-    """zip bytes for CP_{stem}_results/ - the browser-download path."""
+    """zip bytes for the results folder (see results_folder_name) - the
+    browser-download path."""
     folder, files = _build_report_files(
         original_filename, registered_mesh, final_mesh, landmarks, target, craniometrics, asymmetry, config,
         nasion_mesh, nasion_landmarks,
@@ -281,9 +275,10 @@ def write_results_to_folder(
     nasion_mesh: trimesh.Trimesh | None = None,
     nasion_landmarks: np.ndarray | None = None,
 ) -> Path:
-    """writes CP_{stem}_results/ straight into dest_dir - the desktop app's
-    "save next to the original mesh" path, no zip/download step needed since
-    we already know a real folder to put it in. returns the folder written."""
+    """writes the results folder (see results_folder_name) straight into
+    dest_dir - the desktop app's "save next to the original mesh" path, no
+    zip/download step needed since we already know a real folder to put it
+    in. returns the folder written."""
     folder, files = _build_report_files(
         original_filename, registered_mesh, final_mesh, landmarks, target, craniometrics, asymmetry, config,
         nasion_mesh, nasion_landmarks,

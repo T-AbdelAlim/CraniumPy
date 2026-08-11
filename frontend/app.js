@@ -113,7 +113,7 @@ async function displayMesh(url) {
 
     // recompute normals ourselves regardless of what the GLB has - a
     // missing/empty NORMAL attribute is what makes a PBR material render
-    // solid black, learned that one the hard way
+    // solid black
     child.geometry.computeVertexNormals();
 
     // gated on selectionHasTexture too, not just material.map - see that
@@ -290,10 +290,9 @@ function applyAsymmetryHeatmap(heatmapValues) {
     // returns white at 0, so vertices with no asymmetry data (the
     // mirrored-out half, zeroed by design) pass straight through
     // unchanged, and only the half with real data gets tinted red/blue.
-    // first attempt just swapped in a flat unlit vertex-colored material
-    // for the whole mesh - technically showed the data fine, but the
-    // zeroed half rendered as a featureless white blob with no surface
-    // detail at all, which is far worse to actually read.
+    // swapping in a flat unlit vertex-colored material for the whole mesh
+    // instead would show the data fine but flatten the zeroed half into a
+    // featureless white blob with no surface detail.
     for (const mat of [child.material, child.userData.texturedMaterial, child.userData.plainMaterial]) {
       if (!mat) continue;
       mat.vertexColors = true;
@@ -818,13 +817,10 @@ const DEFAULT_TEMPLATE_BY_TARGET = { cranium: "clipped_template_xy_com", face: "
 
 // whatever template you pick (shipped or custom) gets clipped live, the
 // same way the real pipeline clips the patient's mesh - see
-// _apply_overlay_clip in api/routers/mesh.py. deliberately NOT using the
-// separately-shipped clipped_template_xy(_com).ply files for this: checked
-// their actual bounds once and they were clipped ~1.2mm off from where a
-// freshly-registered mesh's own landmark plane sits, a leftover from
-// however they got baked, and that mismatch only became visible once the
-// overlay started comparing clipped-vs-clipped. clipping live means there's
-// nothing pre-baked left to drift out of sync.
+// _apply_overlay_clip in api/routers/mesh.py. deliberately not using the
+// separately-shipped clipped_template_xy(_com).ply files for this: a
+// pre-baked file can silently drift out of sync with clipping.py, clipping
+// live can't.
 const CLIP_BY_TARGET = { cranium: "cranial", face: "facial" };
 
 let shippedTemplates = [];
@@ -845,9 +841,7 @@ function isDesktopApp() {
 
 // wraps the native file dialog call so a failure (bad file filter string,
 // pywebview not ready yet, whatever) shows up as a message instead of the
-// button just silently doing nothing - that's exactly how a real bug here
-// slipped through before: create_file_dialog raised (invalid file filter),
-// nothing caught the rejection, "choose file(s)" just did nothing at all.
+// button just silently doing nothing.
 async function pickFileNative(allowMultiple, onError) {
   try {
     return await window.pywebview.api.pick_file(allowMultiple);

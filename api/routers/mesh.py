@@ -116,42 +116,27 @@ def list_templates() -> list[TemplateInfo]:
 def _apply_overlay_clip(mesh: trimesh.Trimesh, clip: str | None) -> trimesh.Trimesh:
     """optionally clips a template mesh the same way the real pipeline clips
     a patient's mesh, using REFERENCE_TRIANGLE (or, for facial, its
-    nasion-recentered counterpart) as stand-in landmarks (a template sits in
-    the registered frame by definition, so its own landmarks would land
-    there anyway). backs the "show template overlay" viewer feature - it
-    compares against the patient's *clipped* result now, so the template
-    needs the same cut to line up.
+    nasion-recentered counterpart) as stand-in landmarks - a template sits
+    in the registered frame by definition, so its own landmarks would land
+    there anyway. backs the "show template overlay" viewer feature, which
+    compares against the patient's *clipped* result, so the template needs
+    the same cut to line up.
 
-    the facial branch needs FACE_REFERENCE_TRIANGLE, not REFERENCE_TRIANGLE:
-    pipeline.register() shifts the mesh an extra step for facial targets so
-    the nasion sits at the origin, and REFERENCE_TRIANGLE was never adjusted
-    to match that shift. using the raw triangle here clipped the template
-    around z=0 while a real face-target-registered mesh's landmarks sit
-    around z=-57, so the overlay landed nowhere near the actual face.
+    facial needs FACE_REFERENCE_TRIANGLE, not REFERENCE_TRIANGLE: register()
+    shifts the mesh an extra step for facial targets so the nasion sits at
+    the origin, and REFERENCE_TRIANGLE was never adjusted for that shift.
 
-    this clips live rather than shipping separate pre-clipped template
-    files, on purpose: a static "clipped_template_xy_com.ply" is exactly the
-    kind of thing that silently drifts out of sync the next time
-    clipping.py's cranial_clip changes (it already had - checked its actual
-    bounds against a freshly-registered mesh and it was clipping ~1.2mm
-    above the landmark plane instead of at it, a leftover from however it
-    got generated originally, and the mismatch only became visible once the
-    overlay started comparing clipped-vs-clipped instead of full-vs-full).
-    computing it live means it can never go stale again.
+    clips live instead of shipping separate pre-clipped template files, so
+    it can't drift out of sync with clipping.py the way a static
+    "clipped_template_xy_com.ply" eventually would.
 
-    trim_rear_neck=False, always, for the cranial branch - not every
-    shipped template was registered with center-of-mass correction baked
-    into its pose (the plain "template_xy"/"clipped_template_xy", without
-    the "_com" suffix, weren't). cranial_clip's rear/neck safety plane is
-    hardcoded against the pose CoM correction produces (see its docstring),
-    and clipping one of the non-CoM templates with that plane still active
-    reproduced the exact same gouge as pipeline.analyze_cranial's
-    com_translation=False bug - measured ~58mm of boundary Y-spread on
-    clipped_template_xy versus <1mm clean. skipping it here costs nothing
-    real: this is comparison-overlay geometry, not the measurement
-    pipeline, and the sphere trim + keep_largest_component + clean_boundary
-    already handle whatever stray junk a template might have without that
-    plane's help."""
+    trim_rear_neck=False always, for the cranial branch - not every shipped
+    template was registered with CoM correction baked into its pose, and
+    cranial_clip's rear/neck safety plane is hardcoded against the pose CoM
+    correction produces (see its docstring). skipping it here is fine: this
+    is comparison-overlay geometry, not the measurement pipeline, and the
+    sphere trim + keep_largest_component + clean_boundary already handle
+    whatever stray junk a template might have."""
     if clip is None:
         return mesh
     if clip == "cranial":
@@ -173,10 +158,9 @@ def get_custom_template_mesh(path: str, clip: str | None = None):
     fresh every call, nothing kept server-side - the "remembering" happens
     client-side, in the frontend's localStorage.
 
-    only makes sense because both the desktop app and the documented
-    `uvicorn api.main:app` web-service launch bind to 127.0.0.1 - the
-    browser and this server are always the same machine, same trust
-    boundary as opening the file in Explorer already."""
+    fine to trust a raw local path here since both the desktop app and the
+    web-service launch bind to 127.0.0.1 - browser and server are always the
+    same machine, same trust boundary as opening the file in Explorer."""
     mesh_path = Path(path)
     if not mesh_path.is_file():
         raise HTTPException(status_code=400, detail=f"file not found: {path}")
@@ -214,9 +198,9 @@ def get_template_mesh(name: str, clip: str | None = None):
     """GLB export of a shipped template - used for the "show template
     overlay" viewer feature, comparing a patient's clipped result mesh
     against a reference. pass clip=cranial or clip=facial to get it clipped
-    the same way live (see _apply_overlay_clip) instead of picking one of
+    live the same way (see _apply_overlay_clip) instead of picking one of
     the separately-named clipped_template_* files, which are pre-baked and
-    can (and did) drift out of sync with clipping.py."""
+    can drift out of sync with clipping.py."""
     if name not in SHIPPED_TEMPLATES:
         raise HTTPException(status_code=404, detail=f"unknown template {name!r}")
     mesh = load_shipped_template(name)
@@ -384,9 +368,9 @@ def get_results(session_id: str) -> ResultsResponse:
         m = r["craniometrics"]
         # precomputed at analyze time, already in whatever frame
         # session.result_mesh is actually in (see pipeline.analyze_cranial) -
-        # recomputing it live here the way this used to work would slice
-        # the WRONG mesh at a Y that only means anything in the nasion
-        # frame, once an alt_frontal_landmark is in play.
+        # recomputing it live here would slice the wrong mesh at a Y that
+        # only means anything in the nasion frame, once an alt_frontal_landmark
+        # is in play.
         polygon = r["display_hc_polygon"]
         craniometrics = CraniometricsResponse(
             slice_height=m.slice_height,
@@ -430,10 +414,9 @@ def export_mesh(session_id: str, stage: str):
     else:
         raise HTTPException(status_code=400, detail="stage must be 'original', 'registered', or 'result'")
 
-    # include_normals=True matters here - trimesh leaves the NORMAL accessor
-    # out entirely otherwise (checked the raw glTF JSON myself, attributes
-    # was just {"POSITION": ...}). without normals the mesh renders solid
-    # black in the browser no matter what color it's supposed to be.
+    # include_normals=True matters - trimesh leaves the NORMAL accessor out
+    # entirely otherwise, and without normals the mesh renders solid black
+    # in the browser no matter what color it's supposed to be.
     glb_bytes = mesh.export(file_type="glb", include_normals=True)
     return Response(content=glb_bytes, media_type="model/gltf-binary")
 

@@ -86,65 +86,26 @@ def cranial_clip(mesh: trimesh.Trimesh, landmarks: np.ndarray, trim_rear_neck: b
     landmark-triangle plane as the real cranial boundary.
 
     the boundary is deliberately the raw landmark plane, not adjusted for
-    the ears - the cranial region this clips out is defined by the
-    landmarks themselves, full stop. (an earlier version of this function
-    raised the boundary to clear the ears, on the theory that it was the
-    same root cause as the HC slice landing on the ears - it isn't the fix
-    that was actually wanted: the clip stays at the landmarks, only the HC
-    measurement itself should skip past ear-level slices, see
-    extract_measurements's landmarks param.)
+    the ears - the cranial region is defined by the landmarks, full stop.
+    ear-avoidance belongs to the HC measurement itself, not the clip (see
+    extract_measurements's landmarks param).
 
-    that angled rear/neck plane is the risky one - found on a real template
-    that it can graze the actual cranium surface at a shallow angle instead
-    of passing cleanly through the neck, for a head shaped differently than
-    whatever this was tuned against. slicing at a near-tangent angle leaves
-    a scatter of tiny disconnected slivers behind (1 component going in,
-    225 by the time all three cuts here had run, on that file). dropping
-    everything but the largest component at the end cleans that up - it's
-    debris, not a hole, so this doesn't touch the intentional open boundary
-    the landmark-plane cut leaves (see the module docstring: clips are left
-    open on purpose, repair closes them later).
+    the angled rear/neck plane and the landmark plane can both graze the
+    surface at a shallow angle on an unusually-shaped head, leaving either
+    disconnected debris (keep_largest_component cleans that up) or a
+    sawtooth along the boundary itself (clean_boundary handles that, see
+    remesh.py).
 
-    the landmark-plane cut itself can graze at a shallow angle too, same
-    root cause as the rear/neck one above but along the actual cranial
-    boundary this time instead of debris headed for the trash. worse,
-    found on a real scan that it's often not just one grazing spot but the
-    plane running close to tangent for its *whole* length, leaving a
-    sawtooth around the entire rim - clean_boundary handles that (see its
-    docstring in remesh.py for why this needs more than just dropping bad
-    triangles).
-
-    trim_rear_neck exists because that angled plane's numbers - [0, 0.6, 1]
-    normal, [0, -60, -50] origin - are hardcoded in the REGISTERED frame,
-    tuned against a nasion-based registration. landmark_align only pins the
-    3 chosen landmarks to REFERENCE_TRIANGLE - it says nothing about where
-    the rest of the head ends up, and subnasale sits far enough below (and
-    forward of) nasion that forcing IT onto the same reference triangle
-    tips the whole head into a different pose, dragging the actual back of
-    the skull to a different spot in this same fixed coordinate frame.
-    found on a real scan (pipeline.analyze_cranial's alt-frontal pass,
-    registered via subnasale): this same plane, which cuts cleanly through
-    the neck in the nasion frame, gouges straight into the occiput in the
-    subnasale frame - not debris this time, a genuine notch carved out of
-    the kept cranium, big enough that keep_largest_component and
-    clean_boundary can't paper over it since the surface never actually
-    disconnects, just dents inward by ~30mm. pass False for any pass that
-    didn't register on nasion - see pipeline.analyze_cranial.
-
-    turns out registering on nasion isn't even enough on its own - the
-    same failure mode shows up with com_translation=False too. register()'s
-    CoM Z-nudge isn't just cosmetic "smooth out imprecise clicking" the way
-    it reads at a glance: on a real scan, turning it off left the head
-    sitting a genuine 25mm further back than the pose this plane (and the
-    sphere trim above it) were tuned against, which was enough for BOTH to
-    start cutting into real cranium instead of the neck/background junk
-    they're meant for - the sphere trim's old radius (125) actually clipped
-    real occiput too, not just the angled plane. bumped that radius to 175
-    for exactly this reason, but the angled plane still isn't safe at that
-    pose, so pass trim_rear_neck=False there as well - pipeline.analyze()
-    and analyze_cranial() both do this by tying trim_rear_neck to whatever
-    com_translation actually was, not just to which landmark drove
-    registration."""
+    trim_rear_neck exists because the rear/neck plane's numbers are
+    hardcoded in the registered frame, tuned for a nasion-based
+    registration. landmark_align only pins the 3 chosen landmarks to
+    REFERENCE_TRIANGLE - it says nothing about where the rest of the head
+    ends up, so registering on a different frontal point (subnasale) or
+    skipping the center-of-mass nudge (com_translation=False) both tip the
+    head into a different pose, and this plane can gouge straight into the
+    occiput instead of cutting through the neck. pass False for any pass
+    that isn't a plain nasion + com_translation=True registration - see
+    pipeline.analyze_cranial and pipeline.analyze()."""
     mesh = clip_sphere(mesh, center=(0, 40, 0), radius=175, keep_inside=True)
     if trim_rear_neck:
         mesh = clip_plane(mesh, normal=[0, 0.6, 1], origin=[0, -60, -50], invert=False)
@@ -160,11 +121,9 @@ def facial_clip(mesh: trimesh.Trimesh, landmarks: np.ndarray) -> trimesh.Trimesh
     right_tragus]. old facial_clip did the depth clip twice, ~1mm apart -
     collapsed that into one clip at the centroid depth.
 
-    same keep_largest_component cleanup as cranial_clip, for the same
-    reason - two chained clips (a plane then a sphere) is the same kind of
-    setup that can graze a surface and fragment it on an unlucky head
-    shape, even though the specific bug that surfaced this was found via
-    cranial_clip."""
+    same keep_largest_component/clean_boundary cleanup as cranial_clip -
+    two chained clips can graze a surface and fragment it on an unlucky
+    head shape here too."""
     centroid = np.mean(landmarks, axis=0)
     mesh = clip_plane(mesh, normal=[0, 0, 1], origin=[0, 20, centroid[2]], invert=False)
     mesh = clip_sphere(mesh, center=(0, 25, -25), radius=115, keep_inside=True)

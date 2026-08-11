@@ -36,9 +36,8 @@ class Api:
     expose (see webview/util.py's get_functions). a real webview.Window
     has native COM/WebView2 handles underneath with circular references
     (ActiveControl.Font.FontFamily... chains back on itself), so exposing
-    it as a public attribute sent that recursion straight into a
-    "maximum recursion depth exceeded" crash on startup - found out by
-    actually launching the built exe, not just by it compiling."""
+    it as a public attribute sends that recursion straight into a
+    "maximum recursion depth exceeded" crash on startup."""
 
     def __init__(self) -> None:
         self._window: webview.Window | None = None
@@ -48,15 +47,10 @@ class Api:
             return None
         # pywebview validates each file_types string against its own regex
         # (webview.util.parse_file_type: only word characters and spaces in
-        # the description) before it'll even open the dialog - "Mesh +
-        # texture files" here used to have a "+" in it, which failed that
-        # check silently: create_file_dialog raised before the dialog ever
-        # showed, the exception got turned into a rejected JS promise (see
-        # webview.util.js_bridge_call), and since the frontend never had a
-        # .catch() on this call, "choose file(s)" just did nothing with no
-        # visible error at all. caught this from a bug report, not from
-        # testing it myself - there's no way to click a real native dialog
-        # through my own tools, only to inspect the code that runs it.
+        # the description) before it'll even open the dialog - a "+" in the
+        # description fails that check silently: create_file_dialog raises
+        # before the dialog ever shows, and with no .catch() on the frontend
+        # side, "choose file(s)" just does nothing with no visible error.
         result = self._window.create_file_dialog(
             webview.FileDialog.OPEN,
             allow_multiple=allow_multiple,

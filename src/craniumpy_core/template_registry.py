@@ -20,12 +20,10 @@ else:
     TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 
 SHIPPED_TEMPLATES: dict[str, str] = {
-    # the plain (no "_com") full-head templates - template_xy / template_xy_com -
-    # used to be listed here too, but they're really just intermediate assets
-    # the clipped/face variants below were built from, not something a user
-    # picking a comparison template needs to see - dropped from this dict to
-    # shorten the dropdown. the files are still on disk (tests load them
-    # directly by path), just not offered as a named shipped template anymore.
+    # plain (no "_com") full-head templates aren't listed - they're just
+    # intermediate assets the clipped/face variants were built from, not
+    # something worth offering in the comparison dropdown. still on disk,
+    # tests load them directly by path.
     "template_xy_subanasal_com": "Full head (average, subnasale landmark variant, center-of-mass shifted)",
     "clipped_template_xy": "Cranium region only",
     "clipped_template_xy_com": "Cranium region only, center-of-mass shifted",

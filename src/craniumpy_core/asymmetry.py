@@ -13,14 +13,11 @@ same algorithm, already ported over there).
 needs a mesh that's already been through facial registration (see
 registration.rigid.landmark_align with the face centering applied).
 
-found something weird while porting this: the old code computes the MFAI
-number from the LEFT half of the face (calculate_sum defaults to
-half_face='left' and calculate_asymmetry never overrides it) but then zeroes
-out the LEFT half of the heatmap, so only the RIGHT half actually shows up
-visually. meaning by default, the heatmap you see and the number you get
-are describing two different sides of the face. left this exactly as it
-was rather than quietly "fixing" it - it might be intentional for all I
-know, but it's worth knowing about before trusting either one.
+quirk carried over from the old code: the MFAI number defaults to the LEFT
+half (half_face='left'), but the heatmap always zeroes out the LEFT half, so
+only the RIGHT half is visible. the number and the picture describe
+different sides of the face by default - kept as-is rather than guessing at
+a "fix", but worth knowing before trusting either one.
 """
 
 from __future__ import annotations
