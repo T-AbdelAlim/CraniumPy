@@ -46,10 +46,7 @@ def _upload(client: TestClient) -> str:
     return response.json()["session_id"]
 
 
-def _run_analysis(client: TestClient, session_id: str, body: dict, timeout: float = 30) -> str:
-    response = client.post(f"/api/sessions/{session_id}/analyze", json=body)
-    assert response.status_code == 200, response.text
-
+def _poll_status(client: TestClient, session_id: str, timeout: float) -> str:
     deadline = time.time() + timeout
     status = "running"
     while time.time() < deadline:
@@ -58,6 +55,29 @@ def _run_analysis(client: TestClient, session_id: str, body: dict, timeout: floa
             break
         time.sleep(0.2)
     return status
+
+
+def _run_clip(client: TestClient, session_id: str, body: dict, timeout: float = 30) -> str:
+    response = client.post(f"/api/sessions/{session_id}/clip", json=body)
+    assert response.status_code == 200, response.text
+    return _poll_status(client, session_id, timeout)
+
+
+def _run_run(client: TestClient, session_id: str, body: dict | None = None, timeout: float = 30) -> str:
+    response = client.post(f"/api/sessions/{session_id}/run", json=body or {})
+    assert response.status_code == 200, response.text
+    return _poll_status(client, session_id, timeout)
+
+
+def _clip_and_run(
+    client: TestClient, session_id: str, clip_body: dict, run_body: dict | None = None, timeout: float = 30
+) -> str:
+    """most tests just want the whole staged flow to finish - clip then
+    run, same net effect the old one-call /analyze used to have."""
+    status = _run_clip(client, session_id, clip_body, timeout)
+    if status != "done":
+        return status
+    return _run_run(client, session_id, run_body, timeout)
 
 
 def test_upload_returns_session_and_vertex_count(client):
@@ -136,7 +156,7 @@ def test_upload_custom_template_mesh(client):
 
 def test_full_analysis_flow_rigid(client, landmarks_payload):
     session_id = _upload(client)
-    status = _run_analysis(
+    status = _clip_and_run(
         client,
         session_id,
         {"target": "cranium", "landmarks": landmarks_payload, "com_translation": True},
@@ -160,6 +180,10 @@ def test_full_analysis_flow_rigid(client, landmarks_payload):
     assert registered_response.status_code == 200
     assert len(registered_response.content) > 0
 
+    clipped_response = client.get(f"/api/sessions/{session_id}/mesh/clipped")
+    assert clipped_response.status_code == 200
+    assert len(clipped_response.content) > 0
+
 
 def test_analyze_cranial_with_alt_frontal_landmark(client, landmarks_payload):
     # stands in for "subnasale instead of sellion" - a different point,
@@ -169,22 +193,21 @@ def test_analyze_cranial_with_alt_frontal_landmark(client, landmarks_payload):
         "y": landmarks_payload[0]["y"] - 15.0,
         "z": landmarks_payload[0]["z"] - 5.0,
     }
-    harmonize_cfg = {"n_vertices": 3000}
+    run_body = {"n_vertices": 3000}
 
     session_plain = _upload(client)
-    assert _run_analysis(
+    assert _clip_and_run(
         client, session_plain,
-        {"target": "cranium", "landmarks": landmarks_payload, "harmonize": harmonize_cfg},
+        {"target": "cranium", "landmarks": landmarks_payload},
+        run_body,
     ) == "done"
     plain_results = client.get(f"/api/sessions/{session_plain}/results").json()
 
     session_alt = _upload(client)
-    assert _run_analysis(
+    assert _clip_and_run(
         client, session_alt,
-        {
-            "target": "cranium", "landmarks": landmarks_payload,
-            "alt_frontal_landmark": alt_frontal, "harmonize": harmonize_cfg,
-        },
+        {"target": "cranium", "landmarks": landmarks_payload, "alt_frontal_landmark": alt_frontal},
+        run_body,
     ) == "done"
     alt_results = client.get(f"/api/sessions/{session_alt}/results").json()
 
@@ -223,10 +246,10 @@ def test_analyze_cranial_with_alt_frontal_landmark(client, landmarks_payload):
     np.testing.assert_allclose(report["landmarks"]["sellion"], list(REFERENCE_TRIANGLE[0]), atol=2.0)
 
 
-def test_analyze_progress_is_reported(client, landmarks_payload):
+def test_clip_progress_is_reported(client, landmarks_payload):
     session_id = _upload(client)
     client.post(
-        f"/api/sessions/{session_id}/analyze",
+        f"/api/sessions/{session_id}/clip",
         json={"target": "cranium", "landmarks": landmarks_payload},
     )
     # at least one poll should show a real stage, not just idle - proves
@@ -245,19 +268,97 @@ def test_analyze_progress_is_reported(client, landmarks_payload):
 
 def test_manual_clip_mode(client, landmarks_payload):
     session_id = _upload(client)
-    status = _run_analysis(
+    status = _clip_and_run(
         client,
         session_id,
         {
             "target": "cranium",
             "landmarks": landmarks_payload,
             "clipping": {"mode": "manual", "manual_plane_normal": [0, 1, 0], "manual_plane_origin": [0, 0, 0]},
-            "harmonize": {"n_vertices": 3000, "repair": False},
+            "repair": False,
         },
+        {"n_vertices": 3000},
     )
     assert status == "done"
     results = client.get(f"/api/sessions/{session_id}/results").json()
     assert results["vertex_count"] > 0
+
+
+def test_run_before_clip_returns_409(client):
+    session_id = _upload(client)
+    response = client.post(f"/api/sessions/{session_id}/run", json={"n_vertices": 3000})
+    assert response.status_code == 409
+
+
+def test_undo_with_nothing_to_undo_returns_reverted_false(client):
+    session_id = _upload(client)
+    response = client.post(f"/api/sessions/{session_id}/clip/undo")
+    assert response.status_code == 200
+    assert response.json() == {"reverted": False}
+
+
+def test_clip_then_undo_reverts_to_registered_mesh(client, landmarks_payload):
+    session_id = _upload(client)
+    status = _run_clip(client, session_id, {"target": "cranium", "landmarks": landmarks_payload})
+    assert status == "done"
+    assert client.get(f"/api/sessions/{session_id}/mesh/clipped").status_code == 200
+
+    undo_response = client.post(f"/api/sessions/{session_id}/clip/undo")
+    assert undo_response.status_code == 200
+    assert undo_response.json() == {"reverted": True}
+
+    # the clip is gone, but the registration it started from is still there
+    assert client.get(f"/api/sessions/{session_id}/mesh/clipped").status_code == 409
+    assert client.get(f"/api/sessions/{session_id}/mesh/registered").status_code == 200
+
+    # and run can't proceed until a fresh clip commits again
+    assert client.post(f"/api/sessions/{session_id}/run", json={"n_vertices": 3000}).status_code == 409
+
+
+def test_reclip_invalidates_previous_run_result(client, landmarks_payload):
+    session_id = _upload(client)
+    status = _clip_and_run(client, session_id, {"target": "cranium", "landmarks": landmarks_payload})
+    assert status == "done"
+    assert client.get(f"/api/sessions/{session_id}/results").status_code == 200
+
+    # a fresh /clip - even with the same settings - invalidates whatever
+    # /run already produced, since it might no longer match
+    status = _run_clip(client, session_id, {"target": "cranium", "landmarks": landmarks_payload})
+    assert status == "done"
+    assert client.get(f"/api/sessions/{session_id}/results").status_code == 409
+
+
+def test_repair_only_runs_once_across_repeated_clips(client, landmarks_payload, monkeypatch):
+    import craniumpy_core.pipeline as pipeline_module
+
+    real_repair = pipeline_module.repair_mesh
+    call_count = {"n": 0}
+
+    def counting_repair(*args, **kwargs):
+        call_count["n"] += 1
+        return real_repair(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline_module, "repair_mesh", counting_repair)
+
+    session_id = _upload(client)
+    assert _run_clip(client, session_id, {"target": "cranium", "landmarks": landmarks_payload}) == "done"
+    assert call_count["n"] == 1
+
+    # a different clip mode on the same session should reuse the cached
+    # repair, not re-run pymeshfix
+    assert (
+        _run_clip(
+            client,
+            session_id,
+            {
+                "target": "cranium",
+                "landmarks": landmarks_payload,
+                "clipping": {"mode": "manual", "manual_plane_normal": [0, 1, 0], "manual_plane_origin": [0, 0, 0]},
+            },
+        )
+        == "done"
+    )
+    assert call_count["n"] == 1
 
 
 def test_results_before_analysis_returns_409(client):
@@ -266,10 +367,10 @@ def test_results_before_analysis_returns_409(client):
     assert response.status_code == 409
 
 
-def test_analyze_rejects_wrong_landmark_count(client):
+def test_clip_rejects_wrong_landmark_count(client):
     session_id = _upload(client)
     response = client.post(
-        f"/api/sessions/{session_id}/analyze",
+        f"/api/sessions/{session_id}/clip",
         json={"target": "cranium", "landmarks": [{"x": 0, "y": 0, "z": 0}]},
     )
     assert response.status_code == 422
@@ -277,10 +378,11 @@ def test_analyze_rejects_wrong_landmark_count(client):
 
 def test_results_bundle_download(client, landmarks_payload):
     session_id = _upload(client)
-    status = _run_analysis(
+    status = _clip_and_run(
         client,
         session_id,
-        {"target": "cranium", "landmarks": landmarks_payload, "harmonize": {"n_vertices": 3000}},
+        {"target": "cranium", "landmarks": landmarks_payload},
+        {"n_vertices": 3000},
     )
     assert status == "done"
 
@@ -313,7 +415,7 @@ def test_save_results_without_source_dir_400s(client, landmarks_payload):
     # opened via the plain-bytes /api/sessions upload, so there's no known
     # source folder to save into
     session_id = _upload(client)
-    status = _run_analysis(client, session_id, {"target": "cranium", "landmarks": landmarks_payload})
+    status = _clip_and_run(client, session_id, {"target": "cranium", "landmarks": landmarks_payload})
     assert status == "done"
 
     response = client.post(f"/api/sessions/{session_id}/save")
@@ -329,7 +431,7 @@ def test_save_results_to_source_folder(client, landmarks_payload, tmp_path):
     open_response = client.post("/api/sessions/from-paths", json={"paths": [str(tmp_mesh)]})
     session_id = open_response.json()["session_id"]
 
-    status = _run_analysis(client, session_id, {"target": "cranium", "landmarks": landmarks_payload})
+    status = _clip_and_run(client, session_id, {"target": "cranium", "landmarks": landmarks_payload})
     assert status == "done"
 
     save_response = client.post(f"/api/sessions/{session_id}/save")

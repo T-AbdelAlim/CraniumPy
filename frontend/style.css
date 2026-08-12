@@ -103,7 +103,7 @@ button:disabled {
   cursor: not-allowed;
 }
 
-button#reset-landmarks {
+button#reset-button {
   background: transparent;
   color: var(--text);
 }
@@ -172,27 +172,6 @@ input[type="file"] {
   font-size: 0.75rem;
 }
 
-.axis-buttons {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 0.3rem;
-  margin: 0.4rem 0;
-}
-
-.axis-buttons button {
-  margin: 0;
-  padding: 0.35rem;
-  font-size: 0.8rem;
-}
-
-.axis-buttons button.active {
-  outline: 2px solid var(--accent);
-}
-
-input[type="range"] {
-  width: 100%;
-}
-
 input[type="number"] {
   width: 6rem;
   padding: 0.3rem;
@@ -209,7 +188,7 @@ input[type="number"]:disabled {
   cursor: not-allowed;
 }
 
-button#reset-landmarks,
+button#reset-button,
 button#template-browse-button {
   background: transparent;
   color: var(--text);

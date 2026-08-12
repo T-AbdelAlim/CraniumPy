@@ -44,6 +44,16 @@ def _report(on_progress: ProgressCallback | None, stage: str, detail: str = "") 
         on_progress(stage, detail)
 
 
+def _recenter_com_z(mesh: trimesh.Trimesh, landmarks: np.ndarray) -> None:
+    """z-only recenter using the landmark-aware CoM slice, in place - the
+    same correction harmonize() applies after resampling. factored out so
+    measure_cranial can apply it at the same point in the pipeline (post-
+    resample) even though clipping and resampling now happen in separate
+    calls instead of one harmonize()."""
+    com = slice_center_of_mass(mesh, landmarks=landmarks)
+    mesh.vertices = mesh.vertices - np.array([0.0, 0.0, com[2]])
+
+
 @dataclass
 class RegistrationResult:
     mesh: trimesh.Trimesh
@@ -189,8 +199,7 @@ def harmonize(
         # depth, not to re-center the head side to side or vertically. a
         # real left/right CoM offset is often genuine anatomy
         # (plagiocephaly, facial asymmetry) and shouldn't get erased.
-        com = slice_center_of_mass(result, landmarks=landmarks)
-        result.vertices = result.vertices - np.array([0.0, 0.0, com[2]])
+        _recenter_com_z(result, landmarks)
 
     return result
 
@@ -294,6 +303,216 @@ class CranialAnalysisResult:
     used_alt_frontal: bool
 
 
+@dataclass
+class CranialClipResult:
+    """everything register_and_clip_cranial produces - repaired, registered,
+    and clipped (repair + clip + boundary cleanup), but NOT yet resampled
+    or measured. see measure_cranial for the rest."""
+
+    sellion_registered_mesh: trimesh.Trimesh  # pre-clip, sellion frame
+    sellion_registered_landmarks: np.ndarray
+    display_registered_mesh: trimesh.Trimesh  # pre-clip, display frame (== sellion's when no alt frontal)
+    display_registered_landmarks: np.ndarray
+    sellion_clipped_mesh: trimesh.Trimesh  # post repair+clip+boundary-cleanup, pre-resample, sellion frame
+    display_clipped_mesh: trimesh.Trimesh  # same, display frame
+    used_alt_frontal: bool
+
+
+def register_and_clip_cranial(
+    mesh: trimesh.Trimesh,
+    landmarks: np.ndarray,
+    alt_frontal_landmark: np.ndarray | None = None,
+    com_translation: bool = True,
+    clip_mode: ClipMode | None = None,
+    manual_plane_normal: np.ndarray | None = None,
+    manual_plane_origin: np.ndarray | None = None,
+    on_progress: ProgressCallback | None = None,
+) -> CranialClipResult:
+    """the "Clip" half of the cranial pipeline: register + repair + clip +
+    boundary cleanup, no resample. split out from analyze_cranial (which is
+    now a thin wrapper over this + measure_cranial) so a caller iterating on
+    a manual clip plane can re-run just this part instead of the whole
+    thing - see measure_cranial for the resample+measure half, and
+    pipeline.py's module-level docs for why this split exists.
+
+    mesh must already be repaired (repair_mesh) - unlike the old
+    monolithic analyze_cranial, repair never happens in here. repair is
+    orientation-invariant (merging coincident vertices, filling holes
+    doesn't care how the mesh is rotated - verified byte-identical face
+    connectivity and vertex positions agreeing to ~1e-14 whether it runs
+    before or after a rigid transform), so the caller is expected to
+    repair once and reuse that result across repeated calls here instead
+    of re-running pymeshfix - the single most expensive step - on every
+    plane tweak.
+
+    same sellion-anchoring logic as analyze_cranial's docstring: the
+    sellion pass always runs, the alt-frontal pass only if
+    alt_frontal_landmark is given, and com_translation's actual magnitude
+    is computed once from sellion-tragus (_sellion_com_z_offset) and reused
+    along the alt frame's own Z axis rather than rotated in from the
+    sellion frame.
+
+    the post-resample CoM recenter harmonize() normally applies is
+    deliberately skipped here (com_translation=False on both harmonize()
+    calls below) and deferred to measure_cranial, which applies it after
+    resampling instead - same order analyze_cranial always used, just
+    split across two calls now instead of one. trim_rear_neck stays tied
+    to the real com_translation setting either way, since that's about
+    the clip geometry itself, not the post-resample recenter.
+    """
+    com_z = _sellion_com_z_offset(mesh, landmarks) if (alt_frontal_landmark is not None and com_translation) else None
+
+    sellion_reg = register(mesh, landmarks, target="cranium", com_translation=com_translation, on_progress=on_progress)
+    sellion_clipped = harmonize(
+        sellion_reg.mesh,
+        target="cranium",
+        landmarks=sellion_reg.landmarks,
+        clip_mode=clip_mode,
+        manual_plane_normal=manual_plane_normal,
+        manual_plane_origin=manual_plane_origin,
+        n_vertices=None,
+        repair=False,
+        com_translation=False,
+        trim_rear_neck=com_translation,
+        on_progress=on_progress,
+    )
+
+    if alt_frontal_landmark is None:
+        return CranialClipResult(
+            sellion_registered_mesh=sellion_reg.mesh,
+            sellion_registered_landmarks=sellion_reg.landmarks,
+            display_registered_mesh=sellion_reg.mesh,
+            display_registered_landmarks=sellion_reg.landmarks,
+            sellion_clipped_mesh=sellion_clipped,
+            display_clipped_mesh=sellion_clipped,
+            used_alt_frontal=False,
+        )
+
+    alt_landmarks = np.array([alt_frontal_landmark, landmarks[1], landmarks[2]], dtype=np.float64)
+    # com_translation=False here always - register() never derives its own
+    # correction from the subnasale-tragus plane. com_z (if set) gets
+    # applied below instead, along the alt frame's own Z axis.
+    alt_reg = register(mesh, alt_landmarks, target="cranium", com_translation=False, on_progress=on_progress)
+    if com_z is not None:
+        z_offset = np.array([0.0, 0.0, com_z])
+        alt_reg.mesh.vertices = alt_reg.mesh.vertices - z_offset
+        alt_reg.landmarks = alt_reg.landmarks - z_offset
+    alt_clipped = harmonize(
+        alt_reg.mesh,
+        target="cranium",
+        landmarks=alt_reg.landmarks,
+        clip_mode=clip_mode,
+        manual_plane_normal=manual_plane_normal,
+        manual_plane_origin=manual_plane_origin,
+        n_vertices=None,
+        repair=False,
+        com_translation=False,
+        trim_rear_neck=False,
+        on_progress=on_progress,
+    )
+
+    return CranialClipResult(
+        sellion_registered_mesh=sellion_reg.mesh,
+        sellion_registered_landmarks=sellion_reg.landmarks,
+        display_registered_mesh=alt_reg.mesh,
+        display_registered_landmarks=alt_reg.landmarks,
+        sellion_clipped_mesh=sellion_clipped,
+        display_clipped_mesh=alt_clipped,
+        used_alt_frontal=True,
+    )
+
+
+def measure_cranial(
+    clip_result: CranialClipResult,
+    com_translation: bool = True,
+    n_vertices: int | None = 10_000,
+    resample_method: ResampleMethod = "quadric",
+    on_progress: ProgressCallback | None = None,
+) -> CranialAnalysisResult:
+    """the "Run" half of the cranial pipeline: resample + measure, given
+    whatever register_and_clip_cranial produced. com_translation here must
+    match whatever was passed to register_and_clip_cranial - it only
+    controls the post-resample recenter step that function deliberately
+    left out, not any clip-affecting decision, so passing a different
+    value here than was used for clipping doesn't make sense and isn't
+    validated against."""
+
+    def _finish(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
+        if n_vertices is not None:
+            _report(on_progress, "resample", f"resampling to {n_vertices} vertices ({resample_method})")
+            mesh = resample_mesh(mesh, n_vertices=n_vertices, method=resample_method)
+        return mesh
+
+    sellion_mesh = _finish(clip_result.sellion_clipped_mesh)
+    if com_translation:
+        _recenter_com_z(sellion_mesh, clip_result.sellion_registered_landmarks)
+
+    if clip_result.used_alt_frontal:
+        display_mesh = _finish(clip_result.display_clipped_mesh)
+        if com_translation:
+            _recenter_com_z(display_mesh, clip_result.display_registered_landmarks)
+    else:
+        display_mesh = sellion_mesh
+
+    _report(on_progress, "analyze", "computing measurements")
+    craniometrics = extract_measurements(sellion_mesh, landmarks=clip_result.sellion_registered_landmarks)
+    sellion_hc_polygon = hc_slice_polygon(sellion_mesh, craniometrics.slice_height)
+    sellion_bpd_ofd_points = np.array(
+        [craniometrics.front_opt, craniometrics.occ_opt, craniometrics.lh_opt, craniometrics.rh_opt]
+    )
+
+    if not clip_result.used_alt_frontal:
+        _report(on_progress, "done", "")
+        return CranialAnalysisResult(
+            display_registered_mesh=clip_result.display_registered_mesh,
+            display_mesh=display_mesh,
+            display_landmarks=clip_result.display_registered_landmarks,
+            display_hc_polygon=sellion_hc_polygon,
+            display_bpd_ofd_points=sellion_bpd_ofd_points,
+            craniometrics=craniometrics,
+            sellion_mesh=sellion_mesh,
+            sellion_landmarks=clip_result.sellion_registered_landmarks,
+            sellion_hc_polygon=sellion_hc_polygon,
+            used_alt_frontal=False,
+        )
+
+    transform = procrustes_fit(
+        np.asarray(clip_result.sellion_registered_mesh.vertices), np.asarray(clip_result.display_registered_mesh.vertices)
+    )
+    # HC polygon and the 4 BPD/OFD optima both need the same treatment: the
+    # transform is exact for the pre-clip registered meshes, but
+    # sellion_mesh and display_mesh each go through their own independent
+    # clip/resample after that, which doesn't preserve vertex
+    # correspondence - so the transformed points can end up a couple mm off
+    # the display mesh's actual surface. snapping onto display_mesh's
+    # surface here guarantees the drawn lines always sit exactly on the
+    # mesh being shown. batched into one closest_point call rather than two.
+    to_transform = (
+        np.vstack([sellion_hc_polygon, sellion_bpd_ofd_points]) if sellion_hc_polygon is not None else sellion_bpd_ofd_points
+    )
+    transformed, _, _ = trimesh.proximity.closest_point(display_mesh, transform.apply(to_transform))
+    if sellion_hc_polygon is not None:
+        display_hc_polygon = transformed[: len(sellion_hc_polygon)]
+        display_bpd_ofd_points = transformed[len(sellion_hc_polygon) :]
+    else:
+        display_hc_polygon = None
+        display_bpd_ofd_points = transformed
+
+    _report(on_progress, "done", "")
+    return CranialAnalysisResult(
+        display_registered_mesh=clip_result.display_registered_mesh,
+        display_mesh=display_mesh,
+        display_landmarks=clip_result.display_registered_landmarks,
+        display_hc_polygon=display_hc_polygon,
+        display_bpd_ofd_points=display_bpd_ofd_points,
+        craniometrics=craniometrics,
+        sellion_mesh=sellion_mesh,
+        sellion_landmarks=clip_result.sellion_registered_landmarks,
+        sellion_hc_polygon=sellion_hc_polygon,
+        used_alt_frontal=True,
+    )
+
+
 def analyze_cranial(
     mesh: trimesh.Trimesh,
     landmarks: np.ndarray,
@@ -308,150 +527,36 @@ def analyze_cranial(
     resample_method: ResampleMethod = "quadric",
     on_progress: ProgressCallback | None = None,
 ) -> CranialAnalysisResult:
-    """the cranial pipeline, with an optional second frontal landmark (e.g.
-    subnasale) that takes over as the registration/clip/display frame for
-    everything shown, downloaded, or saved - while the craniometrics
-    numbers and the saved 2D figure always come from the sellion pass.
+    """the whole cranial pipeline in one call: repair -> register_and_clip_cranial
+    -> measure_cranial. kept for callers that want it all at once (the CLI,
+    tests, anything not iterating on the clip plane); the API layer calls
+    the two halves separately instead so a bad manual clip can be redone
+    without repeating the expensive repair step - see this module's other
+    docstrings for the split's rationale.
 
-    sellion stays the anchor for those two because the HC circumference
-    search and the cranial_clip geometry are both tuned against a
-    sellion-based registration. swapping in a different frontal point
-    doesn't just move that one landmark - landmark_align still pins all 3
-    points to the same reference triangle, so the REST of the head has to
-    rotate differently to make that work, dragging the whole mesh into a
-    different pose. cranial_clip's rear/neck safety plane and the HC
-    slice search both assume the sellion pose specifically, so anything
-    else needs its own handling (trim_rear_neck=False for the alt pass,
-    see cranial_clip's docstring) rather than trusting sellion-tuned
-    geometry blindly.
-
-    the two passes register the same input mesh independently, so
-    sellion_reg.mesh and alt_reg.mesh (before harmonize touches either
-    one) are still in full 1:1 vertex correspondence - fitting a rigid
-    transform between them (procrustes_fit) is what carries the HC ring
-    from the sellion frame into the display frame.
-
-    com_translation is sellion-anchored too: _sellion_com_z_offset computes
-    the correction's magnitude once, from sellion-tragus. the sellion pass
-    is untouched (register() handles its own com_translation as usual);
-    the alt pass reuses that same number along its own Z axis after its
-    own alignment, never through register()'s independent logic and
-    never rotated in from the sellion frame - a vector that's purely Z in
-    one frame generally isn't purely Z once viewed through a differently
-    rotated one, so rotating it in would leak into the alt frame's left-
-    right or vertical axis instead of staying a pure depth correction.
-
-    repair runs once here, on the raw mesh, instead of once per pass
-    inside each harmonize() call - repair (merging coincident vertices,
-    filling holes) doesn't care about orientation, so repairing the same
-    topology twice under two different rotations is wasted work, not two
-    different results: verified this gives byte-identical face
-    connectivity and vertex positions agreeing to ~1e-14 either way. on a
-    dense scan repair is the single most expensive step, so doing it once
-    instead of twice roughly halves this function's total cost when
-    alt_frontal_landmark is given.
+    see register_and_clip_cranial and measure_cranial for what each half
+    actually does - the sellion-anchoring, alt-frontal-landmark, and
+    com_translation behavior described there all still apply unchanged
+    here, just as two calls instead of one.
     """
-    com_z = _sellion_com_z_offset(mesh, landmarks) if (alt_frontal_landmark is not None and com_translation) else None
-
-    if repair and alt_frontal_landmark is not None:
+    if repair:
         _report(on_progress, "repair", f"repairing mesh ({repair_method})")
         mesh = repair_mesh(mesh, method=repair_method)
-        repair = False  # already done - both harmonize() calls below skip it
 
-    sellion_reg = register(mesh, landmarks, target="cranium", com_translation=com_translation, on_progress=on_progress)
-    sellion_mesh = harmonize(
-        sellion_reg.mesh,
-        target="cranium",
-        landmarks=sellion_reg.landmarks,
+    clip_result = register_and_clip_cranial(
+        mesh,
+        landmarks,
+        alt_frontal_landmark=alt_frontal_landmark,
+        com_translation=com_translation,
         clip_mode=clip_mode,
         manual_plane_normal=manual_plane_normal,
         manual_plane_origin=manual_plane_origin,
-        n_vertices=n_vertices,
-        repair=repair,
-        repair_method=repair_method,
-        resample_method=resample_method,
-        com_translation=com_translation,
-        trim_rear_neck=com_translation,
         on_progress=on_progress,
     )
-
-    _report(on_progress, "analyze", "computing measurements")
-    craniometrics = extract_measurements(sellion_mesh, landmarks=sellion_reg.landmarks)
-    sellion_hc_polygon = hc_slice_polygon(sellion_mesh, craniometrics.slice_height)
-    sellion_bpd_ofd_points = np.array(
-        [craniometrics.front_opt, craniometrics.occ_opt, craniometrics.lh_opt, craniometrics.rh_opt]
-    )
-
-    if alt_frontal_landmark is None:
-        _report(on_progress, "done", "")
-        return CranialAnalysisResult(
-            display_registered_mesh=sellion_reg.mesh,
-            display_mesh=sellion_mesh,
-            display_landmarks=sellion_reg.landmarks,
-            display_hc_polygon=sellion_hc_polygon,
-            display_bpd_ofd_points=sellion_bpd_ofd_points,
-            craniometrics=craniometrics,
-            sellion_mesh=sellion_mesh,
-            sellion_landmarks=sellion_reg.landmarks,
-            sellion_hc_polygon=sellion_hc_polygon,
-            used_alt_frontal=False,
-        )
-
-    alt_landmarks = np.array([alt_frontal_landmark, landmarks[1], landmarks[2]], dtype=np.float64)
-    # com_translation=False here always - register() never derives its own
-    # correction from the subnasale-tragus plane. com_z (if set) gets
-    # applied below instead, along the alt frame's own Z axis.
-    alt_reg = register(mesh, alt_landmarks, target="cranium", com_translation=False, on_progress=on_progress)
-    if com_z is not None:
-        z_offset = np.array([0.0, 0.0, com_z])
-        alt_reg.mesh.vertices = alt_reg.mesh.vertices - z_offset
-        alt_reg.landmarks = alt_reg.landmarks - z_offset
-    alt_mesh = harmonize(
-        alt_reg.mesh,
-        target="cranium",
-        landmarks=alt_reg.landmarks,
-        clip_mode=clip_mode,
-        manual_plane_normal=manual_plane_normal,
-        manual_plane_origin=manual_plane_origin,
-        n_vertices=n_vertices,
-        repair=repair,
-        repair_method=repair_method,
-        resample_method=resample_method,
+    return measure_cranial(
+        clip_result,
         com_translation=com_translation,
-        trim_rear_neck=False,
+        n_vertices=n_vertices,
+        resample_method=resample_method,
         on_progress=on_progress,
-    )
-
-    transform = procrustes_fit(np.asarray(sellion_reg.mesh.vertices), np.asarray(alt_reg.mesh.vertices))
-    # HC polygon and the 4 BPD/OFD optima both need the same treatment: the
-    # transform is exact for the pre-harmonize registered meshes, but
-    # sellion_mesh and alt_mesh each go through their own independent
-    # repair/clip/resample after that, which doesn't preserve vertex
-    # correspondence - so the transformed points can end up a couple mm off
-    # the display mesh's actual surface. snapping onto alt_mesh's surface
-    # here guarantees the drawn lines always sit exactly on the mesh being
-    # shown. batched into one closest_point call rather than two.
-    to_transform = (
-        np.vstack([sellion_hc_polygon, sellion_bpd_ofd_points]) if sellion_hc_polygon is not None else sellion_bpd_ofd_points
-    )
-    transformed, _, _ = trimesh.proximity.closest_point(alt_mesh, transform.apply(to_transform))
-    if sellion_hc_polygon is not None:
-        display_hc_polygon = transformed[: len(sellion_hc_polygon)]
-        display_bpd_ofd_points = transformed[len(sellion_hc_polygon) :]
-    else:
-        display_hc_polygon = None
-        display_bpd_ofd_points = transformed
-
-    _report(on_progress, "done", "")
-    return CranialAnalysisResult(
-        display_registered_mesh=alt_reg.mesh,
-        display_mesh=alt_mesh,
-        display_landmarks=alt_reg.landmarks,
-        display_hc_polygon=display_hc_polygon,
-        display_bpd_ofd_points=display_bpd_ofd_points,
-        craniometrics=craniometrics,
-        sellion_mesh=sellion_mesh,
-        sellion_landmarks=sellion_reg.landmarks,
-        sellion_hc_polygon=sellion_hc_polygon,
-        used_alt_frontal=True,
     )

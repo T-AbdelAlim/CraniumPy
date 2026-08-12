@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Literal
 
+import numpy as np
 import trimesh
 
 JobStatus = Literal["idle", "running", "done", "error"]
@@ -39,12 +40,52 @@ class Session:
     # browser download. see api/routers/mesh.py's open_mesh_from_paths.
     source_dir: Path | None = None
 
-    # these get filled in as the job runs
-    registered_mesh: trimesh.Trimesh | None = None
+    # repair is orientation-invariant (see pipeline.register_and_clip_cranial's
+    # docstring), so it's cached here across repeated /clip calls instead of
+    # re-running pymeshfix - the single most expensive step - on every plane
+    # tweak. rebuilt whenever repaired_mesh_method no longer matches what
+    # the caller asked for.
+    repaired_mesh: trimesh.Trimesh | None = None
+    repaired_mesh_method: str | None = None
+
+    # these get filled in by /clip - pre-clip (registered) state, kept
+    # around for /clip/undo and for measure_cranial's alt-frame
+    # procrustes_fit correspondence, not just the post-clip result.
+    sellion_registered_mesh: trimesh.Trimesh | None = None
+    sellion_registered_landmarks: np.ndarray | None = None
+    registered_mesh: trimesh.Trimesh | None = None  # display-frame pre-clip mesh (== sellion's when no alt frontal)
+    registered_landmarks: np.ndarray | None = None
+    # the RigidTransform (rotation + translation) that produced
+    # registered_mesh/registered_landmarks above, from the last successful
+    # /align - lets the frontend convert a landmark position between raw
+    # and aligned coordinates for "adjust picks" without re-deriving the
+    # fit client-side. typed loosely (Any) to avoid api.sessions
+    # depending on craniumpy_core.registration.rigid.
+    registered_transform: Any | None = None
+
+    # post repair+clip+boundary-cleanup, pre-resample - what /clip actually
+    # produces. cleared (along with everything below) by /clip or
+    # /clip/undo, since anything downstream is stale the moment the clip
+    # changes.
+    sellion_clipped_mesh: trimesh.Trimesh | None = None
+    clipped_mesh: trimesh.Trimesh | None = None
+    # only meaningful for target="cranium" - whether the clip above used an
+    # alt_frontal_landmark, i.e. whether sellion_clipped_mesh/clipped_mesh
+    # are actually two different meshes or the same one twice.
+    used_alt_frontal: bool = False
+
+    # the api.schemas.ClipRequest that produced the state above - kept as-is
+    # (not broken into a dict) so /run can read its fields directly and
+    # reconstruct an AnalyzeRequest-shaped object for the bundle/save
+    # report. typed loosely (Any) to avoid api.sessions depending on
+    # api.schemas.
+    last_clip_config: Any | None = None
+
+    # final, post-resample - what /run produces.
     result_mesh: trimesh.Trimesh | None = None
     # only set for cranial analyses that used an alt_frontal_landmark -
     # result_mesh becomes the alt-frame mesh in that case (see
-    # api/routers/mesh.py's start_analysis), so this is the one place the
+    # api/routers/mesh.py's run_analysis), so this is the one place the
     # sellion-frame mesh survives, for the always-sellion-oriented saved 2D
     # figure (see api/results_bundle.py's _measurement_figure).
     sellion_result_mesh: trimesh.Trimesh | None = None
@@ -53,6 +94,17 @@ class Session:
     progress: dict[str, str] = field(default_factory=lambda: {"stage": "idle", "detail": ""})
     result: dict[str, Any] | None = None
     _future: Future | None = field(default=None, repr=False)
+
+    def clear_clip_result(self) -> None:
+        """reverts everything from the clip stage onward - used by both a
+        fresh /clip call (whatever the previous clip produced is stale)
+        and /clip/undo (go back to just the registered mesh)."""
+        self.sellion_clipped_mesh = None
+        self.clipped_mesh = None
+        self.used_alt_frontal = False
+        self.result_mesh = None
+        self.sellion_result_mesh = None
+        self.result = None
 
     def report_progress(self, stage: str, detail: str = "") -> None:
         self.progress = {"stage": stage, "detail": detail}

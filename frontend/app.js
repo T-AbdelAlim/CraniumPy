@@ -148,7 +148,6 @@ async function displayMesh(url) {
   currentMeshObject = object;
   markerRadius = fitCameraToObject(object) * 0.00765; // 10% smaller again - was 0.0085
   lineRadius = markerRadius * 0.35 * 1.3; // 30% thicker than the plain-tube baseline
-  applyClipPreview();
 
   document.getElementById("mesh-view-toggles").classList.remove("hidden");
   document.getElementById("wireframe-toggle").checked = false;
@@ -179,7 +178,6 @@ document.getElementById("texture-toggle").addEventListener("change", (event) => 
     if (child.isMesh) currentMeshMaterials.push(child.material);
   });
   applyWireframeState();
-  applyClipPreview();
 });
 
 // --- landmark markers ---
@@ -389,7 +387,6 @@ function applyAsymmetryHeatmap(heatmapValues) {
     }
   });
   applyWireframeState();
-  applyClipPreview();
 }
 
 // --- landmark picking (ctrl/cmd + click) ---
@@ -425,8 +422,17 @@ function resetManualPicks() {
   clearMarkers();
   drawHcLine(null);
   updateLandmarkList();
+  resetAlignState();
 }
 
+// deliberately does NOT invalidate alignment itself (see resetAlignState's
+// callers instead) - this runs on every mousemove tick while dragging a
+// landmark, and while "adjust picks" is active that drag depends on
+// registeredTransform staying put. structural changes (reset picks,
+// alt-frontal toggle, target change, a genuinely new landmark placed)
+// call resetAlignState() themselves, right next to whatever caused them -
+// this only refreshes the button-enabled state (e.g. "align" unlocking
+// once the last landmark is picked), which always needs to happen here.
 function updateLandmarkList() {
   document.querySelectorAll("#landmark-list li").forEach((li) => {
     const name = li.dataset.name;
@@ -467,6 +473,9 @@ function setUseAltFrontal(enabled) {
     }
   }
   updateLandmarkList();
+  // toggling which landmark drives the display frame invalidates whatever
+  // was already aligned against the old choice.
+  resetAlignState();
 }
 
 document.getElementById("use-alt-frontal").addEventListener("change", (event) => {
@@ -474,7 +483,12 @@ document.getElementById("use-alt-frontal").addEventListener("change", (event) =>
 });
 
 document.querySelectorAll('input[name="target"]').forEach((el) => {
-  el.addEventListener("change", updateAltFrontalVisibility);
+  el.addEventListener("change", () => {
+    updateAltFrontalVisibility();
+    // cranial vs facial use entirely different clip/measurement pipelines -
+    // whatever the old target had clipped no longer applies.
+    resetAlignState();
+  });
 });
 updateAltFrontalVisibility();
 
@@ -498,20 +512,17 @@ canvas.addEventListener("click", (event) => {
   if (hits.length === 0) return;
   const point = hits[0].point;
 
-  if (isManualClipMode()) {
-    // ctrl-click moves the clip plane's origin to this point, along the current axis
-    setClipOffsetFromPoint(point);
-    return;
-  }
-
   const name = nextUnpickedLandmark();
   if (!name) return;
   pickedLandmarks[name] = { x: point.x, y: point.y, z: point.z };
   addLandmarkMarker(name, point);
   updateLandmarkList();
+  // a newly-placed landmark means whatever was previously aligned (if
+  // anything) didn't include this point - shouldn't normally be reachable
+  // with alignSucceeded true (that needs every landmark already picked),
+  // but this keeps it correct if that ever changes.
+  resetAlignState();
 });
-
-document.getElementById("reset-landmarks").addEventListener("click", resetManualPicks);
 
 // --- landmark repositioning (alt + left-button drag) ---
 // separate from ctrl-click placement above: grab an already-placed marker
@@ -555,7 +566,15 @@ canvas.addEventListener("mousemove", (event) => {
   if (hits.length === 0) return;
   const point = hits[0].point;
 
-  pickedLandmarks[draggingLandmarkName] = { x: point.x, y: point.y, z: point.z };
+  // while "adjust picks" is active, the marker is being dragged on the
+  // ALIGNED mesh, but pickedLandmarks has to stay in raw-mesh coordinates
+  // (what /align and /clip both expect) - convert back through the
+  // inverse of /align's own transform so re-aligning uses the right
+  // values. see applyInverseTransform below.
+  pickedLandmarks[draggingLandmarkName] =
+    adjustingInAlignedFrame && registeredTransform
+      ? applyInverseTransform(point, registeredTransform)
+      : { x: point.x, y: point.y, z: point.z };
   landmarkMarkerObjects[draggingLandmarkName].position.copy(point);
   updateLandmarkList();
 });
@@ -670,92 +689,74 @@ document.getElementById("file-input").addEventListener("change", (event) => {
   uploadFiles(allFiles);
 });
 
+// true once /align has completed successfully and nothing since has
+// invalidated it (see resetAlignState) - gates "adjust picks" and "run",
+// same way landmarksOk below gates "align" itself. clipping is always
+// automatic (landmark-guided plane, no manual mode) - see
+// pipeline.cranial_clip/facial_clip.
+let alignSucceeded = false;
+// true while "adjust picks" markers are showing on the ALIGNED mesh - the
+// alt-drag handler needs to know this so it converts back to raw-mesh
+// coordinates before writing into pickedLandmarks (see
+// applyInverseTransform below). reset whenever the current alignment is
+// invalidated, same as alignSucceeded.
+let adjustingInAlignedFrame = false;
+// {rotation: 3x3 row-major, translation: [x,y,z]} from the last
+// successful /align - see api.schemas.RegisteredTransformResponse.
+let registeredTransform = null;
+// true once "run pipeline" has completed successfully - locks "align" and
+// "adjust picks" (further landmark tweaks wouldn't retroactively update
+// results already shown), leaving "reset" or a new file upload as the
+// only ways back in. "run pipeline" itself stays unlocked, so resample
+// vertex count / center-of-mass correction can still be changed and
+// re-run without a fresh align.
+let pipelineRan = false;
+
+function resetAlignState() {
+  alignSucceeded = false;
+  adjustingInAlignedFrame = false;
+  registeredTransform = null;
+  pipelineRan = false;
+  updateAnalyzeButtonState();
+}
+
 function updateAnalyzeButtonState() {
-  const button = document.getElementById("analyze-button");
   const landmarksOk = activeLandmarkNames().every((n) => n in pickedLandmarks);
-  button.disabled = !sessionId || !landmarksOk;
+  document.getElementById("align-button").disabled = !sessionId || !landmarksOk || pipelineRan;
+  document.getElementById("adjust-picks-button").disabled = !alignSucceeded || pipelineRan;
+  document.getElementById("reset-button").disabled = !sessionId;
+  document.getElementById("run-button").disabled = !alignSucceeded;
 }
 
-// --- clipping: default vs manual plane widget ---
-
-let clipAxis = new THREE.Vector3(0, 1, 0);
-let clipOffset = 0;
-let clipPlaneMesh = null;
-let clipArrow = null;
-
-function isManualClipMode() {
-  const checked = document.querySelector('input[name="clip-mode"]:checked');
-  return checked && checked.value === "manual";
-}
-
-function currentClipPlane() {
-  // plane through (axis * offset), normal = axis. matches clip_plane()'s
-  // "+normal side is kept" convention on the backend.
-  const origin = clipAxis.clone().multiplyScalar(clipOffset);
-  const plane = new THREE.Plane();
-  plane.setFromNormalAndCoplanarPoint(clipAxis, origin);
-  return plane;
-}
-
-function updateClipWidget() {
-  const origin = clipAxis.clone().multiplyScalar(clipOffset);
-
-  if (!clipPlaneMesh) {
-    const geo = new THREE.PlaneGeometry(300, 300);
-    const mat = new THREE.MeshBasicMaterial({ color: 0xf5c518, transparent: true, opacity: 0.25, side: THREE.DoubleSide });
-    clipPlaneMesh = new THREE.Mesh(geo, mat);
-    scene.add(clipPlaneMesh);
+// forward: aligned = raw @ R.T + t (matches RigidTransform.apply in
+// craniumpy_core.registration.rigid). rotation is 3x3 row-major,
+// translation is [x, y, z] - see RegisteredTransformResponse.
+function applyTransform(point, transform) {
+  const { rotation: R, translation: t } = transform;
+  const p = [point.x, point.y, point.z];
+  const out = [0, 0, 0];
+  for (let i = 0; i < 3; i++) {
+    let sum = t[i];
+    for (let j = 0; j < 3; j++) sum += p[j] * R[i][j];
+    out[i] = sum;
   }
-  clipPlaneMesh.position.copy(origin);
-  clipPlaneMesh.lookAt(origin.clone().add(clipAxis));
+  return { x: out[0], y: out[1], z: out[2] };
+}
 
-  if (!clipArrow) {
-    clipArrow = new THREE.ArrowHelper(clipAxis, origin, 60, 0xf5c518, 15, 8);
-    scene.add(clipArrow);
+// inverse of the above - R is orthogonal (a pure rotation), so R^-1 = R.T
+// and raw = (aligned - t) @ R. verified this round-trips to floating-point
+// precision against the backend's own transform.
+function applyInverseTransform(point, transform) {
+  const { rotation: R, translation: t } = transform;
+  const d = [point.x - t[0], point.y - t[1], point.z - t[2]];
+  const out = [0, 0, 0];
+  for (let j = 0; j < 3; j++) {
+    let sum = 0;
+    for (let i = 0; i < 3; i++) sum += d[i] * R[i][j];
+    out[j] = sum;
   }
-  clipArrow.position.copy(origin);
-  clipArrow.setDirection(clipAxis);
-
-  applyClipPreview();
+  return { x: out[0], y: out[1], z: out[2] };
 }
-
-function applyClipPreview() {
-  const active = isManualClipMode();
-  clipPlaneMesh && (clipPlaneMesh.visible = active);
-  clipArrow && (clipArrow.visible = active);
-  const planes = active ? [currentClipPlane()] : [];
-  for (const mat of currentMeshMaterials) mat.clippingPlanes = planes;
-}
-
-document.querySelectorAll('input[name="clip-mode"]').forEach((el) => {
-  el.addEventListener("change", () => {
-    document.getElementById("manual-clip-controls").classList.toggle("hidden", el.value !== "manual" || !el.checked);
-    applyClipPreview();
-  });
-});
-
-document.querySelectorAll(".axis-buttons button").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    const [x, y, z] = btn.dataset.axis.split(",").map(Number);
-    clipAxis.set(x, y, z);
-    document.querySelectorAll(".axis-buttons button").forEach((b) => b.classList.remove("active"));
-    btn.classList.add("active");
-    updateClipWidget();
-  });
-});
-
-document.getElementById("plane-offset").addEventListener("input", (event) => {
-  clipOffset = Number(event.target.value);
-  updateClipWidget();
-});
-
-function setClipOffsetFromPoint(point) {
-  clipOffset = point.dot(clipAxis);
-  document.getElementById("plane-offset").value = String(Math.round(clipOffset));
-  updateClipWidget();
-}
-
-updateClipWidget();
 
 // --- mesh cleanup ---
 
@@ -767,50 +768,57 @@ function updateResampleWidget() {
 document.getElementById("resample-mesh").addEventListener("change", updateResampleWidget);
 updateResampleWidget();
 
-// --- analysis ---
+// --- align / undo / run ---
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-document.getElementById("analyze-button").addEventListener("click", async () => {
-  if (!sessionId) return;
+// shared by /clip (the "align" button) and /run - both are async
+// background jobs polled the same way. returns the final status ("done"
+// or "error"), updating statusEl with live progress along the way.
+async function pollJobStatus(statusEl) {
+  while (true) {
+    const response = await fetch(`/api/sessions/${sessionId}/status`);
+    const data = await response.json();
+    if (data.status === "done") {
+      statusEl.textContent = "done.";
+      return "done";
+    }
+    if (data.status === "error") {
+      statusEl.textContent = `error: ${data.error}`;
+      return "error";
+    }
+    // live progress - this is the actual current pipeline stage, not a
+    // static "please wait" message
+    if (data.progress) {
+      statusEl.textContent = `${data.progress.stage}${data.progress.detail ? " - " + data.progress.detail : ""}...`;
+    }
+    await sleep(500);
+  }
+}
 
-  const target = document.querySelector('input[name="target"]:checked').value;
-  const comTranslation = document.getElementById("com-translation").checked;
-  const resampleMesh = document.getElementById("resample-mesh").checked;
-  const vertexCount = Number(document.getElementById("vertex-count").value) || 10000;
-
-  const body = {
-    target,
-    landmarks: LANDMARK_NAMES.map((n) => pickedLandmarks[n]),
-    com_translation: comTranslation,
-    clipping: {},
-    // always on - a real scan (photogrammetry especially) can come in with
-    // thousands of disconnected patches from the reconstruction process;
-    // repair_mesh's merge+pymeshfix pass is what turns that into a single
-    // usable surface. skipping it isn't a quality tradeoff, it can leave
-    // keep_largest_component picking an arbitrary small fragment instead
-    // of the actual head.
-    harmonize: { n_vertices: resampleMesh ? vertexCount : null, repair: true },
-  };
+// shared by /align and /clip - both need the landmarks in the same shape.
+function _landmarksBody() {
+  const body = { landmarks: LANDMARK_NAMES.map((n) => pickedLandmarks[n]) };
   if (useAltFrontal && pickedLandmarks[ALT_FRONTAL_NAME]) {
     body.alt_frontal_landmark = pickedLandmarks[ALT_FRONTAL_NAME];
   }
+  return body;
+}
 
-  if (isManualClipMode()) {
-    body.clipping = {
-      mode: "manual",
-      manual_plane_normal: [clipAxis.x, clipAxis.y, clipAxis.z],
-      manual_plane_origin: [clipAxis.x * clipOffset, clipAxis.y * clipOffset, clipAxis.z * clipOffset],
-    };
-  }
+document.getElementById("align-button").addEventListener("click", async () => {
+  if (!sessionId) return;
 
-  const statusEl = document.getElementById("job-status");
+  const target = document.querySelector('input[name="target"]:checked').value;
+  const body = { target, ..._landmarksBody() };
+
+  const statusEl = document.getElementById("align-status");
   statusEl.textContent = "starting...";
-  document.getElementById("analyze-button").disabled = true;
+  resetAlignState();
+  document.getElementById("align-button").disabled = true;
 
-  const startResponse = await fetch(`/api/sessions/${sessionId}/analyze`, {
+  const startResponse = await fetch(`/api/sessions/${sessionId}/align`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -821,24 +829,105 @@ document.getElementById("analyze-button").addEventListener("click", async () => 
     return;
   }
 
-  while (true) {
-    const response = await fetch(`/api/sessions/${sessionId}/status`);
-    const data = await response.json();
-    if (data.status === "done") {
-      statusEl.textContent = "done.";
-      await showResults();
-      break;
-    }
-    if (data.status === "error") {
-      statusEl.textContent = `error: ${data.error}`;
-      break;
-    }
-    // live progress - this is the actual current pipeline stage, not a
-    // static "please wait" message
-    if (data.progress) {
-      statusEl.textContent = `${data.progress.stage}${data.progress.detail ? " - " + data.progress.detail : ""}...`;
-    }
-    await sleep(500);
+  const outcome = await pollJobStatus(statusEl);
+  if (outcome === "done") {
+    await displayMesh(`/api/sessions/${sessionId}/mesh/registered`);
+    const transformResponse = await fetch(`/api/sessions/${sessionId}/registered-transform`);
+    registeredTransform = transformResponse.ok ? await transformResponse.json() : null;
+    alignSucceeded = true;
+  }
+  updateAnalyzeButtonState();
+});
+
+document.getElementById("reset-button").addEventListener("click", async () => {
+  if (!sessionId) return;
+  // full clean slate, on purpose - unlike a lighter "undo" that would just
+  // step back to the pre-align view, this clears every pick too, so
+  // there's no stale state left over from whatever "run pipeline" (if it
+  // ran) or "align" already committed. align is cheap and stateless
+  // beyond the session fields it directly sets, so no server round-trip
+  // is needed here beyond re-fetching the original mesh.
+  resetManualPicks();
+  await displayMesh(`/api/sessions/${sessionId}/mesh/original`);
+  document.getElementById("align-status").textContent = "";
+  updateAnalyzeButtonState();
+});
+
+document.getElementById("adjust-picks-button").addEventListener("click", () => {
+  if (!alignSucceeded || !registeredTransform) return;
+  // shows the existing picks on the currently-displayed ALIGNED mesh (not
+  // the raw one) so they're easier to judge in a standard, oriented pose.
+  // alt-drag already works on whatever markers are showing - the drag
+  // handler checks adjustingInAlignedFrame to know it needs to convert
+  // back to raw coordinates before storing.
+  for (const name of activeLandmarkNames()) {
+    const raw = pickedLandmarks[name];
+    if (raw) addLandmarkMarker(name, applyTransform(raw, registeredTransform));
+  }
+  adjustingInAlignedFrame = true;
+});
+
+document.getElementById("run-button").addEventListener("click", async () => {
+  if (!sessionId || !alignSucceeded) return;
+
+  const target = document.querySelector('input[name="target"]:checked').value;
+  const comTranslation = document.getElementById("com-translation").checked;
+  const resampleMesh = document.getElementById("resample-mesh").checked;
+  const vertexCount = Number(document.getElementById("vertex-count").value) || 10000;
+
+  // "run pipeline" is one committed action from the user's side, but two
+  // calls under the hood - /clip (repair + register + clip, cheap after
+  // the first press per session) then /run (resample + measure) - same
+  // pattern the old two-button clip/run design used, just chained
+  // automatically now instead of needing two separate clicks.
+  const clipBody = {
+    target,
+    com_translation: comTranslation,
+    // always on - a real scan (photogrammetry especially) can come in with
+    // thousands of disconnected patches from the reconstruction process;
+    // repair_mesh's merge+pymeshfix pass is what turns that into a single
+    // usable surface. cached server-side across repeated presses in this
+    // session (see api.sessions.Session.repaired_mesh) - only the first
+    // press per session actually pays for it.
+    repair: true,
+    ..._landmarksBody(),
+  };
+  const runBody = { n_vertices: resampleMesh ? vertexCount : null };
+
+  const statusEl = document.getElementById("job-status");
+  statusEl.textContent = "starting...";
+  document.getElementById("run-button").disabled = true;
+
+  const clipResponse = await fetch(`/api/sessions/${sessionId}/clip`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(clipBody),
+  });
+  if (!clipResponse.ok) {
+    statusEl.textContent = `failed to start: ${await clipResponse.text()}`;
+    updateAnalyzeButtonState();
+    return;
+  }
+  if ((await pollJobStatus(statusEl)) !== "done") {
+    updateAnalyzeButtonState();
+    return;
+  }
+
+  const runResponse = await fetch(`/api/sessions/${sessionId}/run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(runBody),
+  });
+  if (!runResponse.ok) {
+    statusEl.textContent = `failed to start: ${await runResponse.text()}`;
+    updateAnalyzeButtonState();
+    return;
+  }
+
+  const outcome = await pollJobStatus(statusEl);
+  if (outcome === "done") {
+    pipelineRan = true;
+    await showResults();
   }
   updateAnalyzeButtonState();
 });

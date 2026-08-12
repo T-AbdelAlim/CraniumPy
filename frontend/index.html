@@ -69,32 +69,22 @@
           <input id="use-alt-frontal" type="checkbox" />
           use a secondary frontal landmark (e.g. subnasale) for the displayed/saved mesh
         </label>
-        <button id="reset-landmarks" type="button">reset picks</button>
-      </section>
-
-      <section>
-        <h2>4. Clipping</h2>
-        <label><input type="radio" name="clip-mode" value="default" checked /> default for the target above</label>
-        <label><input type="radio" name="clip-mode" value="manual" /> manual plane</label>
-        <div id="manual-clip-controls" class="hidden">
-          <p class="hint">the yellow plane is the cut. the arrow points into the half that gets <strong>kept</strong>.
-            pick an axis, then slide to move the plane.</p>
-          <div class="axis-buttons">
-            <button type="button" data-axis="1,0,0">+X</button>
-            <button type="button" data-axis="-1,0,0">-X</button>
-            <button type="button" data-axis="0,1,0">+Y</button>
-            <button type="button" data-axis="0,-1,0">-Y</button>
-            <button type="button" data-axis="0,0,1">+Z</button>
-            <button type="button" data-axis="0,0,-1">-Z</button>
-          </div>
-          <label for="plane-offset">offset</label>
-          <input id="plane-offset" type="range" min="-150" max="150" value="0" step="1" />
-          <p class="hint">or ctrl/cmd-click the mesh to move the plane to that point.</p>
+        <div class="toggle-row">
+          <button id="align-button" type="button" disabled>align</button>
+          <button id="adjust-picks-button" type="button" disabled>adjust picks</button>
+          <button id="reset-button" type="button" disabled>reset</button>
         </div>
+        <p class="hint">"align" is just the rigid registration - fast, nothing else happens yet. "adjust picks"
+          shows your landmarks on the aligned mesh so you can <strong>alt-drag</strong> them into a better spot
+          (easier to judge on the aligned view than the raw scan), then press "align" again to re-register with
+          the adjustment. "reset" reloads the original mesh in its original orientation and clears every pick, so
+          you start over from scratch. once "run pipeline" has run, "align" and "adjust picks" lock - "reset" or
+          loading a new file are the only ways back in.</p>
+        <p id="align-status" class="hint"></p>
       </section>
 
       <section>
-        <h2>5. Mesh cleanup</h2>
+        <h2>4. Mesh cleanup</h2>
         <label class="checkbox"><input id="resample-mesh" type="checkbox" /> resample</label>
         <label for="vertex-count">to</label>
         <input id="vertex-count" type="number" min="500" max="200000" step="500" value="10000" /> vertices
@@ -102,14 +92,16 @@
       </section>
 
       <section>
-        <h2>6. Run it</h2>
+        <h2>5. Run</h2>
         <label class="checkbox"><input id="com-translation" type="checkbox" checked /> center-of-mass correction</label>
-        <p class="hint">recommended for most use-cases. off: aligns on the centroid of the 3 landmarks only. on:
-          same alignment, plus a depth-only nudge toward the head-circumference slice centroid, for more
-          consistent shape comparisons - <a
+        <p class="hint">recommended for most use-cases. off: keeps the plain landmark-triangle alignment from
+          "align". on: applies a depth-only nudge toward the head-circumference slice centroid before clipping,
+          for more consistent shape comparisons - <a
             href="https://journals.lww.com/jcraniofacialsurgery/fulltext/10.1097/scs.0000000000009448~reliability-and-agreement-of-automated-head-measurements"
             target="_blank" rel="noopener">details</a>.</p>
-        <button id="analyze-button" type="button" disabled>run analysis</button>
+        <button id="run-button" type="button" disabled>run pipeline</button>
+        <p class="hint">Repairs and clips the scan to the landmark-guided plane, then optionally resamples and
+          applies center-of-mass correction.</p>
         <p id="job-status" class="hint"></p>
       </section>
 
@@ -123,7 +115,7 @@
       </section>
 
       <section id="visualization" class="hidden">
-        <h2>7. Visualization</h2>
+        <h2>6. Visualization</h2>
         <label class="checkbox">
           <input id="visualization-toggle" type="checkbox" />
           show visualization

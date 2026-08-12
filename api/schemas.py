@@ -44,6 +44,62 @@ class AnalyzeRequest(BaseModel):
     harmonize: HarmonizeConfig = HarmonizeConfig()
 
 
+class AlignRequest(BaseModel):
+    """the "align" stage's request body - pure rigid registration
+    (landmark-triangle alignment), nothing else. no com_translation, no
+    repair, no clipping - those all happen together as one committed step
+    when "run pipeline" is pressed (see ClipRequest/RunRequest)."""
+
+    target: Literal["cranium", "face"] = "cranium"
+    landmarks: list[LandmarkPoint] = Field(min_length=3, max_length=3)
+    alt_frontal_landmark: LandmarkPoint | None = None
+
+
+class RegisteredTransformResponse(BaseModel):
+    """the rigid transform (rotation + translation) the last successful
+    /align produced for the currently-displayed frame - lets the frontend
+    convert a landmark position between the raw upload's coordinates and
+    the aligned mesh's coordinates without re-deriving the fit itself
+    (see landmark_align/RigidTransform.apply: aligned = raw @ R.T + t).
+    used so "adjust picks" can let you drag a landmark on the aligned
+    mesh and still send the right raw-frame value back to /align or
+    /clip afterward."""
+
+    rotation: list[list[float]]  # 3x3, row-major, matches RigidTransform.rotation
+    translation: list[float]  # 3
+
+
+class ClipRequest(BaseModel):
+    """the "Clip" stage's request body - register + repair + clip +
+    boundary cleanup, no resample. same fields AnalyzeRequest carried for
+    that part of the job; repair/repair_method moved up from the old
+    nested HarmonizeConfig since resample no longer happens here (see
+    RunRequest) - repair belongs with clipping now, not with resample."""
+
+    target: Literal["cranium", "face"] = "cranium"
+    landmarks: list[LandmarkPoint] = Field(min_length=3, max_length=3)
+    alt_frontal_landmark: LandmarkPoint | None = None
+    com_translation: bool = True
+    clipping: ClippingConfig = ClippingConfig()
+    repair: bool = True
+    repair_method: Literal["pymeshfix", "trimesh"] = "pymeshfix"
+
+
+class RunRequest(BaseModel):
+    """the "Run" stage's request body - resample + measure, on whatever
+    /clip already produced. no target/landmarks/clipping here - those
+    were already committed by /clip."""
+
+    n_vertices: int | None = 10_000
+    resample_method: Literal["quadric", "voronoi"] = "quadric"
+
+
+class ClipUndoResponse(BaseModel):
+    # False if there was nothing to undo (no clip had been run yet) - not
+    # an error, just a no-op.
+    reverted: bool
+
+
 class TemplateInfo(BaseModel):
     name: str
     description: str

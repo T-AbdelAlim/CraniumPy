@@ -17,8 +17,16 @@ from PIL import Image
 
 from craniumpy_core.craniometrics import slice_center_of_mass
 from craniumpy_core.io import load_mesh
-from craniumpy_core.pipeline import analyze, analyze_cranial, harmonize, register
+from craniumpy_core.pipeline import (
+    analyze,
+    analyze_cranial,
+    harmonize,
+    measure_cranial,
+    register,
+    register_and_clip_cranial,
+)
 from craniumpy_core.registration.rigid import REFERENCE_TRIANGLE
+from craniumpy_core.remesh import repair_mesh
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TEMPLATES_DIR = REPO_ROOT / "src" / "craniumpy_core" / "templates"
@@ -385,6 +393,74 @@ def test_analyze_cranial_com_translation_off_has_no_gash():
     assert len(loops) == 1
     boundary_y = result.display_mesh.vertices[loops[0]][:, 1]
     assert np.ptp(boundary_y) < 5.0
+
+
+def _split_analyze_cranial(mesh, landmarks, **kwargs):
+    """register_and_clip_cranial + measure_cranial, wired up the same way
+    the API's /clip and /run endpoints do it - repair happens once, up
+    front, by the caller, same as analyze_cranial does internally. used to
+    check the split gives the same answer as the original one-call
+    analyze_cranial, since the API layer now always goes through the split
+    version - see pipeline.py's module docs for why this split exists."""
+    com_translation = kwargs.pop("com_translation", True)
+    n_vertices = kwargs.pop("n_vertices", 10_000)
+    resample_method = kwargs.pop("resample_method", "quadric")
+    repaired = repair_mesh(mesh)
+    clip_result = register_and_clip_cranial(repaired, landmarks, com_translation=com_translation, **kwargs)
+    return measure_cranial(clip_result, com_translation=com_translation, n_vertices=n_vertices, resample_method=resample_method)
+
+
+def test_register_and_clip_cranial_plus_measure_cranial_matches_analyze_cranial():
+    mesh, landmarks = _ellipsoid_with_landmarks()
+
+    expected = analyze_cranial(mesh, landmarks, n_vertices=3000)
+    actual = _split_analyze_cranial(mesh, landmarks, n_vertices=3000)
+
+    assert actual.used_alt_frontal is False
+    np.testing.assert_allclose(
+        np.asarray(actual.display_mesh.vertices), np.asarray(expected.display_mesh.vertices), atol=1e-6
+    )
+    assert actual.craniometrics.depth_mm == pytest.approx(expected.craniometrics.depth_mm)
+    assert actual.craniometrics.breadth_mm == pytest.approx(expected.craniometrics.breadth_mm)
+    assert actual.craniometrics.circumference_cm == pytest.approx(expected.craniometrics.circumference_cm)
+    assert actual.craniometrics.mesh_volume_cc == pytest.approx(expected.craniometrics.mesh_volume_cc)
+
+
+def test_register_and_clip_cranial_plus_measure_cranial_matches_analyze_cranial_with_alt_frontal():
+    mesh, landmarks = _ellipsoid_with_landmarks()
+    alt_frontal = landmarks[0] + np.array([0.0, -15.0, -5.0])
+
+    expected = analyze_cranial(mesh, landmarks, alt_frontal_landmark=alt_frontal, n_vertices=3000)
+    actual = _split_analyze_cranial(mesh, landmarks, alt_frontal_landmark=alt_frontal, n_vertices=3000)
+
+    assert actual.used_alt_frontal is True
+    np.testing.assert_allclose(
+        np.asarray(actual.display_mesh.vertices), np.asarray(expected.display_mesh.vertices), atol=1e-6
+    )
+    np.testing.assert_allclose(
+        np.asarray(actual.sellion_mesh.vertices), np.asarray(expected.sellion_mesh.vertices), atol=1e-6
+    )
+    assert actual.craniometrics.depth_mm == pytest.approx(expected.craniometrics.depth_mm)
+    assert actual.craniometrics.breadth_mm == pytest.approx(expected.craniometrics.breadth_mm)
+    np.testing.assert_allclose(actual.display_hc_polygon, expected.display_hc_polygon, atol=1e-6)
+
+
+def test_register_and_clip_cranial_does_not_resample():
+    # the whole point of splitting analyze_cranial: the clip stage leaves
+    # resampling for measure_cranial, so a caller iterating on the clip
+    # plane never pays for quadric decimation until it actually runs the
+    # final stage. n_vertices=50 here is deliberately far below the
+    # clipped mesh's real vertex count, so resample_mesh (called inside
+    # measure_cranial, never inside register_and_clip_cranial) has
+    # something real to do rather than being a same-size no-op.
+    mesh, landmarks = _ellipsoid_with_landmarks()
+    repaired = repair_mesh(mesh)
+    clip_result = register_and_clip_cranial(repaired, landmarks)
+    clipped_count = len(clip_result.sellion_clipped_mesh.vertices)
+    assert clipped_count > 50
+
+    measured = measure_cranial(clip_result, n_vertices=50)
+    assert len(measured.sellion_mesh.vertices) < clipped_count
 
 
 @pytest.mark.slow

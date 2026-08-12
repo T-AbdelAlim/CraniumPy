@@ -17,16 +17,23 @@ from fastapi.responses import Response
 from trimesh.resolvers import ZipResolver
 
 from craniumpy_core import pipeline
+from craniumpy_core.asymmetry import calculate_asymmetry
 from craniumpy_core.io import strip_uninteresting_vertex_colors
 from craniumpy_core.template_registry import SHIPPED_TEMPLATES, load_shipped_template
 from api.results_bundle import build_results_bundle, results_folder_name, write_results_to_folder
 from api.schemas import (
+    AlignRequest,
     AnalyzeRequest,
     AsymmetryResponse,
+    ClipRequest,
+    ClipUndoResponse,
     CraniometricsResponse,
+    HarmonizeConfig,
     LandmarkPoint,
     OpenFromPathsRequest,
+    RegisteredTransformResponse,
     ResultsResponse,
+    RunRequest,
     SaveResultsResponse,
     StatusResponse,
     TemplateInfo,
@@ -208,8 +215,81 @@ def open_mesh_from_paths(request: OpenFromPathsRequest) -> UploadResponse:
     return UploadResponse(session_id=session.id, vertex_count=len(mesh.vertices), face_count=len(mesh.faces))
 
 
-@router.post("/{session_id}/analyze", response_model=StatusResponse)
-def start_analysis(session_id: str, request: AnalyzeRequest) -> StatusResponse:
+@router.post("/{session_id}/align", response_model=StatusResponse)
+def start_align(session_id: str, request: AlignRequest) -> StatusResponse:
+    """pure rigid registration - landmark-triangle alignment only. no
+    center-of-mass nudge, no repair, no clip - just fast enough to
+    preview instantly and to gate "run pipeline" behind a sane
+    registration. repair/clip/resample/CoM-correction all happen
+    together later, as one committed step, when /clip then /run are
+    triggered ("run pipeline" - see start_clip/start_run).
+
+    also stores the rigid transform that produced the displayed frame
+    (session.registered_transform), so the frontend can convert a
+    landmark position between raw and aligned coordinates for "adjust
+    picks" without re-deriving the fit itself - see
+    RegisteredTransformResponse."""
+    session = _get_session(session_id)
+    landmarks = np.array([[p.x, p.y, p.z] for p in request.landmarks])
+    alt_frontal = None
+    if request.alt_frontal_landmark is not None:
+        p = request.alt_frontal_landmark
+        alt_frontal = np.array([p.x, p.y, p.z])
+
+    def _run() -> None:
+        session.clear_clip_result()
+
+        sellion_reg = pipeline.register(
+            session.mesh, landmarks, target=request.target, com_translation=False, on_progress=session.report_progress
+        )
+        session.sellion_registered_mesh = sellion_reg.mesh
+        session.sellion_registered_landmarks = sellion_reg.landmarks
+
+        if request.target == "cranium" and alt_frontal is not None:
+            alt_landmarks = np.array([alt_frontal, landmarks[1], landmarks[2]])
+            alt_reg = pipeline.register(
+                session.mesh, alt_landmarks, target="cranium", com_translation=False, on_progress=session.report_progress
+            )
+            session.registered_mesh = alt_reg.mesh
+            session.registered_landmarks = alt_reg.landmarks
+            session.registered_transform = alt_reg.transform
+        else:
+            session.registered_mesh = sellion_reg.mesh
+            session.registered_landmarks = sellion_reg.landmarks
+            session.registered_transform = sellion_reg.transform
+
+        session.report_progress("done", "")
+        return None
+
+    try:
+        store.run_job(session, _run)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return StatusResponse(status="running", progress=None)
+
+
+@router.get("/{session_id}/registered-transform", response_model=RegisteredTransformResponse)
+def get_registered_transform(session_id: str) -> RegisteredTransformResponse:
+    session = _get_session(session_id)
+    if session.registered_transform is None:
+        raise HTTPException(status_code=409, detail="no registration yet -- run /align first")
+    transform = session.registered_transform
+    return RegisteredTransformResponse(
+        rotation=np.asarray(transform.rotation).tolist(), translation=np.asarray(transform.translation).tolist()
+    )
+
+
+@router.post("/{session_id}/clip", response_model=StatusResponse)
+def start_clip(session_id: str, request: ClipRequest) -> StatusResponse:
+    """register + repair + clip + boundary cleanup, no resample, no
+    measurement - the fast-ish, re-runnable half of what used to be one
+    monolithic /analyze. repeated calls (different plane, different clip
+    mode, toggling alt-frontal) reuse session.repaired_mesh instead of
+    re-running pymeshfix every time - see Session.repaired_mesh and
+    pipeline.register_and_clip_cranial's docstring. always invalidates
+    whatever a previous /clip or /run produced (see
+    Session.clear_clip_result), so /run must be called again afterward."""
     session = _get_session(session_id)
     landmarks = np.array([[p.x, p.y, p.z] for p in request.landmarks])
     alt_frontal = None
@@ -224,26 +304,139 @@ def start_analysis(session_id: str, request: AnalyzeRequest) -> StatusResponse:
         raise HTTPException(status_code=400, detail="clipping.mode='manual' needs manual_plane_normal and manual_plane_origin")
 
     def _run() -> dict:
+        session.clear_clip_result()
+
+        if request.repair and (session.repaired_mesh is None or session.repaired_mesh_method != request.repair_method):
+            session.report_progress("repair", f"repairing mesh ({request.repair_method})")
+            session.repaired_mesh = pipeline.repair_mesh(session.mesh, method=request.repair_method)
+            session.repaired_mesh_method = request.repair_method
+        elif not request.repair:
+            session.repaired_mesh = session.mesh
+            session.repaired_mesh_method = None
+
         if request.target == "cranium":
             # sellion (mandatory, above) always drives the actual
             # measurements - alt_frontal (if given) only takes over the
             # displayed/saved mesh's registration+clip frame. see
-            # pipeline.analyze_cranial's docstring for why these can't be
-            # the same knob.
-            result = pipeline.analyze_cranial(
-                session.mesh,
+            # pipeline.register_and_clip_cranial's docstring for why
+            # these can't be the same knob.
+            clip_result = pipeline.register_and_clip_cranial(
+                session.repaired_mesh,
                 landmarks,
                 alt_frontal_landmark=alt_frontal,
                 com_translation=request.com_translation,
                 clip_mode=clip_cfg.mode,
                 manual_plane_normal=manual_normal,
                 manual_plane_origin=manual_origin,
-                n_vertices=request.harmonize.n_vertices,
-                repair=request.harmonize.repair,
-                repair_method=request.harmonize.repair_method,
                 on_progress=session.report_progress,
             )
-            session.registered_mesh = result.display_registered_mesh
+            session.sellion_registered_mesh = clip_result.sellion_registered_mesh
+            session.sellion_registered_landmarks = clip_result.sellion_registered_landmarks
+            session.registered_mesh = clip_result.display_registered_mesh
+            session.registered_landmarks = clip_result.display_registered_landmarks
+            session.sellion_clipped_mesh = clip_result.sellion_clipped_mesh
+            session.clipped_mesh = clip_result.display_clipped_mesh
+            session.used_alt_frontal = clip_result.used_alt_frontal
+        else:
+            # facial: unaffected by alt_frontal_landmark (cranium-only,
+            # see ClipRequest) - single registration, same as always.
+            reg = pipeline.register(
+                session.repaired_mesh,
+                landmarks,
+                target=request.target,
+                com_translation=request.com_translation,
+                on_progress=session.report_progress,
+            )
+            session.sellion_registered_mesh = None
+            session.sellion_registered_landmarks = None
+            session.registered_mesh = reg.mesh
+            session.registered_landmarks = reg.landmarks
+            session.used_alt_frontal = False
+
+            clipped = pipeline.harmonize(
+                reg.mesh,
+                target=request.target,
+                landmarks=reg.landmarks,
+                clip_mode=clip_cfg.mode,
+                manual_plane_normal=manual_normal,
+                manual_plane_origin=manual_origin,
+                n_vertices=None,
+                repair=False,
+                com_translation=request.com_translation,
+                on_progress=session.report_progress,
+            )
+            session.sellion_clipped_mesh = None
+            session.clipped_mesh = clipped
+
+        session.last_clip_config = request
+        session.report_progress("done", "")
+        return None
+
+    try:
+        store.run_job(session, _run)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return StatusResponse(status="running", progress=None)
+
+
+@router.post("/{session_id}/clip/undo", response_model=ClipUndoResponse)
+def undo_clip(session_id: str) -> ClipUndoResponse:
+    """synchronous, no job - reverts to whatever /clip's last registered
+    (pre-clip) mesh was, discarding the clip attempt so a different plane
+    can be tried. single-level revert, no history - a second undo in a
+    row is just a no-op (reverted=False)."""
+    session = _get_session(session_id)
+    if session.job_status == "running":
+        raise HTTPException(status_code=409, detail="a job is already running for this session")
+    had_clip = session.clipped_mesh is not None
+    session.clear_clip_result()
+    return ClipUndoResponse(reverted=had_clip)
+
+
+@router.post("/{session_id}/run", response_model=StatusResponse)
+def start_run(session_id: str, request: RunRequest) -> StatusResponse:
+    """resample + measure, on whatever /clip already produced - the part
+    of the old monolithic /analyze that's actually cheap to redo, now
+    decoupled from repair+clip so tweaking n_vertices doesn't have to
+    repeat those either."""
+    session = _get_session(session_id)
+    if session.clipped_mesh is None or session.last_clip_config is None:
+        raise HTTPException(status_code=409, detail="no clipped mesh yet -- run /clip first")
+
+    clip_request: ClipRequest = session.last_clip_config
+
+    def _run() -> dict:
+        analyze_request = AnalyzeRequest(
+            target=clip_request.target,
+            landmarks=clip_request.landmarks,
+            alt_frontal_landmark=clip_request.alt_frontal_landmark,
+            com_translation=clip_request.com_translation,
+            clipping=clip_request.clipping,
+            harmonize=HarmonizeConfig(
+                n_vertices=request.n_vertices,
+                repair=clip_request.repair,
+                repair_method=clip_request.repair_method,
+            ),
+        )
+
+        if clip_request.target == "cranium":
+            clip_result = pipeline.CranialClipResult(
+                sellion_registered_mesh=session.sellion_registered_mesh,
+                sellion_registered_landmarks=session.sellion_registered_landmarks,
+                display_registered_mesh=session.registered_mesh,
+                display_registered_landmarks=session.registered_landmarks,
+                sellion_clipped_mesh=session.sellion_clipped_mesh,
+                display_clipped_mesh=session.clipped_mesh,
+                used_alt_frontal=session.used_alt_frontal,
+            )
+            result = pipeline.measure_cranial(
+                clip_result,
+                com_translation=clip_request.com_translation,
+                n_vertices=request.n_vertices,
+                resample_method=request.resample_method,
+                on_progress=session.report_progress,
+            )
             session.result_mesh = result.display_mesh
             session.sellion_result_mesh = result.sellion_mesh
             session.report_progress("done", "")
@@ -251,51 +444,34 @@ def start_analysis(session_id: str, request: AnalyzeRequest) -> StatusResponse:
                 "landmarks": result.display_landmarks,
                 "craniometrics": result.craniometrics,
                 "asymmetry": None,
-                "request": request,
+                "request": analyze_request,
                 "sellion_landmarks": result.sellion_landmarks if result.used_alt_frontal else None,
                 "display_hc_polygon": result.display_hc_polygon,
                 "display_bpd_ofd_points": result.display_bpd_ofd_points,
                 "used_alt_frontal": result.used_alt_frontal,
             }
 
-        # facial: unaffected by alt_frontal_landmark (cranium-only, see
-        # AnalyzeRequest) - single registration, same as always.
+        # facial: no alt-frontal, no CoM recenter tail (harmonize()'s
+        # recenter step is cranium-only) - resample then measure.
         session.sellion_result_mesh = None
-        reg = pipeline.register(
-            session.mesh,
-            landmarks,
-            target=request.target,
-            com_translation=request.com_translation,
-            on_progress=session.report_progress,
-        )
-        session.registered_mesh = reg.mesh
-
-        harmonized = pipeline.harmonize(
-            reg.mesh,
-            target=request.target,
-            landmarks=reg.landmarks,
-            clip_mode=clip_cfg.mode,
-            manual_plane_normal=manual_normal,
-            manual_plane_origin=manual_origin,
-            n_vertices=request.harmonize.n_vertices,
-            repair=request.harmonize.repair,
-            repair_method=request.harmonize.repair_method,
-            com_translation=request.com_translation,
-            on_progress=session.report_progress,
-        )
-        session.result_mesh = harmonized
+        if request.n_vertices is not None:
+            session.report_progress("resample", f"resampling to {request.n_vertices} vertices ({request.resample_method})")
+            result_mesh = pipeline.resample_mesh(
+                session.clipped_mesh, n_vertices=request.n_vertices, method=request.resample_method
+            )
+        else:
+            result_mesh = session.clipped_mesh
+        session.result_mesh = result_mesh
 
         session.report_progress("analyze", "computing measurements")
-        from craniumpy_core.asymmetry import calculate_asymmetry
-
-        asymmetry = calculate_asymmetry(harmonized)
+        asymmetry = calculate_asymmetry(result_mesh)
         session.report_progress("done", "")
 
         return {
-            "landmarks": reg.landmarks,
+            "landmarks": session.registered_landmarks,
             "craniometrics": None,
             "asymmetry": asymmetry,
-            "request": request,
+            "request": analyze_request,
             "sellion_landmarks": None,
             "display_hc_polygon": None,
             "display_bpd_ofd_points": None,
@@ -373,14 +549,18 @@ def export_mesh(session_id: str, stage: str):
         mesh = session.mesh
     elif stage == "registered":
         if session.registered_mesh is None:
-            raise HTTPException(status_code=409, detail="no registered mesh yet -- run /analyze first")
+            raise HTTPException(status_code=409, detail="no registered mesh yet -- run /align first")
         mesh = session.registered_mesh
+    elif stage == "clipped":
+        if session.clipped_mesh is None:
+            raise HTTPException(status_code=409, detail="no clipped mesh yet -- run /clip first")
+        mesh = session.clipped_mesh
     elif stage == "result":
         if session.result_mesh is None:
-            raise HTTPException(status_code=409, detail="no result mesh yet -- run /analyze first")
+            raise HTTPException(status_code=409, detail="no result mesh yet -- run /run first")
         mesh = session.result_mesh
     else:
-        raise HTTPException(status_code=400, detail="stage must be 'original', 'registered', or 'result'")
+        raise HTTPException(status_code=400, detail="stage must be 'original', 'registered', 'clipped', or 'result'")
 
     # include_normals=True matters - trimesh leaves the NORMAL accessor out
     # entirely otherwise, and without normals the mesh renders solid black
