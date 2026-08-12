@@ -425,14 +425,14 @@ function resetManualPicks() {
   resetAlignState();
 }
 
-// deliberately does NOT invalidate alignment itself (see resetAlignState's
-// callers instead) - this runs on every mousemove tick while dragging a
-// landmark, and while "adjust picks" is active that drag depends on
-// registeredTransform staying put. structural changes (reset picks,
-// alt-frontal toggle, target change, a genuinely new landmark placed)
-// call resetAlignState() themselves, right next to whatever caused them -
-// this only refreshes the button-enabled state (e.g. "align" unlocking
-// once the last landmark is picked), which always needs to happen here.
+// deliberately does NOT invalidate alignment itself - this runs on every
+// mousemove tick while dragging a landmark, and while "adjust picks" is
+// active that drag depends on registeredTransform staying put. a full
+// reset (reset-button, new upload) calls resetAlignState() itself; an
+// actual landmark position change calls markLandmarksChanged() itself
+// (see both below) - this only refreshes the button-enabled state (e.g.
+// "align" unlocking once the last landmark is picked), which always
+// needs to happen here regardless of which of those applies.
 function updateLandmarkList() {
   document.querySelectorAll("#landmark-list li").forEach((li) => {
     const name = li.dataset.name;
@@ -472,10 +472,14 @@ function setUseAltFrontal(enabled) {
       delete landmarkMarkerObjects[ALT_FRONTAL_NAME];
     }
   }
+  // deliberately does NOT invalidate an existing alignment - /clip always
+  // re-registers from the current landmarks/target/alt-frontal state fresh
+  // (see start_clip in api/routers/mesh.py), so "align" was never actually
+  // a dependency of "run pipeline"'s correctness, just a preview/sanity
+  // gate on the landmark POSITIONS. enabling alt-frontal naturally
+  // requires a new pick anyway (landmarksOk below goes false until it's
+  // placed, which does mark the alignment stale - see markLandmarksChanged).
   updateLandmarkList();
-  // toggling which landmark drives the display frame invalidates whatever
-  // was already aligned against the old choice.
-  resetAlignState();
 }
 
 document.getElementById("use-alt-frontal").addEventListener("change", (event) => {
@@ -483,12 +487,11 @@ document.getElementById("use-alt-frontal").addEventListener("change", (event) =>
 });
 
 document.querySelectorAll('input[name="target"]').forEach((el) => {
-  el.addEventListener("change", () => {
-    updateAltFrontalVisibility();
-    // cranial vs facial use entirely different clip/measurement pipelines -
-    // whatever the old target had clipped no longer applies.
-    resetAlignState();
-  });
+  // deliberately does NOT invalidate an existing alignment either, same
+  // reasoning as setUseAltFrontal above - switching cranial/facial doesn't
+  // change any landmark's position, and /clip picks up the new target
+  // fresh on its own.
+  el.addEventListener("change", updateAltFrontalVisibility);
 });
 updateAltFrontalVisibility();
 
@@ -517,11 +520,7 @@ canvas.addEventListener("click", (event) => {
   pickedLandmarks[name] = { x: point.x, y: point.y, z: point.z };
   addLandmarkMarker(name, point);
   updateLandmarkList();
-  // a newly-placed landmark means whatever was previously aligned (if
-  // anything) didn't include this point - shouldn't normally be reachable
-  // with alignSucceeded true (that needs every landmark already picked),
-  // but this keeps it correct if that ever changes.
-  resetAlignState();
+  markLandmarksChanged();
 });
 
 // --- landmark repositioning (alt + left-button drag) ---
@@ -577,6 +576,7 @@ canvas.addEventListener("mousemove", (event) => {
       : { x: point.x, y: point.y, z: point.z };
   landmarkMarkerObjects[draggingLandmarkName].position.copy(point);
   updateLandmarkList();
+  markLandmarksChanged();
 });
 
 window.addEventListener("mouseup", () => {
@@ -592,7 +592,7 @@ let sessionId = null;
 async function _afterSessionOpened(response, meshPath) {
   const infoEl = document.getElementById("mesh-info");
   if (!response.ok) {
-    infoEl.textContent = `couldn't open mesh: ${await response.text()}`;
+    infoEl.textContent = `Couldn't open mesh: ${await response.text()}`;
     return;
   }
 
@@ -611,13 +611,13 @@ async function _afterSessionOpened(response, meshPath) {
 
 async function uploadFiles(files) {
   selectionHasTexture = hasTextureFile(files.map((f) => f.name));
-  document.getElementById("mesh-info").textContent = "uploading...";
+  document.getElementById("mesh-info").textContent = "Uploading...";
   const formData = new FormData();
   for (const f of files) formData.append("files", f);
   try {
     await _afterSessionOpened(await fetch("/api/sessions", { method: "POST", body: formData }), primaryMeshFile(files.map((f) => f.name)));
   } catch (err) {
-    document.getElementById("mesh-info").textContent = `upload failed: ${err}`;
+    document.getElementById("mesh-info").textContent = `Upload failed: ${err}`;
   }
 }
 
@@ -627,7 +627,7 @@ async function uploadFiles(files) {
 // it later without asking (see the save-results button below).
 async function openFilesFromPaths(paths) {
   selectionHasTexture = hasTextureFile(paths.map((p) => p.split(/[\\/]/).pop()));
-  document.getElementById("mesh-info").textContent = "opening...";
+  document.getElementById("mesh-info").textContent = "Opening...";
   try {
     await _afterSessionOpened(
       await fetch("/api/sessions/from-paths", {
@@ -640,7 +640,7 @@ async function openFilesFromPaths(paths) {
       paths.find((p) => MESH_EXTENSIONS.includes(extOf(p.split(/[\\/]/).pop())))
     );
   } catch (err) {
-    document.getElementById("mesh-info").textContent = `couldn't open mesh: ${err}`;
+    document.getElementById("mesh-info").textContent = `Couldn't open mesh: ${err}`;
   }
 }
 
@@ -666,11 +666,11 @@ function hasTextureFile(names) {
 document.getElementById("choose-mesh-button").addEventListener("click", async () => {
   if (isDesktopApp()) {
     const paths = await pickFileNative(true, (msg) => {
-      document.getElementById("mesh-info").textContent = `couldn't open the file picker: ${msg}`;
+      document.getElementById("mesh-info").textContent = `Couldn't open the file picker: ${msg}`;
     });
     if (!paths || paths.length === 0) return;
     if (!hasMeshFile(paths.map((p) => p.split(/[\\/]/).pop()))) {
-      document.getElementById("mesh-info").textContent = "no .ply/.obj/.stl found in what you picked";
+      document.getElementById("mesh-info").textContent = "No .ply/.obj/.stl found in what you picked";
       return;
     }
     openFilesFromPaths(paths);
@@ -683,7 +683,7 @@ document.getElementById("file-input").addEventListener("change", (event) => {
   const allFiles = Array.from(event.target.files);
   if (allFiles.length === 0) return;
   if (!hasMeshFile(allFiles.map((f) => f.name))) {
-    document.getElementById("mesh-info").textContent = "no .ply/.obj/.stl found in the files you picked";
+    document.getElementById("mesh-info").textContent = "No .ply/.obj/.stl found in the files you picked";
     return;
   }
   uploadFiles(allFiles);
@@ -711,21 +711,41 @@ let registeredTransform = null;
 // vertex count / center-of-mass correction can still be changed and
 // re-run without a fresh align.
 let pipelineRan = false;
+// true whenever the current landmark positions haven't been through a
+// successful /align yet - gates align/run so they stay mutually exclusive:
+// align is only pressable while this is true, run only once it's false
+// again (i.e. align succeeded and nothing moved since). target/com/resample
+// changes don't touch this flag since /clip always re-registers fresh from
+// current UI state regardless of what align last computed (see
+// register_and_clip_cranial/register in pipeline.py) - only landmark
+// position changes actually invalidate a completed alignment.
+let landmarksChangedSinceAlign = true;
 
 function resetAlignState() {
   alignSucceeded = false;
   adjustingInAlignedFrame = false;
   registeredTransform = null;
   pipelineRan = false;
+  landmarksChangedSinceAlign = true;
+  document.getElementById("align-status").innerHTML = "";
+  updateAnalyzeButtonState();
+}
+
+// call whenever a landmark's position actually changes (new pick, alt-drag,
+// or adjust-picks repositioning) - re-enables "align" and locks "run" until
+// the new positions are aligned again.
+function markLandmarksChanged() {
+  landmarksChangedSinceAlign = true;
   updateAnalyzeButtonState();
 }
 
 function updateAnalyzeButtonState() {
   const landmarksOk = activeLandmarkNames().every((n) => n in pickedLandmarks);
-  document.getElementById("align-button").disabled = !sessionId || !landmarksOk || pipelineRan;
+  document.getElementById("align-button").disabled =
+    !sessionId || !landmarksOk || pipelineRan || !landmarksChangedSinceAlign;
   document.getElementById("adjust-picks-button").disabled = !alignSucceeded || pipelineRan;
   document.getElementById("reset-button").disabled = !sessionId;
-  document.getElementById("run-button").disabled = !alignSucceeded;
+  document.getElementById("run-button").disabled = !alignSucceeded || landmarksChangedSinceAlign;
 }
 
 // forward: aligned = raw @ R.T + t (matches RigidTransform.apply in
@@ -782,11 +802,11 @@ async function pollJobStatus(statusEl) {
     const response = await fetch(`/api/sessions/${sessionId}/status`);
     const data = await response.json();
     if (data.status === "done") {
-      statusEl.textContent = "done.";
+      statusEl.textContent = "Done.";
       return "done";
     }
     if (data.status === "error") {
-      statusEl.textContent = `error: ${data.error}`;
+      statusEl.textContent = `Error: ${data.error}`;
       return "error";
     }
     // live progress - this is the actual current pipeline stage, not a
@@ -814,8 +834,8 @@ document.getElementById("align-button").addEventListener("click", async () => {
   const body = { target, ..._landmarksBody() };
 
   const statusEl = document.getElementById("align-status");
-  statusEl.textContent = "starting...";
   resetAlignState();
+  statusEl.textContent = "Starting...";
   document.getElementById("align-button").disabled = true;
 
   const startResponse = await fetch(`/api/sessions/${sessionId}/align`, {
@@ -824,7 +844,7 @@ document.getElementById("align-button").addEventListener("click", async () => {
     body: JSON.stringify(body),
   });
   if (!startResponse.ok) {
-    statusEl.textContent = `failed to start: ${await startResponse.text()}`;
+    statusEl.textContent = `Failed to start: ${await startResponse.text()}`;
     updateAnalyzeButtonState();
     return;
   }
@@ -835,6 +855,11 @@ document.getElementById("align-button").addEventListener("click", async () => {
     const transformResponse = await fetch(`/api/sessions/${sessionId}/registered-transform`);
     registeredTransform = transformResponse.ok ? await transformResponse.json() : null;
     alignSucceeded = true;
+    // landmark positions haven't changed since this align completed, so
+    // lock "align" back out and unlock "run" - overwrites pollJobStatus's
+    // generic "done." with a persistent completion marker.
+    landmarksChangedSinceAlign = false;
+    statusEl.textContent = "Rigid alignment: ✓";
   }
   updateAnalyzeButtonState();
 });
@@ -865,6 +890,10 @@ document.getElementById("adjust-picks-button").addEventListener("click", () => {
     if (raw) addLandmarkMarker(name, applyTransform(raw, registeredTransform));
   }
   adjustingInAlignedFrame = true;
+  // re-registration is only actually needed once a pick is moved, but the
+  // user asked for this to unlock "align" as soon as "adjust picks" is
+  // pressed, not only once a drag happens.
+  markLandmarksChanged();
 });
 
 document.getElementById("run-button").addEventListener("click", async () => {
@@ -895,7 +924,7 @@ document.getElementById("run-button").addEventListener("click", async () => {
   const runBody = { n_vertices: resampleMesh ? vertexCount : null };
 
   const statusEl = document.getElementById("job-status");
-  statusEl.textContent = "starting...";
+  statusEl.textContent = "Starting...";
   document.getElementById("run-button").disabled = true;
 
   const clipResponse = await fetch(`/api/sessions/${sessionId}/clip`, {
@@ -904,7 +933,7 @@ document.getElementById("run-button").addEventListener("click", async () => {
     body: JSON.stringify(clipBody),
   });
   if (!clipResponse.ok) {
-    statusEl.textContent = `failed to start: ${await clipResponse.text()}`;
+    statusEl.textContent = `Failed to start: ${await clipResponse.text()}`;
     updateAnalyzeButtonState();
     return;
   }
@@ -919,7 +948,7 @@ document.getElementById("run-button").addEventListener("click", async () => {
     body: JSON.stringify(runBody),
   });
   if (!runResponse.ok) {
-    statusEl.textContent = `failed to start: ${await runResponse.text()}`;
+    statusEl.textContent = `Failed to start: ${await runResponse.text()}`;
     updateAnalyzeButtonState();
     return;
   }
@@ -928,6 +957,9 @@ document.getElementById("run-button").addEventListener("click", async () => {
   if (outcome === "done") {
     pipelineRan = true;
     await showResults();
+    // overwrites pollJobStatus's generic "Done." - same treatment as
+    // align-status's "Rigid alignment: ✓" above.
+    statusEl.textContent = "Run complete: ✓";
   }
   updateAnalyzeButtonState();
 });
@@ -952,7 +984,10 @@ async function showResults() {
     rows.push(["mesh volume", `${c.mesh_volume_cc} cc`]);
   }
   if (data.asymmetry) {
-    rows.push(["mean asymmetry index", data.asymmetry.mean_asymmetry_index.toFixed(2)]);
+    rows.push([
+      'mean facial asymmetry (MFA) - <a href="https://www.sciencedirect.com/science/article/pii/S1010518225001611?via%3Dihub" target="_blank" rel="noopener">details</a>',
+      data.asymmetry.mean_asymmetry_index.toFixed(2),
+    ]);
   }
 
   const table = document.getElementById("results-table");
@@ -1111,7 +1146,7 @@ document.getElementById("template-browse-button").addEventListener("click", asyn
   const target = document.querySelector('input[name="target"]:checked').value;
   if (isDesktopApp()) {
     const paths = await pickFileNative(false, (msg) => {
-      document.getElementById("template-custom-name").textContent = `couldn't open the file picker: ${msg}`;
+      document.getElementById("template-custom-name").textContent = `Couldn't open the file picker: ${msg}`;
     });
     if (!paths || paths.length === 0) return;
     localStorage.setItem(customTemplatePathStorageKey(target), paths[0]);
@@ -1129,7 +1164,7 @@ document.getElementById("template-custom-file-input").addEventListener("change",
   formData.append("files", file);
   const response = await fetch("/api/templates/custom/upload", { method: "POST", body: formData });
   if (!response.ok) {
-    document.getElementById("template-custom-name").textContent = `upload failed: ${await response.text()}`;
+    document.getElementById("template-custom-name").textContent = `Upload failed: ${await response.text()}`;
     return;
   }
   if (customTemplateBlobUrl) URL.revokeObjectURL(customTemplateBlobUrl);
@@ -1215,7 +1250,7 @@ async function resolveTemplateForOverlay() {
 async function enableTemplateOverlay() {
   const resolved = await resolveTemplateForOverlay();
   if (!resolved) {
-    document.getElementById("template-offset-info").textContent = "pick a custom template file first.";
+    document.getElementById("template-offset-info").textContent = "Pick a custom template file first.";
     document.getElementById("visualization-toggle").checked = false;
     updateVisualizationControlsVisibility();
     return;
@@ -1329,11 +1364,11 @@ document.getElementById("download-bundle-button").addEventListener("click", asyn
   const statusEl = document.getElementById("save-status");
 
   if (isDesktopApp()) {
-    statusEl.textContent = "saving...";
+    statusEl.textContent = "Saving...";
     const response = await fetch(`/api/sessions/${sessionId}/save`, { method: "POST" });
     if (response.ok) {
       const data = await response.json();
-      statusEl.textContent = `saved to ${data.saved_to}`;
+      statusEl.textContent = `Saved to ${data.saved_to}`;
       return;
     }
     // only real reason this 400s is a session that wasn't opened from a real
@@ -1341,7 +1376,7 @@ document.getElementById("download-bundle-button").addEventListener("click", asyn
     // cleanly rather than leaving the user stuck) - anything else is worth
     // surfacing instead of silently falling back.
     if (response.status !== 400) {
-      statusEl.textContent = `save failed: ${await response.text()}`;
+      statusEl.textContent = `Save failed: ${await response.text()}`;
       return;
     }
   }

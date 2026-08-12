@@ -22,7 +22,7 @@
           <label class="checkbox"><input id="wireframe-toggle" type="checkbox" /> wireframe</label>
           <label class="checkbox"><input id="texture-toggle" type="checkbox" disabled /> texture</label>
         </div>
-        <p class="hint">for a textured .obj, multi-select (ctrl/cmd-click) the .obj, its .mtl, and the texture
+        <p class="hint">For a textured .obj, multi-select (ctrl/cmd-click) the .obj, its .mtl, and the texture
           image together in the file picker.</p>
         <p id="mesh-path" class="hint"></p>
         <p id="mesh-info" class="hint"></p>
@@ -37,7 +37,7 @@
       <section>
         <h2>3. Preprocessing - landmarks</h2>
         <p class="hint"><strong>ctrl/cmd-click</strong> to place a point, <strong>alt-drag</strong> to move one.
-          pick in this order:</p>
+          Pick in this order:</p>
         <ol id="landmark-list">
           <li data-name="sellion">
             <span class="landmark-swatch"></span>
@@ -74,13 +74,11 @@
           <button id="adjust-picks-button" type="button" disabled>adjust picks</button>
           <button id="reset-button" type="button" disabled>reset</button>
         </div>
-        <p class="hint">"align" is just the rigid registration - fast, nothing else happens yet. "adjust picks"
-          shows your landmarks on the aligned mesh so you can <strong>alt-drag</strong> them into a better spot
-          (easier to judge on the aligned view than the raw scan), then press "align" again to re-register with
-          the adjustment. "reset" reloads the original mesh in its original orientation and clears every pick, so
-          you start over from scratch. once "run pipeline" has run, "align" and "adjust picks" lock - "reset" or
-          loading a new file are the only ways back in.</p>
-        <p id="align-status" class="hint"></p>
+        <p class="hint"><strong>Align</strong> does rigid registration only - no repair or clipping yet. Move
+          landmarks with <strong>alt-drag</strong>, or after alignment use <strong>adjust picks</strong> to
+          reposition them, then <strong>align</strong> again to re-register. Start over with <strong>reset</strong>.
+          After <strong>run pipeline</strong>, align/adjust picks lock until reset or a new file is loaded.</p>
+        <p id="align-status" class="status-line"></p>
       </section>
 
       <section>
@@ -88,27 +86,27 @@
         <label class="checkbox"><input id="resample-mesh" type="checkbox" /> resample</label>
         <label for="vertex-count">to</label>
         <input id="vertex-count" type="number" min="500" max="200000" step="500" value="10000" /> vertices
-        <p class="hint">simplifies the mesh to roughly this many vertices, for a smaller, faster file.</p>
+        <p class="hint">Simplifies the mesh to roughly this many vertices, for a smaller, faster file.</p>
       </section>
 
       <section>
         <h2>5. Run</h2>
         <label class="checkbox"><input id="com-translation" type="checkbox" checked /> center-of-mass correction</label>
-        <p class="hint">recommended for most use-cases. off: keeps the plain landmark-triangle alignment from
-          "align". on: applies a depth-only nudge toward the head-circumference slice centroid before clipping,
-          for more consistent shape comparisons - <a
+        <p class="hint">Recommended for most use-cases. On: applies a depth-only nudge toward the head-circumference
+          slice centroid before clipping, for more consistent shape comparisons. Off: keeps the plain
+          landmark-triangle alignment from "align" - <a
             href="https://journals.lww.com/jcraniofacialsurgery/fulltext/10.1097/scs.0000000000009448~reliability-and-agreement-of-automated-head-measurements"
             target="_blank" rel="noopener">details</a>.</p>
         <button id="run-button" type="button" disabled>run pipeline</button>
         <p class="hint">Repairs and clips the scan to the landmark-guided plane, then optionally resamples and
           applies center-of-mass correction.</p>
-        <p id="job-status" class="hint"></p>
+        <p id="job-status" class="status-line"></p>
       </section>
 
       <section id="results" class="hidden">
         <h2>results</h2>
         <table id="results-table"></table>
-        <p id="alt-frontal-note" class="hint hidden">showing the mesh registered to the secondary frontal
+        <p id="alt-frontal-note" class="hint hidden">Showing the mesh registered to the secondary frontal
           landmark - measurements above and the saved 2D figure are still based on sellion.</p>
         <button id="download-bundle-button" type="button">download results (mesh + report + figure)</button>
         <p id="save-status" class="hint"></p>
@@ -128,7 +126,7 @@
 
         <p id="measurements-hint" class="hint hidden">HC/BPD/OFD drawn on the mesh, with the numbers in the panel
           over the viewer.</p>
-        <p id="asymmetry-hint" class="hint hidden">blue = dented in, red = protruding out, relative to the
+        <p id="asymmetry-hint" class="hint hidden">Blue = dented in, red = protruding out, relative to the
           mirrored other half - scale bar over the viewer.</p>
 
         <div id="template-controls" class="hidden">
@@ -141,10 +139,10 @@
             <input id="template-custom-file-input" type="file" accept=".ply,.obj,.stl" class="hidden" />
             <span id="template-custom-name" class="hint"></span>
           </div>
-          <p id="template-custom-hint" class="hint hidden">this app can't remember a real file path here - you'll
-            need to pick the file again next time you want this comparison. the downloadable desktop app can
+          <p id="template-custom-hint" class="hint hidden">This app can't remember a real file path here - you'll
+            need to pick the file again next time you want this comparison. The downloadable desktop app can
             remember it for you instead.</p>
-          <p class="hint">the template overlaid on the mesh, with X/Y/Z axes and each one's center of gravity
+          <p class="hint">The template overlaid on the mesh, with X/Y/Z axes and each one's center of gravity
             (see legend in the viewer).</p>
           <p id="template-offset-info" class="hint"></p>
         </div>
@@ -153,7 +151,7 @@
 
     <main id="viewer-container">
       <canvas id="viewer"></canvas>
-      <p id="viewer-hint" class="hint overlay">upload a mesh to begin.</p>
+      <p id="viewer-hint" class="hint overlay">Upload a mesh to begin.</p>
       <div id="heatmap-scalar-bar" class="hidden">
         <span id="scalar-bar-max">0.0 mm</span>
         <div id="scalar-bar-gradient"></div>

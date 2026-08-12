@@ -85,6 +85,11 @@ label.checkbox:has(input:disabled) {
   overflow-wrap: anywhere;
 }
 
+.status-line {
+  margin-top: 0.75rem;
+  color: var(--text);
+}
+
 button {
   width: 100%;
   padding: 0.5rem;

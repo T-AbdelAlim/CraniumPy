@@ -54,6 +54,25 @@ def _get_session(session_id: str) -> Session:
         raise HTTPException(status_code=404, detail=f"no session {session_id!r}")
 
 
+def _pure_align(
+    mesh: trimesh.Trimesh,
+    landmarks: np.ndarray,
+    alt_frontal: np.ndarray | None,
+    target: str,
+    on_progress=None,
+) -> pipeline.RegistrationResult:
+    """the landmark-triangle-only registration shared by /align and /clip -
+    no repair, no center-of-mass nudge. /align uses this directly as its
+    whole job; /clip uses it too (on the raw, unrepaired mesh) purely to
+    populate session.aligned_mesh, independently of whatever repaired +
+    CoM-nudged registration it does for the actual clip - see
+    Session.aligned_mesh."""
+    if target == "cranium" and alt_frontal is not None:
+        alt_landmarks = np.array([alt_frontal, landmarks[1], landmarks[2]])
+        return pipeline.register(mesh, alt_landmarks, target="cranium", com_translation=False, on_progress=on_progress)
+    return pipeline.register(mesh, landmarks, target=target, com_translation=False, on_progress=on_progress)
+
+
 def _load_primary_and_resolver(files: list[UploadFile]) -> tuple[str, dict[str, bytes]]:
     """returns (primary_filename, {filename: bytes}) for a multi-file upload.
     needs exactly one .ply/.obj/.stl in there somewhere."""
@@ -246,10 +265,7 @@ def start_align(session_id: str, request: AlignRequest) -> StatusResponse:
         session.sellion_registered_landmarks = sellion_reg.landmarks
 
         if request.target == "cranium" and alt_frontal is not None:
-            alt_landmarks = np.array([alt_frontal, landmarks[1], landmarks[2]])
-            alt_reg = pipeline.register(
-                session.mesh, alt_landmarks, target="cranium", com_translation=False, on_progress=session.report_progress
-            )
+            alt_reg = _pure_align(session.mesh, landmarks, alt_frontal, request.target, session.report_progress)
             session.registered_mesh = alt_reg.mesh
             session.registered_landmarks = alt_reg.landmarks
             session.registered_transform = alt_reg.transform
@@ -257,6 +273,11 @@ def start_align(session_id: str, request: AlignRequest) -> StatusResponse:
             session.registered_mesh = sellion_reg.mesh
             session.registered_landmarks = sellion_reg.landmarks
             session.registered_transform = sellion_reg.transform
+
+        # kept separately from registered_mesh, which /clip below is about
+        # to overwrite with a repaired + CoM-nudged version - this is what
+        # gets saved as _rg.ply, so it has to survive that overwrite.
+        session.aligned_mesh = session.registered_mesh
 
         session.report_progress("done", "")
         return None
@@ -305,6 +326,14 @@ def start_clip(session_id: str, request: ClipRequest) -> StatusResponse:
 
     def _run() -> dict:
         session.clear_clip_result()
+
+        # always (re)computed here, from the raw mesh, independently of
+        # whatever repaired + CoM-nudged registration this same call does
+        # below for the actual clip - this is what gets saved as _rg.ply.
+        # recomputed rather than trusting a prior /align call so it can't
+        # go stale against this request's landmarks (also means /clip
+        # works standalone, without /align ever having been called).
+        session.aligned_mesh = _pure_align(session.mesh, landmarks, alt_frontal, request.target, session.report_progress).mesh
 
         if request.repair and (session.repaired_mesh is None or session.repaired_mesh_method != request.repair_method):
             session.report_progress("repair", f"repairing mesh ({request.repair_method})")
@@ -572,7 +601,7 @@ def export_mesh(session_id: str, stage: str):
 @router.get("/{session_id}/bundle")
 def download_results_bundle(session_id: str):
     session = _get_session(session_id)
-    if session.job_status != "done" or session.result is None or session.registered_mesh is None:
+    if session.job_status != "done" or session.result is None or session.aligned_mesh is None:
         raise HTTPException(status_code=409, detail=f"no completed analysis yet (status: {session.job_status})")
 
     r = session.result
@@ -582,7 +611,7 @@ def download_results_bundle(session_id: str):
 
     zip_bytes = build_results_bundle(
         original_filename=session.original_filename,
-        registered_mesh=session.registered_mesh,
+        registered_mesh=session.aligned_mesh,
         final_mesh=session.result_mesh,
         landmarks=r["landmarks"],
         target=request.target,
@@ -613,7 +642,7 @@ def save_results_to_source_folder(session_id: str) -> SaveResultsResponse:
             status_code=400,
             detail="this session wasn't opened from a real file path, nowhere to save to - use /bundle instead",
         )
-    if session.job_status != "done" or session.result is None or session.registered_mesh is None:
+    if session.job_status != "done" or session.result is None or session.aligned_mesh is None:
         raise HTTPException(status_code=409, detail=f"no completed analysis yet (status: {session.job_status})")
 
     r = session.result
@@ -622,7 +651,7 @@ def save_results_to_source_folder(session_id: str) -> SaveResultsResponse:
     results_dir = write_results_to_folder(
         dest_dir=session.source_dir,
         original_filename=session.original_filename,
-        registered_mesh=session.registered_mesh,
+        registered_mesh=session.aligned_mesh,
         final_mesh=session.result_mesh,
         landmarks=r["landmarks"],
         target=request.target,

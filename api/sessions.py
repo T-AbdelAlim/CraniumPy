@@ -48,9 +48,12 @@ class Session:
     repaired_mesh: trimesh.Trimesh | None = None
     repaired_mesh_method: str | None = None
 
-    # these get filled in by /clip - pre-clip (registered) state, kept
-    # around for /clip/undo and for measure_cranial's alt-frame
-    # procrustes_fit correspondence, not just the post-clip result.
+    # set first by /align (raw mesh, no repair/CoM), then overwritten by
+    # /clip with the repaired + (optionally) CoM-nudged version it actually
+    # clips from - this is the pre-clip (registered) state, kept around for
+    # /clip/undo and for measure_cranial's alt-frame procrustes_fit
+    # correspondence, not just the post-clip result. see aligned_mesh below
+    # for the value that survives the /clip overwrite.
     sellion_registered_mesh: trimesh.Trimesh | None = None
     sellion_registered_landmarks: np.ndarray | None = None
     registered_mesh: trimesh.Trimesh | None = None  # display-frame pre-clip mesh (== sellion's when no alt frontal)
@@ -62,6 +65,13 @@ class Session:
     # fit client-side. typed loosely (Any) to avoid api.sessions
     # depending on craniumpy_core.registration.rigid.
     registered_transform: Any | None = None
+    # the pure /align output - raw mesh, landmark-triangle rigid transform
+    # only, no repair, no center-of-mass nudge, no clip. registered_mesh
+    # above gets overwritten by /clip with a repaired + (optionally)
+    # CoM-nudged version for the actual pipeline, so this is kept as its
+    # own field specifically so the saved _rg.ply still reflects what
+    # "align" actually produced. set by /align, untouched by /clip.
+    aligned_mesh: trimesh.Trimesh | None = None
 
     # post repair+clip+boundary-cleanup, pre-resample - what /clip actually
     # produces. cleared (along with everything below) by /clip or
