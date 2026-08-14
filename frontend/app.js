@@ -85,6 +85,14 @@ let lineRadius = 1;
 // it.
 let selectionHasTexture = false;
 
+// true once the user has explicitly unchecked "texture" for the current
+// file selection - displayMesh() (called again by align/reset/run pipeline/
+// adjust picks, all showing the SAME selection at a different processing
+// stage) respects this instead of defaulting back to "on" every time.
+// cleared alongside selectionHasTexture whenever a genuinely new file is
+// opened (see uploadFiles/openFilesFromPaths).
+let textureManuallyDisabled = false;
+
 function loadGlb(url) {
   return new Promise((resolve, reject) => {
     gltfLoader.load(url, (gltf) => resolve(gltf.scene), undefined, reject);
@@ -153,7 +161,8 @@ async function displayMesh(url) {
   document.getElementById("wireframe-toggle").checked = false;
   const textureToggle = document.getElementById("texture-toggle");
   textureToggle.disabled = !currentMeshHasTexture;
-  textureToggle.checked = currentMeshHasTexture;
+  textureToggle.checked = currentMeshHasTexture && !textureManuallyDisabled;
+  applyTextureState();
   applyWireframeState();
 
   return object;
@@ -166,9 +175,12 @@ function applyWireframeState() {
 
 document.getElementById("wireframe-toggle").addEventListener("change", applyWireframeState);
 
-document.getElementById("texture-toggle").addEventListener("change", (event) => {
+// swaps in the textured or plain material per the checkbox's current
+// state - shared by the checkbox's own "change" handler and displayMesh()
+// (which sets .checked programmatically, so no "change" event fires there).
+function applyTextureState() {
   if (!currentMeshObject) return;
-  const showTexture = event.target.checked;
+  const showTexture = document.getElementById("texture-toggle").checked;
   currentMeshMaterials = [];
   currentMeshObject.traverse((child) => {
     if (!child.isMesh || !child.userData.texturedMaterial) return;
@@ -177,6 +189,12 @@ document.getElementById("texture-toggle").addEventListener("change", (event) => 
   currentMeshObject.traverse((child) => {
     if (child.isMesh) currentMeshMaterials.push(child.material);
   });
+}
+
+document.getElementById("texture-toggle").addEventListener("change", (event) => {
+  if (!currentMeshObject) return;
+  textureManuallyDisabled = !event.target.checked;
+  applyTextureState();
   applyWireframeState();
 });
 
@@ -611,6 +629,7 @@ async function _afterSessionOpened(response, meshPath) {
 
 async function uploadFiles(files) {
   selectionHasTexture = hasTextureFile(files.map((f) => f.name));
+  textureManuallyDisabled = false;
   document.getElementById("mesh-info").textContent = "Uploading...";
   const formData = new FormData();
   for (const f of files) formData.append("files", f);
@@ -627,6 +646,7 @@ async function uploadFiles(files) {
 // it later without asking (see the save-results button below).
 async function openFilesFromPaths(paths) {
   selectionHasTexture = hasTextureFile(paths.map((p) => p.split(/[\\/]/).pop()));
+  textureManuallyDisabled = false;
   document.getElementById("mesh-info").textContent = "Opening...";
   try {
     await _afterSessionOpened(
@@ -1212,6 +1232,24 @@ function computeCentroid(object) {
   return count > 0 ? sum.divideScalar(count) : sum;
 }
 
+// billboarded (always faces camera) text label for an axis tip - a canvas
+// texture on a sprite, since this app has no font/TextGeometry loading
+// anywhere else and doesn't need one just for a single letter per axis.
+function makeAxisLabelSprite(text, color) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 64;
+  canvas.height = 64;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = `#${color.toString(16).padStart(6, "0")}`;
+  ctx.font = "bold 48px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, 32, 34);
+  const texture = new THREE.CanvasTexture(canvas);
+  const material = new THREE.SpriteMaterial({ map: texture, depthTest: false, depthWrite: false });
+  return new THREE.Sprite(material);
+}
+
 function addCogMarker(point, color) {
   const marker = new THREE.Mesh(
     new THREE.SphereGeometry(markerRadius * 1.4, 16, 16),
@@ -1250,9 +1288,12 @@ async function resolveTemplateForOverlay() {
 async function enableTemplateOverlay() {
   const resolved = await resolveTemplateForOverlay();
   if (!resolved) {
+    // leave "show visualization" checked and the panel (dropdown, browse
+    // button) on screen - unchecking it here used to also hide
+    // template-controls (see updateVisualizationControlsVisibility, gated
+    // on the toggle), which took away the only way to actually pick a
+    // custom file or switch back to a shipped template.
     document.getElementById("template-offset-info").textContent = "Pick a custom template file first.";
-    document.getElementById("visualization-toggle").checked = false;
-    updateVisualizationControlsVisibility();
     return;
   }
 
@@ -1283,14 +1324,20 @@ async function enableTemplateOverlay() {
 
   axesObject = new THREE.Group();
   const axisDefs = [
-    { dir: new THREE.Vector3(1, 0, 0), color: 0xff4d4d },
-    { dir: new THREE.Vector3(0, 1, 0), color: 0x4dff88 },
-    { dir: new THREE.Vector3(0, 0, 1), color: 0x4d9fff },
+    { dir: new THREE.Vector3(1, 0, 0), color: 0xff4d4d, label: "X" },
+    { dir: new THREE.Vector3(0, 1, 0), color: 0x4dff88, label: "Y" },
+    { dir: new THREE.Vector3(0, 0, 1), color: 0x4d9fff, label: "Z" },
   ];
-  for (const { dir, color } of axisDefs) {
+  const labelSize = span * 0.12;
+  for (const { dir, color, label } of axisDefs) {
     const pts = [dir.clone().multiplyScalar(-span), dir.clone().multiplyScalar(span)];
     const geo = new THREE.BufferGeometry().setFromPoints(pts);
     axesObject.add(new THREE.Line(geo, new THREE.LineBasicMaterial({ color })));
+
+    const sprite = makeAxisLabelSprite(label, color);
+    sprite.position.copy(dir).multiplyScalar(span * 1.1);
+    sprite.scale.set(labelSize, labelSize, 1);
+    axesObject.add(sprite);
   }
   scene.add(axesObject);
 
