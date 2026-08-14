@@ -24,11 +24,11 @@ SHIPPED_TEMPLATES: dict[str, str] = {
     # they're just intermediate assets the clipped variants were built
     # from, not something worth offering in the comparison dropdown. still
     # on disk, tests load them directly by path.
-    "template_xy_subanasal_com": "Full head (subnasale, CoM)",
-    "template_xy_subanasal": "Full head (subnasale)",
-    "clipped_template_xy": "Cranium only",
-    "clipped_template_xy_com": "Cranium only (CoM)",
-    "template_face": "Face only",
+    "template_xy_subanasal_com": "Cranium (subnasal frontal landmark, CoM)",
+    "template_xy_subanasal": "Cranium (subnasal frontal landmark)",
+    "clipped_template_xy": "Cranium (sellion frontal landmark)",
+    "clipped_template_xy_com": "Cranium (sellion frontal landmark, CoM)",
+    "template_face": "Face (nasion origin)",
 }
 
 
