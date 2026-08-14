@@ -29,13 +29,7 @@
       </section>
 
       <section>
-        <h2>2. What are we measuring</h2>
-        <label><input type="radio" name="target" value="cranium" checked /> cranial (head measurements)</label>
-        <label><input type="radio" name="target" value="face" /> facial (asymmetry)</label>
-      </section>
-
-      <section>
-        <h2>3. Preprocessing - landmarks</h2>
+        <h2>2. Preprocessing - landmarks</h2>
         <p class="hint"><strong>ctrl/cmd-click</strong> to place a point, <strong>alt-drag</strong> to move one.
           Pick in this order:</p>
         <ol id="landmark-list">
@@ -82,11 +76,17 @@
       </section>
 
       <section>
-        <h2>4. Mesh cleanup</h2>
+        <h2>3. Mesh cleanup</h2>
         <label class="checkbox"><input id="resample-mesh" type="checkbox" /> resample</label>
         <label for="vertex-count">to</label>
         <input id="vertex-count" type="number" min="500" max="200000" step="500" value="10000" /> vertices
         <p class="hint">Simplifies the mesh to roughly this many vertices, for a smaller, faster file.</p>
+      </section>
+
+      <section>
+        <h2>4. What are we measuring</h2>
+        <label><input type="radio" name="target" value="cranium" checked /> cranial (head measurements)</label>
+        <label><input type="radio" name="target" value="face" /> facial (asymmetry)</label>
       </section>
 
       <section>
@@ -100,7 +100,10 @@
         <button id="run-button" type="button" disabled>run pipeline</button>
         <p class="hint">Repairs and clips the scan to the landmark-guided plane, then optionally resamples and
           applies center-of-mass correction.</p>
-        <p id="job-status" class="status-line"></p>
+        <div id="run-progress" class="progress-bar hidden">
+          <div id="run-progress-fill" class="progress-bar-fill"></div>
+        </div>
+        <p id="job-status" class="progress-label"></p>
       </section>
 
       <section id="results" class="hidden">

@@ -16,6 +16,8 @@ import trimesh
 
 from craniumpy_core.clipping import clip_plane, clip_sphere, cranial_clip, facial_clip
 from craniumpy_core.io import load_mesh
+from craniumpy_core.pipeline import register
+from craniumpy_core.registration.rigid import REFERENCE_TRIANGLE
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -122,5 +124,43 @@ def test_facial_clip_respects_both_constraints(test_mesh):
     centroid_z = landmarks.mean(axis=0)[2]
     assert clipped.vertices[:, 2].min() >= centroid_z - 1e-6
 
+    inter_tragus = np.linalg.norm(landmarks[1] - landmarks[2])
     dist = np.linalg.norm(clipped.vertices - np.array([0, 25, -25]), axis=1)
-    assert dist.max() <= 115 + 1e-6
+    assert dist.max() <= inter_tragus * 1.7 + 1e-6
+
+
+def _face_ellipsoid(scale: float) -> tuple[trimesh.Trimesh, np.ndarray]:
+    """head-scale ellipsoid with a REFERENCE_TRIANGLE-proportioned landmark
+    triangle (same trick as test_pipeline.py's _ellipsoid_with_landmarks) so
+    landmark_align has a sane rigid transform to solve at every scale,
+    instead of contorting the mesh into a weird pose to match a landmark
+    triangle shaped nothing like a real face - lets scale alone stand in for
+    "how big is this patient's face" so a clip that only works at one scale
+    shows up immediately."""
+    mesh = trimesh.creation.icosphere(subdivisions=4, radius=1.0)
+    v = np.asarray(mesh.vertices).copy()
+    front = v[:, 2] > 0
+    v[front, 2] *= 1.3
+    offset = np.array([0.0, -10.0, 10.0])
+    mesh.vertices = (v * np.array([70.0, 90.0, 65.0]) + offset) * scale
+    landmarks = (REFERENCE_TRIANGLE + offset) * scale
+    return mesh, landmarks
+
+
+@pytest.mark.parametrize("scale", [0.7, 1.0, 1.5, 1.8, 2.2])
+def test_facial_clip_keeps_chin_at_any_face_size(scale):
+    # regression test: the sphere trim's radius used to be a flat 115mm,
+    # tuned against one reference-sized face - too tight for anyone bigger
+    # (or even a plain-average face, it turned out), silently slicing the
+    # chin off since clip_sphere drops whole faces rather than trimming
+    # close. radius now scales off this patient's own inter-tragus
+    # distance (see clipping.facial_clip), so the true chin should survive
+    # across a wide range of face sizes, not just the one it was tuned on.
+    mesh, landmarks = _face_ellipsoid(scale)
+    reg = register(mesh, landmarks, target="face", com_translation=True)
+    original_chin_y = reg.mesh.vertices[:, 1].min()
+
+    clipped = facial_clip(reg.mesh, reg.landmarks)
+
+    clipped_chin_y = clipped.vertices[:, 1].min()
+    assert clipped_chin_y == pytest.approx(original_chin_y, abs=2.0)

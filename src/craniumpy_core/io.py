@@ -50,3 +50,38 @@ def save_mesh(mesh: trimesh.Trimesh, path: str | Path) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     mesh.export(path)
+
+
+def mesh_to_glb(mesh: trimesh.Trimesh) -> bytes:
+    """GLB export for the web viewer - corrects real per-vertex color
+    (visual.kind == "vertex", e.g. a 3dMD scanner's .ply export) for glTF's
+    COLOR_0 accessor before handing off to trimesh's exporter.
+
+    a scanner's captured vertex color is sRGB-encoded display-ready bytes,
+    the same as any ordinary photo/texture - but unlike a texture map
+    (which three.js's GLTFLoader knows to flag sRGB via colorSpace),
+    glTF's spec defines COLOR_0 as already linear, and three.js takes that
+    at face value with no decode step. writing the raw captured bytes
+    straight through means the renderer's own linear->sRGB *output*
+    encoding lands on top of data that's *already* sRGB - colors get
+    washed out toward gray, same failure mode a texture would hit if it
+    weren't flagged. pre-decoding sRGB->linear here means what actually
+    reaches COLOR_0 is genuinely linear, so the renderer's single
+    encoding step reproduces the original captured color once, correctly,
+    instead of twice.
+
+    leaves the mesh itself untouched - only affects what this specific
+    GLB response contains, not session.mesh or anything saved to disk."""
+    if mesh.visual.kind == "vertex":
+        colors = mesh.visual.vertex_colors
+        rgb = colors[:, :3].astype(np.float64) / 255.0
+        linear = np.where(rgb <= 0.04045, rgb / 12.92, ((rgb + 0.055) / 1.055) ** 2.4)
+        corrected = colors.copy()
+        corrected[:, :3] = np.clip(linear * 255.0, 0, 255).round().astype(np.uint8)
+        mesh = mesh.copy()
+        mesh.visual.vertex_colors = corrected
+
+    # include_normals=True matters - trimesh leaves the NORMAL accessor out
+    # entirely otherwise, and without normals the mesh renders solid black
+    # in the browser no matter what color it's supposed to be.
+    return mesh.export(file_type="glb", include_normals=True)

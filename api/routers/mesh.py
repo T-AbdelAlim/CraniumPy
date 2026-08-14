@@ -18,7 +18,7 @@ from trimesh.resolvers import ZipResolver
 
 from craniumpy_core import pipeline
 from craniumpy_core.asymmetry import calculate_asymmetry
-from craniumpy_core.io import strip_uninteresting_vertex_colors
+from craniumpy_core.io import mesh_to_glb, strip_uninteresting_vertex_colors
 from craniumpy_core.template_registry import SHIPPED_TEMPLATES, load_shipped_template
 from api.results_bundle import build_results_bundle, results_folder_name, write_results_to_folder
 from api.schemas import (
@@ -164,7 +164,7 @@ def get_custom_template_mesh(path: str):
     if not isinstance(mesh, trimesh.Trimesh):
         raise HTTPException(status_code=400, detail="file did not contain a single triangle mesh")
     mesh = strip_uninteresting_vertex_colors(mesh)
-    glb_bytes = mesh.export(file_type="glb", include_normals=True)
+    glb_bytes = mesh_to_glb(mesh)
     return Response(content=glb_bytes, media_type="model/gltf-binary")
 
 
@@ -180,7 +180,7 @@ async def upload_custom_template_mesh(files: list[UploadFile]):
         raise HTTPException(status_code=400, detail="no files uploaded")
     primary_name, contents_by_name = _load_primary_and_resolver(files)
     mesh = _load_mesh_from_upload(primary_name, contents_by_name)
-    glb_bytes = mesh.export(file_type="glb", include_normals=True)
+    glb_bytes = mesh_to_glb(mesh)
     return Response(content=glb_bytes, media_type="model/gltf-binary")
 
 
@@ -192,7 +192,7 @@ def get_template_mesh(name: str):
     if name not in SHIPPED_TEMPLATES:
         raise HTTPException(status_code=404, detail=f"unknown template {name!r}")
     mesh = load_shipped_template(name)
-    glb_bytes = mesh.export(file_type="glb", include_normals=True)
+    glb_bytes = mesh_to_glb(mesh)
     return Response(content=glb_bytes, media_type="model/gltf-binary")
 
 
@@ -352,7 +352,7 @@ def start_clip(session_id: str, request: ClipRequest) -> StatusResponse:
             if session.repaired_mesh is None or session.repaired_mesh_cache_key != cache_key:
                 repair_input = session.mesh
                 if clip_cfg.mode != "manual":
-                    session.report_progress("repair", "rough pre-clip before repair")
+                    session.report_progress("repair", "computing bounds")
                     repair_input = pipeline.rough_bounding_clip(session.mesh, landmarks, alt_frontal_landmark=alt_frontal)
                 session.report_progress("repair", f"repairing mesh ({request.repair_method})")
                 session.repaired_mesh = pipeline.repair_mesh(repair_input, method=request.repair_method)
@@ -609,10 +609,7 @@ def export_mesh(session_id: str, stage: str):
     else:
         raise HTTPException(status_code=400, detail="stage must be 'original', 'registered', 'clipped', or 'result'")
 
-    # include_normals=True matters - trimesh leaves the NORMAL accessor out
-    # entirely otherwise, and without normals the mesh renders solid black
-    # in the browser no matter what color it's supposed to be.
-    glb_bytes = mesh.export(file_type="glb", include_normals=True)
+    glb_bytes = mesh_to_glb(mesh)
     return Response(content=glb_bytes, media_type="model/gltf-binary")
 
 

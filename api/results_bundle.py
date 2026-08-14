@@ -105,11 +105,7 @@ def _asymmetry_figure(mesh: trimesh.Trimesh, asymmetry: AsymmetryResult) -> byte
     """frontal view (x horizontal, y vertical - see registration.rigid, the
     face-target frame puts x as left/right and y as up/down) of the
     asymmetry heatmap, same blue(dent)/white/red(protruded) diverging scale
-    as the live viewer, with an mm colorbar and the single biggest dent and
-    biggest protrusion each marked and labeled - "largest regions" here
-    just means the two most extreme vertices, not a cluster/region
-    detection pass, which felt like more machinery than a quick visual
-    reference actually needs."""
+    as the live viewer, with an mm colorbar."""
     vertices = np.asarray(mesh.vertices)
     faces = np.asarray(mesh.faces)
     heatmap = asymmetry.heatmap
@@ -131,25 +127,6 @@ def _asymmetry_figure(mesh: trimesh.Trimesh, asymmetry: AsymmetryResult) -> byte
     for loop in _boundary_loops(mesh):
         loop_xy = vertices[np.append(loop, loop[0])][:, :2]
         ax.plot(loop_xy[:, 0], loop_xy[:, 1], color="#999999", linewidth=0.8, zorder=3)
-
-    dent_idx = int(np.argmin(heatmap))
-    protrusion_idx = int(np.argmax(heatmap))
-    x_mid = (vertices[:, 0].min() + vertices[:, 0].max()) / 2
-    for idx, label in ((dent_idx, "max dent"), (protrusion_idx, "max protrusion")):
-        x, y = vertices[idx, 0], vertices[idx, 1]
-        ax.plot(x, y, marker="o", markersize=7, markerfacecolor="none", markeredgecolor="black", markeredgewidth=1.5)
-        # labels default to the point's upper-right, but the asymmetry data
-        # only ever occupies one half of the plot (see the module docstring
-        # on why the heatmap is zeroed on the other half) right up against
-        # the colorbar - flip to upper-left once a point's already past the
-        # midline so the label box doesn't run into it.
-        on_right = x > x_mid
-        ax.annotate(
-            f"{label}\n{heatmap[idx]:+.1f}mm", (x, y),
-            textcoords="offset points", xytext=(-8 if on_right else 8, 8),
-            ha="right" if on_right else "left", fontsize=7,
-            bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.8, "linewidth": 0},
-        )
 
     ax.set_aspect("equal")
     ax.set_xlabel("x (mm)")
