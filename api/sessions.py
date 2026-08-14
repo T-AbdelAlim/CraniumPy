@@ -43,10 +43,13 @@ class Session:
     # repair is orientation-invariant (see pipeline.register_and_clip_cranial's
     # docstring), so it's cached here across repeated /clip calls instead of
     # re-running pymeshfix - the single most expensive step - on every plane
-    # tweak. rebuilt whenever repaired_mesh_method no longer matches what
-    # the caller asked for.
+    # tweak. what actually gets repaired is a rough, landmark-based pre-clip
+    # of the raw mesh now (see pipeline.rough_bounding_clip), not the raw
+    # mesh itself, so the cache key has to cover the landmarks/alt-frontal/
+    # target/clip-mode that crop depends on too, not just repair_method -
+    # rebuilt whenever repaired_mesh_cache_key no longer matches.
     repaired_mesh: trimesh.Trimesh | None = None
-    repaired_mesh_method: str | None = None
+    repaired_mesh_cache_key: tuple | None = None
 
     # set first by /align (raw mesh, no repair/CoM), then overwritten by
     # /clip with the repaired + (optionally) CoM-nudged version it actually

@@ -310,7 +310,13 @@ def start_clip(session_id: str, request: ClipRequest) -> StatusResponse:
     re-running pymeshfix every time - see Session.repaired_mesh and
     pipeline.register_and_clip_cranial's docstring. always invalidates
     whatever a previous /clip or /run produced (see
-    Session.clear_clip_result), so /run must be called again afterward."""
+    Session.clear_clip_result), so /run must be called again afterward.
+
+    for cranial/facial clip modes (not manual, whose plane is arbitrary and
+    unrelated to the landmarks), repair runs on a rough landmark-based
+    pre-clip of the raw mesh rather than the whole thing - see
+    pipeline.rough_bounding_clip. cuts repair's runtime on a large scan a
+    lot, since it's the slow part and now has far less to chew on."""
     session = _get_session(session_id)
     landmarks = np.array([[p.x, p.y, p.z] for p in request.landmarks])
     alt_frontal = None
@@ -335,13 +341,25 @@ def start_clip(session_id: str, request: ClipRequest) -> StatusResponse:
         # works standalone, without /align ever having been called).
         session.aligned_mesh = _pure_align(session.mesh, landmarks, alt_frontal, request.target, session.report_progress).mesh
 
-        if request.repair and (session.repaired_mesh is None or session.repaired_mesh_method != request.repair_method):
-            session.report_progress("repair", f"repairing mesh ({request.repair_method})")
-            session.repaired_mesh = pipeline.repair_mesh(session.mesh, method=request.repair_method)
-            session.repaired_mesh_method = request.repair_method
-        elif not request.repair:
+        if request.repair:
+            cache_key = (
+                request.repair_method,
+                request.target,
+                clip_cfg.mode,
+                tuple(landmarks.flatten().tolist()),
+                tuple(alt_frontal.tolist()) if alt_frontal is not None else None,
+            )
+            if session.repaired_mesh is None or session.repaired_mesh_cache_key != cache_key:
+                repair_input = session.mesh
+                if clip_cfg.mode != "manual":
+                    session.report_progress("repair", "rough pre-clip before repair")
+                    repair_input = pipeline.rough_bounding_clip(session.mesh, landmarks, alt_frontal_landmark=alt_frontal)
+                session.report_progress("repair", f"repairing mesh ({request.repair_method})")
+                session.repaired_mesh = pipeline.repair_mesh(repair_input, method=request.repair_method)
+                session.repaired_mesh_cache_key = cache_key
+        else:
             session.repaired_mesh = session.mesh
-            session.repaired_mesh_method = None
+            session.repaired_mesh_cache_key = None
 
         if request.target == "cranium":
             # sellion (mandatory, above) always drives the actual

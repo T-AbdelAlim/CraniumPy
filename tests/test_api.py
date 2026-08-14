@@ -344,8 +344,17 @@ def test_repair_only_runs_once_across_repeated_clips(client, landmarks_payload, 
     assert _run_clip(client, session_id, {"target": "cranium", "landmarks": landmarks_payload}) == "done"
     assert call_count["n"] == 1
 
-    # a different clip mode on the same session should reuse the cached
-    # repair, not re-run pymeshfix
+    # repeating the exact same clip on the same session should reuse the
+    # cached repair, not re-run pymeshfix
+    assert _run_clip(client, session_id, {"target": "cranium", "landmarks": landmarks_payload}) == "done"
+    assert call_count["n"] == 1
+
+    # manual mode is excluded from the landmark-based rough pre-clip (its
+    # plane is arbitrary, not derived from the landmarks - see
+    # pipeline.rough_bounding_clip), so what actually gets repaired differs
+    # from the cranial pass above and the cache correctly misses, re-running
+    # repair on the full mesh instead of reusing the cranial pass's
+    # rough-clipped repair.
     assert (
         _run_clip(
             client,
@@ -358,7 +367,7 @@ def test_repair_only_runs_once_across_repeated_clips(client, landmarks_payload, 
         )
         == "done"
     )
-    assert call_count["n"] == 1
+    assert call_count["n"] == 2
 
 
 def test_results_before_analysis_returns_409(client):

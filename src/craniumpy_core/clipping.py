@@ -7,7 +7,7 @@ the plane/sphere numbers below are in that registered frame, same numbers
 the old app used, except the cranial boundary itself: the old app cut at a
 hardcoded y=-21 regardless of where the landmarks actually landed, which in
 practice cut well below the sellion-tragus plane. cranial_clip now cuts
-through the actual registered landmark plane instead - see _landmark_plane.
+through the actual registered landmark plane instead - see landmark_plane.
 
 double checked the sign convention rather than just assuming it: trimesh's
 slice_mesh_plane(mesh, plane_normal=n) keeps the +n side by default, same as
@@ -65,11 +65,15 @@ def clip_sphere(mesh: trimesh.Trimesh, center, radius: float, keep_inside: bool 
     return mesh.submesh([face_indices], append=True)
 
 
-def _landmark_plane(landmarks: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def landmark_plane(landmarks: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """normal + origin of the plane through the 3 registered landmarks
     (sellion, left_tragus, right_tragus), oriented so +normal points toward
     the top of the head - flips the cross product if it doesn't, since
-    landmark order alone doesn't guarantee a consistent winding."""
+    landmark order alone doesn't guarantee a consistent winding.
+
+    public (not just an internal step of cranial_clip below) since
+    pipeline.rough_bounding_clip needs the exact same plane cranial_clip's
+    real cut uses, to size its own margin off it."""
     landmarks = np.asarray(landmarks, dtype=np.float64)
     origin = landmarks.mean(axis=0)
     normal = np.cross(landmarks[1] - landmarks[0], landmarks[2] - landmarks[0])
@@ -115,7 +119,7 @@ def cranial_clip(mesh: trimesh.Trimesh, landmarks: np.ndarray, trim_rear_neck: b
     mesh = clip_sphere(mesh, center=(0, 40, 0), radius=175, keep_inside=True)
     if trim_rear_neck:
         mesh = clip_plane(mesh, normal=[0, 0.6, 1], origin=[0, -60, -50], invert=False)
-    normal, origin = _landmark_plane(landmarks)
+    normal, origin = landmark_plane(landmarks)
     mesh = clip_plane(mesh, normal=normal, origin=origin, invert=False)
     mesh = keep_largest_component(mesh)
     return clean_boundary(mesh)

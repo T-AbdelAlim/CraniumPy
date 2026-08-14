@@ -49,6 +49,15 @@ def test_landmark_align_centers_on_reference_centroid():
     np.testing.assert_allclose(result.mean(axis=0), REFERENCE_TRIANGLE.mean(axis=0), atol=1e-8)
 
 
+def test_inverse_apply_undoes_apply():
+    landmarks = np.array([[5.0, -30.0, 60.0], [55.0, 5.0, -20.0], [-50.0, -10.0, -25.0]])
+    transform = landmark_align(landmarks)
+
+    points = np.array([[1.0, 2.0, 3.0], [-10.0, 40.0, -5.0], [0.0, 0.0, 0.0]])
+    round_tripped = transform.inverse_apply(transform.apply(points))
+    np.testing.assert_allclose(round_tripped, points, atol=1e-8)
+
+
 def test_procrustes_icp_recovers_known_transform():
     # point-to-point ICP is a local refinement method - given a decent
     # starting alignment it converges tight, but has no guarantee of finding
