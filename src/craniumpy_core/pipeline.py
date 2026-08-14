@@ -28,7 +28,7 @@ import numpy as np
 import trimesh
 
 from .asymmetry import AsymmetryResult, calculate_asymmetry
-from .clipping import clip_plane, cranial_clip, facial_clip
+from .clipping import clip_plane, cranial_clip, facial_clip, landmark_plane
 from .craniometrics import CranioMeasurements, extract_measurements, hc_slice_polygon, slice_center_of_mass
 from .registration.rigid import RigidTransform, landmark_align, procrustes_fit
 from .remesh import RepairMethod, ResampleMethod, clean_boundary, keep_largest_component, repair_mesh, resample_mesh
@@ -109,6 +109,65 @@ def register(
         new_landmarks = new_landmarks - sellion_offset
 
     return RegistrationResult(mesh=registered_mesh, landmarks=new_landmarks, transform=transform)
+
+
+def rough_bounding_clip(
+    mesh: trimesh.Trimesh,
+    landmarks: np.ndarray,
+    alt_frontal_landmark: np.ndarray | None = None,
+    side_margin: float = 50.0,
+    front_margin: float = 50.0,
+    bottom_margin: float = 100.0,
+) -> trimesh.Trimesh:
+    """crops the raw, unrepaired mesh down to a generous box around the head
+    before the expensive repair step - repair's runtime scales with mesh
+    size, and a full photogrammetry scan can carry a lot of torso,
+    background, or hair that has nothing to do with the cranial/facial clip
+    that happens afterward, on the repaired result.
+
+    open on 2 sides on purpose: nothing bounds the back of the head (no
+    reliable margin exists there - occiput shape varies too much to guess a
+    safe cutoff) or the top (nothing irrelevant tends to sit there anyway).
+    the other 3 margins (left/right, front, bottom - all in mesh units, mm)
+    are generous specifically so this rough cut can never end up removing
+    anything the real cranial_clip/facial_clip pass would have kept - all
+    it's for is throwing away obviously-irrelevant mass before the slow
+    part. side_margin extends past whichever of left_tragus/right_tragus is
+    further out, front_margin extends past whichever of sellion/
+    alt_frontal_landmark sits further forward (can't tell "forward" apart
+    for a single point in isolation, so this takes both when given),
+    bottom_margin extends below the same landmark plane cranial_clip's own
+    final cut uses (see clipping.landmark_plane) - not the flat y=0 you'd
+    get from a naive axis-aligned box, so it stays a true margin even on a
+    head registered at an angle.
+
+    the box itself is computed in a fresh, pure landmark-triangle
+    registration (same one register() would produce with
+    com_translation=False) purely to get sensible axis-aligned bounds - the
+    crop is applied back in the mesh's own original frame before returning,
+    so callers don't need to care this detour happened.
+    """
+    landmarks = np.asarray(landmarks, dtype=np.float64)
+    transform = landmark_align(landmarks)
+    aligned_landmarks = transform.apply(landmarks)
+    sellion, left_tragus, right_tragus = aligned_landmarks
+
+    front_z = sellion[2]
+    if alt_frontal_landmark is not None:
+        aligned_alt = transform.apply(np.asarray(alt_frontal_landmark, dtype=np.float64).reshape(1, 3))[0]
+        front_z = max(front_z, aligned_alt[2])
+
+    plane_normal, plane_origin = landmark_plane(aligned_landmarks)
+
+    result = trimesh.Trimesh(vertices=transform.apply(np.asarray(mesh.vertices)), faces=mesh.faces, process=False)
+    result = clip_plane(result, normal=[1, 0, 0], origin=[right_tragus[0] - side_margin, 0, 0])
+    result = clip_plane(result, normal=[-1, 0, 0], origin=[left_tragus[0] + side_margin, 0, 0])
+    result = clip_plane(result, normal=[0, 0, -1], origin=[0, 0, front_z + front_margin])
+    result = clip_plane(result, normal=plane_normal, origin=plane_origin - plane_normal * bottom_margin)
+
+    return trimesh.Trimesh(
+        vertices=transform.inverse_apply(np.asarray(result.vertices)), faces=result.faces, process=False
+    )
 
 
 def harmonize(

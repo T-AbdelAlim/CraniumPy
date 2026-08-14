@@ -15,6 +15,7 @@ import pytest
 import trimesh
 from PIL import Image
 
+from craniumpy_core.clipping import landmark_plane
 from craniumpy_core.craniometrics import slice_center_of_mass
 from craniumpy_core.io import load_mesh
 from craniumpy_core.pipeline import (
@@ -24,8 +25,9 @@ from craniumpy_core.pipeline import (
     measure_cranial,
     register,
     register_and_clip_cranial,
+    rough_bounding_clip,
 )
-from craniumpy_core.registration.rigid import REFERENCE_TRIANGLE
+from craniumpy_core.registration.rigid import REFERENCE_TRIANGLE, landmark_align
 from craniumpy_core.remesh import repair_mesh
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -94,6 +96,77 @@ def test_register_rejects_wrong_landmark_count():
     mesh, landmarks = _ellipsoid_with_landmarks()
     with pytest.raises(ValueError):
         register(mesh, landmarks[:2], target="cranium")
+
+
+def test_rough_bounding_clip_crops_far_away_geometry():
+    # bolt a blob well past every margin onto the head-scale ellipsoid and
+    # confirm it gets cropped, not just left there.
+    mesh, landmarks = _ellipsoid_with_landmarks()
+    transform = landmark_align(landmarks)
+    aligned_landmarks = transform.apply(landmarks)
+    plane_normal, plane_origin = landmark_plane(aligned_landmarks)
+
+    far_point_aligned = plane_origin - plane_normal * 300.0
+    far_point_raw = transform.inverse_apply(far_point_aligned.reshape(1, 3))[0]
+    blob = trimesh.creation.icosphere(subdivisions=2, radius=20.0)
+    blob.vertices = np.asarray(blob.vertices) + far_point_raw
+    combined = trimesh.util.concatenate([mesh, blob])
+
+    clipped = rough_bounding_clip(combined, landmarks)
+
+    assert len(clipped.vertices) < len(combined.vertices)
+    clipped_aligned = transform.apply(np.asarray(clipped.vertices))
+    signed_dist = np.dot(clipped_aligned - plane_origin, plane_normal)
+    assert signed_dist.min() >= -100.0 - 1e-6
+
+
+def test_rough_bounding_clip_stays_within_requested_margins():
+    mesh, landmarks = _ellipsoid_with_landmarks()
+    clipped = rough_bounding_clip(mesh, landmarks, side_margin=50.0, front_margin=50.0, bottom_margin=100.0)
+
+    transform = landmark_align(landmarks)
+    sellion, left_tragus, right_tragus = transform.apply(landmarks)
+    plane_normal, plane_origin = landmark_plane(transform.apply(landmarks))
+
+    aligned = transform.apply(np.asarray(clipped.vertices))
+    assert aligned[:, 0].max() <= left_tragus[0] + 50.0 + 1e-6
+    assert aligned[:, 0].min() >= right_tragus[0] - 50.0 - 1e-6
+    assert aligned[:, 2].max() <= sellion[2] + 50.0 + 1e-6
+    signed_dist = np.dot(aligned - plane_origin, plane_normal)
+    assert signed_dist.min() >= -100.0 - 1e-6
+
+
+def test_rough_bounding_clip_front_margin_uses_whichever_landmark_is_further_forward():
+    mesh, landmarks = _ellipsoid_with_landmarks()
+    transform = landmark_align(landmarks)
+    aligned_landmarks = transform.apply(landmarks)
+    sellion_aligned = aligned_landmarks[0]
+
+    # an alt-frontal landmark placed well forward of sellion, in raw
+    # coordinates - the front margin should extend past IT, not sellion
+    alt_aligned = sellion_aligned + np.array([0.0, 0.0, 40.0])
+    alt_raw = transform.inverse_apply(alt_aligned.reshape(1, 3))[0]
+
+    clipped = rough_bounding_clip(mesh, landmarks, alt_frontal_landmark=alt_raw, front_margin=5.0)
+    aligned = transform.apply(np.asarray(clipped.vertices))
+    assert aligned[:, 2].max() <= alt_aligned[2] + 5.0 + 1e-6
+    # and it actually extended past plain sellion - otherwise this test
+    # wouldn't be checking anything the sellion-only path doesn't already
+    without_alt = rough_bounding_clip(mesh, landmarks, front_margin=5.0)
+    aligned_without_alt = transform.apply(np.asarray(without_alt.vertices))
+    assert aligned[:, 2].max() > aligned_without_alt[:, 2].max()
+
+
+def test_rough_bounding_clip_returns_mesh_in_original_frame():
+    mesh, landmarks = _ellipsoid_with_landmarks()
+    clipped = rough_bounding_clip(mesh, landmarks, side_margin=10.0, front_margin=10.0, bottom_margin=10.0)
+
+    bounds = mesh.bounds
+    clipped_vertices = np.asarray(clipped.vertices)
+    assert len(clipped_vertices) > 0
+    assert len(clipped_vertices) < len(mesh.vertices)  # tight margins actually cropped something
+    assert np.all(clipped_vertices >= bounds[0] - 1e-6)
+    assert np.all(clipped_vertices <= bounds[1] + 1e-6)
 
 
 def test_harmonize_com_translation_corrects_z_only_not_x():

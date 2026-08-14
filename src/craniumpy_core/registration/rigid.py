@@ -28,6 +28,14 @@ class RigidTransform:
     def apply(self, points: np.ndarray) -> np.ndarray:
         return points @ self.rotation.T + self.translation
 
+    def inverse_apply(self, points: np.ndarray) -> np.ndarray:
+        """undoes apply() - maps points back from this transform's output
+        space into its input space. rotation is orthogonal, so its inverse
+        is just its transpose, same identity the frontend's
+        applyInverseTransform relies on for converting a dragged landmark
+        back to raw mesh coordinates."""
+        return (points - self.translation) @ self.rotation
+
     def compose(self, other: "RigidTransform") -> "RigidTransform":
         """combine into one transform equivalent to self then other."""
         R = other.rotation @ self.rotation
