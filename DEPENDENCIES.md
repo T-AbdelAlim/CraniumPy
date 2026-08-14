@@ -62,36 +62,41 @@ pain to install somewhere.
 
 ## frontend
 
-no package.json, no node toolchain at all. the 3D viewer is plain HTML/JS
-using three.js as a native ES module, no bundler, no react. reasons:
-1. there's no node/npm on this machine and pulling in a whole JS toolchain
-   just for a mesh viewer + landmark picker + results panel seemed like
-   overkill.
-2. keeps the standalone exe build a plain `pip install` + `pyinstaller` step,
-   no separate JS build stage to worry about keeping in sync.
+`frontend/` is now a Vite + React project (plain JS, not TypeScript - matches
+the minimal-tooling approach used everywhere else in this repo; not a
+one-way door, TS can be adopted incrementally later if it ever earns its
+keep). the old plain-HTML/JS viewer (no bundler, no react) is kept around at
+`frontend_legacy/` purely as a reference while its functionality gets ported
+over piece by piece - it isn't wired into anything anymore.
 
-if the frontend ever grows enough to need real componentization, vite + something
-light is the obvious next step. nothing in the backend cares either way.
+reason for the reversal: the suite rebuild needs a real multi-workspace
+shell (routed workspaces, an inspector panel, tables, protocol/model
+builders) - squarely React territory, and past the point where hand-rolled
+DOM wiring in one `app.js` file stays maintainable. this is exactly the
+"vite + something light" escape hatch this file used to flag as the
+obvious next step once componentization was actually needed.
 
-### vendored JS (`frontend/vendor/three/`)
+`frontend/dist/` (the build output, gitignored - see `frontend/.gitignore`)
+is what actually gets served in every run mode: `api/main.py`'s
+`FRONTEND_DIR`, and both PyInstaller specs' `datas`, point at `dist/`, not
+the Vite source tree. `npm run build` in `frontend/` is a required one-time
+step before running the backend from source or building the exe/app - see
+`README.md`. `npm run dev` (Vite's own dev server, proxying `/api/*` to the
+FastAPI backend) is for live frontend iteration instead.
 
-pulled from unpkg.com (mirrors npm packages directly), with the go-ahead to
-download it. these are committed to the repo, not loaded from a CDN, so the
-standalone exe actually works offline. MIT licensed, straight from the
-official `three` package.
-
-| file | source | size |
+| package | what it's for | replaced |
 |---|---|---|
-| `three.module.js` | `unpkg.com/three@0.180.0/build/three.module.js` | ~603 KB |
-| `three.core.js` | `unpkg.com/three@0.180.0/build/three.core.js` (three.module.js needs this - found out when the browser 404'd on it, didn't grab it up front) | ~1.4 MB |
-| `controls/OrbitControls.js` | `unpkg.com/three@0.180.0/examples/jsm/controls/OrbitControls.js` | ~39 KB |
-| `loaders/GLTFLoader.js` | `unpkg.com/three@0.180.0/examples/jsm/loaders/GLTFLoader.js` | ~115 KB |
-| `utils/BufferGeometryUtils.js` | `unpkg.com/three@0.180.0/examples/jsm/utils/BufferGeometryUtils.js` | ~35 KB (GLTFLoader needs this one) |
+| `react`, `react-dom` | UI | hand-rolled DOM wiring in `frontend_legacy/app.js` |
+| `react-router-dom` | routing between workspaces | n/a, new - the old app was one screen |
+| `three` | 3D viewer (mesh, landmarks, heatmaps, template overlay) | the hand-vendored `frontend_legacy/vendor/three/` files below - now a real npm dependency, bundled by Vite into the built output, so the standalone exe still works fully offline (no CDN fetch at runtime either way) |
+| `vite`, `@vitejs/plugin-react` | dev server + production build | n/a, new |
 
-index.html points the bare `"three"` import at the vendored copy via an
-import map. didn't touch the downloaded files otherwise. to bump the
-version, just re-fetch all four from the same unpkg URL pattern (keep the
-version numbers matching across all of them) and update this table.
+### vendored JS (`frontend_legacy/vendor/three/`) - historical, superseded
+
+kept only because `frontend_legacy/` itself is kept, as a porting reference.
+pulled from unpkg.com (mirrors npm packages directly). MIT licensed, straight
+from the official `three` package, version 0.180.0 - the same version now
+pinned as a real npm dependency above.
 
 ## looked at and passed on
 
@@ -99,7 +104,6 @@ version numbers matching across all of them) and update this table.
 |---|---|---|
 | `open3d` | mesh I/O / ICP / viewing | trimesh + scipy's cKDTree cover the same ground, lighter install, and no separate viewer stack to keep in sync with the frontend. |
 | pyacvd (voronoi resampling) | resampling | genuinely needs pyvista/VTK, no way around it - its Clustering class is built directly on pyvista.PolyData. unlike pymeshfix there's no VTK-free path here. staying with quadric decimation for now. |
-| react + vite | frontend | no node toolchain on this machine, and the UI (viewer + picker + results panel) doesn't need componentization yet. |
 
 automatic landmark detection (deforming a full head template onto the scan
 and reading landmarks back off it) was tried and then removed entirely -

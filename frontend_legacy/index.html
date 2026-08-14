@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>CraniumPy</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="style.css" />
+  <script type="importmap">
+    { "imports": { "three": "./vendor/three/three.module.js" } }
+  </script>
+</head>
+<body>
+  <div id="app">
+    <aside id="panel">
+      <h1>CraniumPy</h1>
+
+      <section>
+        <h2>1. Mesh</h2>
+        <button id="choose-mesh-button" type="button">choose file(s)...</button>
+        <input id="file-input" type="file" accept=".ply,.obj,.stl,.mtl,.jpg,.jpeg,.png" multiple class="hidden" />
+        <div id="mesh-view-toggles" class="toggle-row hidden">
+          <label class="checkbox"><input id="wireframe-toggle" type="checkbox" /> wireframe</label>
+          <label class="checkbox"><input id="texture-toggle" type="checkbox" disabled /> texture</label>
+        </div>
+        <p class="hint">For a textured .obj, multi-select (ctrl/cmd-click) the .obj, its .mtl, and the texture
+          image together in the file picker.</p>
+        <p id="mesh-path" class="hint"></p>
+        <p id="mesh-info" class="hint"></p>
+      </section>
+
+      <section>
+        <h2>2. Preprocessing - landmarks</h2>
+        <p class="hint"><strong>ctrl/cmd-click</strong> to place a point, <strong>alt-drag</strong> to move one.
+          Pick in this order:</p>
+        <ol id="landmark-list">
+          <li data-name="sellion">
+            <span class="landmark-swatch"></span>
+            <span class="landmark-label">sellion</span>
+            <span class="landmark-desc">bridge of the nose, between the eyes</span>
+            <span class="landmark-value">not picked</span>
+          </li>
+          <li data-name="left_tragus">
+            <span class="landmark-swatch"></span>
+            <span class="landmark-label">left landmark (e.g. LH tragus)</span>
+            <span class="landmark-desc">small cartilage flap in front of the left ear canal</span>
+            <span class="landmark-value">not picked</span>
+          </li>
+          <li data-name="right_tragus">
+            <span class="landmark-swatch"></span>
+            <span class="landmark-label">right landmark (e.g. RH tragus)</span>
+            <span class="landmark-desc">same, right ear</span>
+            <span class="landmark-value">not picked</span>
+          </li>
+          <li data-name="alt_frontal" id="alt-frontal-item" class="hidden">
+            <span class="landmark-swatch"></span>
+            <span class="landmark-label">secondary frontal landmark (optional, e.g. subnasale)</span>
+            <span class="landmark-desc">becomes the clipping plane for the displayed/saved mesh instead of
+              sellion; measurements stay sellion-based</span>
+            <span class="landmark-value">not picked</span>
+          </li>
+        </ol>
+        <label class="checkbox" id="use-alt-frontal-row">
+          <input id="use-alt-frontal" type="checkbox" />
+          use a secondary frontal landmark (e.g. subnasale) for the displayed/saved mesh
+        </label>
+        <div class="toggle-row">
+          <button id="align-button" type="button" disabled>align</button>
+          <button id="adjust-picks-button" type="button" disabled>adjust picks</button>
+          <button id="reset-button" type="button" disabled>reset</button>
+        </div>
+        <p class="hint"><strong>Align</strong> does rigid registration only - no repair or clipping yet. Move
+          landmarks with <strong>alt-drag</strong>, or after alignment use <strong>adjust picks</strong> to
+          reposition them, then <strong>align</strong> again to re-register. Start over with <strong>reset</strong>.
+          After <strong>run pipeline</strong>, align/adjust picks lock until reset or a new file is loaded.</p>
+        <p id="align-status" class="status-line"></p>
+      </section>
+
+      <section>
+        <h2>3. Mesh cleanup</h2>
+        <label class="checkbox"><input id="resample-mesh" type="checkbox" /> resample</label>
+        <label for="vertex-count">to</label>
+        <input id="vertex-count" type="number" min="500" max="200000" step="500" value="10000" /> vertices
+        <p class="hint">Simplifies the mesh to roughly this many vertices, for a smaller, faster file.</p>
+      </section>
+
+      <section>
+        <h2>4. What are we measuring</h2>
+        <label><input type="radio" name="target" value="cranium" checked /> cranial (head measurements)</label>
+        <label><input type="radio" name="target" value="face" /> facial (asymmetry)</label>
+      </section>
+
+      <section>
+        <h2>5. Run</h2>
+        <label class="checkbox"><input id="com-translation" type="checkbox" checked /> center-of-mass correction</label>
+        <p class="hint">Recommended for most use-cases. On: applies a depth-only nudge toward the head-circumference
+          slice centroid before clipping, for more consistent shape comparisons. Off: keeps the plain
+          landmark-triangle alignment from "align" - <a
+            href="https://journals.lww.com/jcraniofacialsurgery/fulltext/10.1097/scs.0000000000009448~reliability-and-agreement-of-automated-head-measurements"
+            target="_blank" rel="noopener">details</a>.</p>
+        <button id="run-button" type="button" disabled>run pipeline</button>
+        <p class="hint">Repairs and clips the scan to the landmark-guided plane, then optionally resamples and
+          applies center-of-mass correction.</p>
+        <div id="run-progress" class="progress-bar hidden">
+          <div id="run-progress-fill" class="progress-bar-fill"></div>
+        </div>
+        <p id="job-status" class="progress-label"></p>
+      </section>
+
+      <section id="results" class="hidden">
+        <h2>results</h2>
+        <table id="results-table"></table>
+        <p id="alt-frontal-note" class="hint hidden">Showing the mesh registered to the secondary frontal
+          landmark - measurements above and the saved 2D figure are still based on sellion.</p>
+        <button id="download-bundle-button" type="button">download results (mesh + report + figure)</button>
+        <p id="save-status" class="hint"></p>
+      </section>
+
+      <section id="visualization" class="hidden">
+        <h2>6. Visualization</h2>
+        <label class="checkbox">
+          <input id="visualization-toggle" type="checkbox" />
+          show visualization
+        </label>
+
+        <div id="visualization-mode-row" class="toggle-row hidden">
+          <label id="measurements-mode-label"><input type="radio" name="visualization-mode" value="measurements" checked /> <span id="measurements-mode-text">metrics</span></label>
+          <label><input type="radio" name="visualization-mode" value="template" /> alignment</label>
+        </div>
+
+        <p id="measurements-hint" class="hint hidden">HC/BPD/OFD drawn on the mesh, with the numbers in the panel
+          over the viewer.</p>
+        <p id="asymmetry-hint" class="hint hidden">Blue = dented in, red = protruding out, relative to the
+          mirrored other half - scale bar over the viewer.</p>
+
+        <div id="template-controls" class="hidden">
+          <div id="template-select-row">
+            <label for="template-select">compare against</label>
+            <select id="template-select"></select>
+          </div>
+          <div id="template-custom-row" class="hidden">
+            <button id="template-browse-button" type="button">browse...</button>
+            <input id="template-custom-file-input" type="file" accept=".ply,.obj,.stl" class="hidden" />
+            <span id="template-custom-name" class="hint"></span>
+          </div>
+          <p id="template-custom-hint" class="hint hidden">This app can't remember a real file path here - you'll
+            need to pick the file again next time you want this comparison. The downloadable desktop app can
+            remember it for you instead.</p>
+          <p class="hint">The template overlaid on the mesh, with X/Y/Z axes and each one's center of gravity
+            (see legend in the viewer).</p>
+          <p id="template-offset-info" class="hint"></p>
+        </div>
+      </section>
+    </aside>
+
+    <main id="viewer-container">
+      <canvas id="viewer"></canvas>
+      <p id="viewer-hint" class="hint overlay">Upload a mesh to begin.</p>
+      <div id="heatmap-scalar-bar" class="hidden">
+        <span id="scalar-bar-max">0.0 mm</span>
+        <div id="scalar-bar-gradient"></div>
+        <span id="scalar-bar-min">0.0 mm</span>
+      </div>
+      <div id="measurements-panel" class="hidden">
+        <div class="measurement-row"><span class="measurement-swatch" style="background:#d1453d"></span>HC <span id="mp-hc"></span></div>
+        <div class="measurement-row"><span class="measurement-swatch" style="background:#2563eb"></span>BPD <span id="mp-bpd"></span></div>
+        <div class="measurement-row"><span class="measurement-swatch" style="background:#16a34a"></span>OFD <span id="mp-ofd"></span></div>
+        <div class="measurement-row">CI <span id="mp-ci"></span></div>
+        <div class="measurement-row">volume <span id="mp-volume"></span></div>
+      </div>
+      <div id="template-legend" class="hidden">
+        <div class="measurement-row"><span class="measurement-swatch" style="background:#ffa500"></span>your mesh</div>
+        <div class="measurement-row"><span class="measurement-swatch" style="background:#60a5fa"></span>template</div>
+      </div>
+    </main>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

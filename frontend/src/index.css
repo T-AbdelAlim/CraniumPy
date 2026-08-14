@@ -1,0 +1,304 @@
+:root {
+  color-scheme: dark;
+
+  /* dark shell, unified with the viewer's own dark tones below rather than
+     introducing a second dark palette - bg-app/bg-surface/border/text-* here
+     are the same values as --viewer-*, so there's no seam between the shell
+     chrome and the workspace. bg-subtle is the one genuinely new tone,
+     for a hover/active state the light palette didn't need a name for. */
+  --bg-app: #12171d;
+  --bg-surface: #1a222c;
+  --bg-subtle: #232c38;
+  --border: #2a3542;
+
+  --text-primary: #f4f7fa;
+  --text-secondary: #aeb8c4;
+  --text-muted: #6e7a8c;
+
+  --primary: #2f6fed;
+  --primary-hover: #2458c7;
+  --accent-teal: #178c83;
+
+  --viewer-bg: #12171d;
+  --viewer-surface: #1a222c;
+  --viewer-border: #2a3542;
+  --viewer-text: #f4f7fa;
+  --viewer-text-secondary: #aeb8c4;
+
+  --success: #25845f;
+  --warning: #d68a13;
+  --danger: #c94a4a;
+  --info: #3978d4;
+  --processing: #7c5ce7;
+  --disabled: #aab2bd;
+
+  --hc: #d1453d;
+  --bpd: #2563eb;
+  --ofd: #16a34a;
+
+  --template: #60a5fa;
+  --registration: #7c5ce7;
+  --followup: #22a6a1;
+  --landmark-frontal: #1a4922;
+  --landmark-left: #8b0002;
+  --landmark-right: #d4af37;
+  --landmark-secondary-frontal: #2a4d80;
+  --moving-mesh: #2f6fed;
+  --fixed-mesh: #f28c45;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--bg-app);
+  color: var(--text-primary);
+}
+
+/* --- shell --- */
+
+.shell {
+  display: grid;
+  grid-template-columns: 200px 1fr 320px;
+  grid-template-rows: 56px 1fr;
+  grid-template-areas:
+    "topbar topbar topbar"
+    "nav workspace inspector";
+  height: 100vh;
+}
+
+.shell-topbar {
+  grid-area: topbar;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0 1.25rem;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.shell-brand {
+  font-weight: 700;
+  font-size: 1rem;
+}
+
+.shell-context {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+.shell-nav {
+  grid-area: nav;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border);
+  padding: 1rem 0.75rem;
+}
+
+.shell-nav-item {
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+.shell-nav-item.active {
+  background: var(--bg-subtle);
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.shell-workspace {
+  grid-area: workspace;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--viewer-bg);
+  color: var(--viewer-text);
+}
+
+.shell-workspace-tabs {
+  display: flex;
+  gap: 0.25rem;
+  flex-shrink: 0;
+  padding: 0.5rem 0.75rem 0;
+  background: var(--viewer-surface);
+  border-bottom: 1px solid var(--viewer-border);
+}
+
+.shell-tab {
+  width: auto;
+  margin-top: 0;
+  padding: 0.5rem 0.9rem;
+  border: none;
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+  color: var(--viewer-text-secondary);
+  font-weight: 500;
+  font-size: 0.85rem;
+}
+
+.shell-tab.active {
+  background: var(--viewer-bg);
+  color: var(--viewer-text);
+}
+
+.shell-workspace-content {
+  position: relative;
+  flex: 1;
+}
+
+.shell-inspector {
+  grid-area: inspector;
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border);
+  padding: 1.25rem;
+  overflow-y: auto;
+}
+
+.shell-inspector h2 {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin: 0 0 1rem;
+}
+
+/* --- inspector content (data workspace etc.) --- */
+
+section {
+  margin-bottom: 1.5rem;
+}
+
+label {
+  display: block;
+  font-size: 0.9rem;
+  margin-bottom: 0.4rem;
+  cursor: pointer;
+}
+
+label.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+label.checkbox:has(input:disabled) {
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+.toggle-row {
+  display: flex;
+  gap: 1rem;
+  margin: 0.5rem 0;
+}
+
+.toggle-row label.checkbox {
+  margin-bottom: 0;
+}
+
+.hint {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  margin: 0.4rem 0;
+  overflow-wrap: anywhere;
+}
+
+.status-line {
+  margin-top: 0.75rem;
+  color: var(--text-primary);
+}
+
+#landmark-list {
+  list-style: decimal;
+  padding-left: 1.2rem;
+  margin: 0.5rem 0;
+  font-size: 0.8rem;
+}
+
+#landmark-list li {
+  padding: 0.3rem 0;
+  color: var(--text-muted);
+}
+
+#landmark-list li.picked .landmark-label {
+  color: var(--primary);
+}
+
+.landmark-swatch {
+  display: inline-block;
+  width: 0.65em;
+  height: 0.65em;
+  border-radius: 50%;
+  margin-right: 0.4rem;
+}
+
+/* colors match LANDMARK_COLORS in lib/landmarks.js - keep these two in sync */
+#landmark-list li[data-name="sellion"] .landmark-swatch {
+  background: var(--landmark-frontal);
+}
+
+#landmark-list li[data-name="left_tragus"] .landmark-swatch {
+  background: var(--landmark-left);
+}
+
+#landmark-list li[data-name="right_tragus"] .landmark-swatch {
+  background: var(--landmark-right);
+}
+
+button {
+  width: 100%;
+  padding: 0.5rem;
+  margin-top: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--primary);
+  color: #ffffff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:hover {
+  background: var(--primary-hover);
+}
+
+button:disabled {
+  background: var(--disabled);
+  color: #ffffff;
+  cursor: not-allowed;
+}
+
+input[type="file"] {
+  width: 100%;
+  font-size: 0.85rem;
+  color: var(--text-primary);
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* --- viewer --- */
+
+.viewer-container {
+  width: 100%;
+  height: 100%;
+}
+
+.viewer-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  color: var(--viewer-text-secondary);
+}

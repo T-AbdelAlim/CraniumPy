@@ -126,6 +126,13 @@ python -m venv .venv
 pip install -e .
 ```
 
+The frontend is a Vite/React project under `frontend/` - build it once (requires Node.js) before running either the web app or the desktop app, since both serve the built output, not the source:
+```
+npm --prefix frontend ci
+npm --prefix frontend run build
+```
+Re-run `npm --prefix frontend run build` after any frontend source change. For live iteration with hot reload instead, run `npm run dev` inside `frontend/` alongside a running backend (see below) - Vite's dev server proxies `/api/*` to it.
+
 Web app:
 ```
 python -m uvicorn api.main:app --port 8734
@@ -138,7 +145,7 @@ pip install -e ".[desktop]"
 python -m desktop.app
 ```
 
-The standalone Windows .exe is built from this same code via `desktop/craniumpy.spec` and PyInstaller. The macOS .app is built via `desktop/craniumpy_mac.spec`, same command, run on an actual Mac (PyInstaller can't cross-compile, see `.github/workflows/build-macos.yml` for the CI build).
+The standalone Windows .exe is built from this same code via `desktop/craniumpy.spec` and PyInstaller (run `npm run build` in `frontend/` first - the spec bundles `frontend/dist`, not the source tree). The macOS .app is built via `desktop/craniumpy_mac.spec`, same command, run on an actual Mac (PyInstaller can't cross-compile, see `.github/workflows/build-macos.yml` for the CI build, which builds the frontend first automatically).
 
 
 ## Known issues
