@@ -90,6 +90,32 @@ label.checkbox:has(input:disabled) {
   color: var(--text);
 }
 
+.progress-bar {
+  margin-top: 0.75rem;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+
+.progress-bar.error .progress-bar-fill {
+  background: #ef4444;
+}
+
+.progress-label {
+  margin-top: 0.35rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 400;
+}
+
 button {
   width: 100%;
   padding: 0.5rem;
@@ -149,7 +175,7 @@ input[type="file"] {
 }
 
 #landmark-list li[data-name="left_tragus"] .landmark-swatch {
-  background: #a65c3c;
+  background: #8b0002;
 }
 
 #landmark-list li[data-name="right_tragus"] .landmark-swatch {

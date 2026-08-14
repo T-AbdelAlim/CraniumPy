@@ -133,20 +133,23 @@ async function displayMesh(url) {
     const hasTexture = selectionHasTexture && !!(child.material && child.material.map);
     const hasVertexColors = !!child.geometry.attributes.color;
 
-    if (hasTexture) {
-      // unlit on purpose - a photo texture already has real-world lighting
-      // baked into its pixels, so running it through the scene's directional
-      // light on top just adds a second, wrong light source, crushing one
-      // side of the face into shadow and making it hard to see where you're
-      // actually clicking for landmarks.
+    if (hasTexture || hasVertexColors) {
+      // unlit on purpose, for both cases - a photo texture (or a scanner's
+      // per-vertex color, e.g. a 3dMD .ply export - same deal, just baked
+      // per-vertex instead of into an image) already has real-world
+      // lighting captured into it, so running it through the scene's
+      // directional light on top just adds a second, wrong light source,
+      // crushing one side of the face into shadow and making it hard to
+      // see where you're actually clicking for landmarks. the backend
+      // pre-corrects vertex color for glTF's linear COLOR_0 assumption
+      // (see io.mesh_to_glb) - a texture's colorSpace is already handled
+      // by GLTFLoader itself, nothing extra needed here for that case.
       currentMeshHasTexture = true;
-      child.userData.texturedMaterial = new THREE.MeshBasicMaterial({ map: child.material.map, side: THREE.DoubleSide });
+      child.userData.texturedMaterial = hasTexture
+        ? new THREE.MeshBasicMaterial({ map: child.material.map, side: THREE.DoubleSide })
+        : new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
       child.userData.plainMaterial = plainMaterial();
       child.material = child.userData.texturedMaterial;
-    } else if (hasVertexColors) {
-      child.material = new THREE.MeshStandardMaterial({
-        vertexColors: true, side: THREE.DoubleSide, roughness: 0.85, metalness: 0.0,
-      });
     } else {
       child.material = plainMaterial();
     }
@@ -154,7 +157,7 @@ async function displayMesh(url) {
   });
   scene.add(object);
   currentMeshObject = object;
-  markerRadius = fitCameraToObject(object) * 0.00765; // 10% smaller again - was 0.0085
+  markerRadius = fitCameraToObject(object) * 0.0038; // slightly larger again - was 0.003
   lineRadius = markerRadius * 0.35 * 1.3; // 30% thicker than the plain-tube baseline
 
   document.getElementById("mesh-view-toggles").classList.remove("hidden");
@@ -420,7 +423,7 @@ const ALT_FRONTAL_NAME = "alt_frontal";
 // list (see the matching CSS in style.css) are unambiguously the same point -
 // picking order alone wasn't enough once the labels went generic (frontal/
 // left/right landmark instead of sellion/tragus).
-const LANDMARK_COLORS = { sellion: 0x1a4922, left_tragus: 0xa65c3c, right_tragus: 0xd4af37, alt_frontal: 0x2a4d80 };
+const LANDMARK_COLORS = { sellion: 0x1a4922, left_tragus: 0x8b0002, right_tragus: 0xd4af37, alt_frontal: 0x2a4d80 };
 const pickedLandmarks = {};
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
@@ -748,6 +751,12 @@ function resetAlignState() {
   pipelineRan = false;
   landmarksChangedSinceAlign = true;
   document.getElementById("align-status").innerHTML = "";
+  // stale "run complete" bar from a previous run would otherwise linger
+  // through a reset or a fresh align, looking like this run already finished.
+  document.getElementById("run-progress").classList.add("hidden");
+  document.getElementById("run-progress").classList.remove("error");
+  document.getElementById("run-progress-fill").style.width = "0%";
+  document.getElementById("job-status").textContent = "";
   updateAnalyzeButtonState();
 }
 
@@ -815,24 +824,27 @@ function sleep(ms) {
 }
 
 // shared by /clip (the "align" button) and /run - both are async
-// background jobs polled the same way. returns the final status ("done"
-// or "error"), updating statusEl with live progress along the way.
-async function pollJobStatus(statusEl) {
+// background jobs polled the same way. calls onProgress(stage, detail) on
+// every tick (stage is "error" with the error message as detail, or
+// "done" right before returning) so each caller renders it however it
+// wants - align just needs text, run pipeline also drives a progress bar.
+// returns the final status ("done" or "error").
+async function pollJobStatus(onProgress) {
   while (true) {
     const response = await fetch(`/api/sessions/${sessionId}/status`);
     const data = await response.json();
     if (data.status === "done") {
-      statusEl.textContent = "Done.";
+      onProgress("done", "");
       return "done";
     }
     if (data.status === "error") {
-      statusEl.textContent = `Error: ${data.error}`;
+      onProgress("error", data.error);
       return "error";
     }
     // live progress - this is the actual current pipeline stage, not a
     // static "please wait" message
     if (data.progress) {
-      statusEl.textContent = `${data.progress.stage}${data.progress.detail ? " - " + data.progress.detail : ""}...`;
+      onProgress(data.progress.stage, data.progress.detail);
     }
     await sleep(500);
   }
@@ -869,7 +881,11 @@ document.getElementById("align-button").addEventListener("click", async () => {
     return;
   }
 
-  const outcome = await pollJobStatus(statusEl);
+  const outcome = await pollJobStatus((stage, detail) => {
+    if (stage === "error") statusEl.textContent = `Error: ${detail}`;
+    else if (stage === "done") statusEl.textContent = "Done.";
+    else statusEl.textContent = `${stage}${detail ? " - " + detail : ""}...`;
+  });
   if (outcome === "done") {
     await displayMesh(`/api/sessions/${sessionId}/mesh/registered`);
     const transformResponse = await fetch(`/api/sessions/${sessionId}/registered-transform`);
@@ -916,6 +932,15 @@ document.getElementById("adjust-picks-button").addEventListener("click", () => {
   markLandmarksChanged();
 });
 
+// cumulative % through "run pipeline"'s two chained jobs (/clip then /run),
+// keyed by pipeline.py's own stage names - not measured, just ordered so
+// the slow step (repair, pymeshfix) gets the most room on the bar. "repair"
+// only actually shows up on the first press per session (cached after
+// that, see api.routers.mesh's repaired_mesh cache) - on a cached press the
+// bar just jumps straight from "register" to "clip", which is honest since
+// that phase really was fast that time.
+const RUN_STAGE_PROGRESS = { register: 5, repair: 15, clip: 60, resample: 75, analyze: 92 };
+
 document.getElementById("run-button").addEventListener("click", async () => {
   if (!sessionId || !alignSucceeded) return;
 
@@ -944,7 +969,39 @@ document.getElementById("run-button").addEventListener("click", async () => {
   const runBody = { n_vertices: resampleMesh ? vertexCount : null };
 
   const statusEl = document.getElementById("job-status");
-  statusEl.textContent = "Starting...";
+  const progressWrap = document.getElementById("run-progress");
+  const progressFill = document.getElementById("run-progress-fill");
+
+  let lastPercent = 0;
+  function setProgress(percent, label) {
+    lastPercent = percent;
+    progressFill.style.width = `${percent}%`;
+    statusEl.textContent = label;
+  }
+  // done is reported once per job (/clip and /run each finish their own),
+  // not just once for the whole "run pipeline" click - ignored here so the
+  // bar doesn't jump ahead after /clip finishes, only after /run does (see
+  // the explicit setProgress(100, ...) below).
+  //
+  // stages aren't strictly ordered - register_and_clip_cranial re-registers
+  // the now-repaired mesh right after repair finishes (repair itself is
+  // orientation-invariant, so it runs before the final registration), which
+  // means "register" legitimately reports a second time, after "repair",
+  // on a fresh (uncached) repair. clamping to never go below lastPercent
+  // keeps the bar moving forward even though the underlying stage name
+  // briefly moves "backward".
+  function onStage(stage, detail) {
+    if (stage === "error") {
+      progressWrap.classList.add("error");
+      setProgress(lastPercent, `error: ${detail}`);
+    } else if (stage !== "done") {
+      const percent = Math.max(RUN_STAGE_PROGRESS[stage] ?? lastPercent, lastPercent);
+      setProgress(percent, detail ? `${stage} - ${detail}` : stage);
+    }
+  }
+
+  progressWrap.classList.remove("hidden", "error");
+  setProgress(0, "");
   document.getElementById("run-button").disabled = true;
 
   const clipResponse = await fetch(`/api/sessions/${sessionId}/clip`, {
@@ -953,11 +1010,12 @@ document.getElementById("run-button").addEventListener("click", async () => {
     body: JSON.stringify(clipBody),
   });
   if (!clipResponse.ok) {
-    statusEl.textContent = `Failed to start: ${await clipResponse.text()}`;
+    progressWrap.classList.add("error");
+    setProgress(lastPercent, `failed to start: ${await clipResponse.text()}`);
     updateAnalyzeButtonState();
     return;
   }
-  if ((await pollJobStatus(statusEl)) !== "done") {
+  if ((await pollJobStatus(onStage)) !== "done") {
     updateAnalyzeButtonState();
     return;
   }
@@ -968,18 +1026,20 @@ document.getElementById("run-button").addEventListener("click", async () => {
     body: JSON.stringify(runBody),
   });
   if (!runResponse.ok) {
-    statusEl.textContent = `Failed to start: ${await runResponse.text()}`;
+    progressWrap.classList.add("error");
+    setProgress(lastPercent, `failed to start: ${await runResponse.text()}`);
     updateAnalyzeButtonState();
     return;
   }
 
-  const outcome = await pollJobStatus(statusEl);
+  const outcome = await pollJobStatus(onStage);
   if (outcome === "done") {
     pipelineRan = true;
     await showResults();
-    // overwrites pollJobStatus's generic "Done." - same treatment as
-    // align-status's "Rigid alignment: ✓" above.
-    statusEl.textContent = "Run complete: ✓";
+    // fills the bar the rest of the way and swaps the label to a
+    // persistent completion marker, same treatment as align-status's
+    // "Rigid alignment: ✓" above.
+    setProgress(100, "Run complete: ✓");
   }
   updateAnalyzeButtonState();
 });
@@ -1323,19 +1383,23 @@ async function enableTemplateOverlay() {
   const span = Math.max(size.x, size.y, size.z, 1) * 0.7;
 
   axesObject = new THREE.Group();
+  // Y reaches noticeably less far than X/Z at this same span - the head's
+  // vertical extent is usually smaller than its width/depth, so the
+  // shared span leaves the upward arrow looking stubby next to the other
+  // two even on a bigger mesh. stretched 30% just for Y to compensate.
   const axisDefs = [
-    { dir: new THREE.Vector3(1, 0, 0), color: 0xff4d4d, label: "X" },
-    { dir: new THREE.Vector3(0, 1, 0), color: 0x4dff88, label: "Y" },
-    { dir: new THREE.Vector3(0, 0, 1), color: 0x4d9fff, label: "Z" },
+    { dir: new THREE.Vector3(1, 0, 0), color: 0xff4d4d, label: "X", span },
+    { dir: new THREE.Vector3(0, 1, 0), color: 0x4dff88, label: "Y", span: span * 1.3 },
+    { dir: new THREE.Vector3(0, 0, 1), color: 0x4d9fff, label: "Z", span },
   ];
-  const labelSize = span * 0.12;
-  for (const { dir, color, label } of axisDefs) {
-    const pts = [dir.clone().multiplyScalar(-span), dir.clone().multiplyScalar(span)];
+  const labelSize = span * 0.084; // 30% smaller - was 0.12
+  for (const { dir, color, label, span: axisSpan } of axisDefs) {
+    const pts = [dir.clone().multiplyScalar(-axisSpan), dir.clone().multiplyScalar(axisSpan)];
     const geo = new THREE.BufferGeometry().setFromPoints(pts);
     axesObject.add(new THREE.Line(geo, new THREE.LineBasicMaterial({ color })));
 
     const sprite = makeAxisLabelSprite(label, color);
-    sprite.position.copy(dir).multiplyScalar(span * 1.1);
+    sprite.position.copy(dir).multiplyScalar(axisSpan * 1.1);
     sprite.scale.set(labelSize, labelSize, 1);
     axesObject.add(sprite);
   }

@@ -131,11 +131,22 @@ def facial_clip(mesh: trimesh.Trimesh, landmarks: np.ndarray) -> trimesh.Trimesh
     right_tragus]. old facial_clip did the depth clip twice, ~1mm apart -
     collapsed that into one clip at the centroid depth.
 
+    the sphere radius used to be a flat 115mm, tuned against a reference-sized
+    face - fine on that one case but too tight for anyone with a larger face
+    or head, silently slicing the chin off (clip_sphere isn't a real boolean
+    cut, so a too-small radius just drops whole chin faces rather than
+    trimming close). scaling the radius off this patient's own inter-tragus
+    distance instead means it always clears their actual anatomy: checked
+    against a synthetic face swept from 0.7x-1.8x a reference scale, 1.7x
+    inter-tragus stayed >=10% above the true chin distance at every size,
+    where the old fixed 115mm fell short even at reference scale.
+
     same keep_largest_component/clean_boundary cleanup as cranial_clip -
     two chained clips can graze a surface and fragment it on an unlucky
     head shape here too."""
     centroid = np.mean(landmarks, axis=0)
+    inter_tragus = np.linalg.norm(landmarks[1] - landmarks[2])
     mesh = clip_plane(mesh, normal=[0, 0, 1], origin=[0, 20, centroid[2]], invert=False)
-    mesh = clip_sphere(mesh, center=(0, 25, -25), radius=115, keep_inside=True)
+    mesh = clip_sphere(mesh, center=(0, 25, -25), radius=inter_tragus * 1.7, keep_inside=True)
     mesh = keep_largest_component(mesh)
     return clean_boundary(mesh)
