@@ -14,7 +14,10 @@ from pathlib import Path
 REPO_ROOT = Path(SPECPATH).parent
 
 datas = [
-    (str(REPO_ROOT / "frontend"), "frontend"),
+    # frontend/ is now a Vite project - bundle the built output, not the
+    # source tree. `npm run build` in frontend/ has to happen before this
+    # spec runs, or Analysis() fails fast here with the dist dir missing.
+    (str(REPO_ROOT / "frontend" / "dist"), "frontend"),
     (str(REPO_ROOT / "src" / "craniumpy_core" / "templates"), "craniumpy_core/templates"),
 ]
 

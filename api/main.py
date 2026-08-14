@@ -18,10 +18,17 @@ from api.routers.mesh import templates_router
 # paths don't point at the source tree anymore - everything's unpacked
 # under sys._MEIPASS instead. see desktop/craniumpy.spec for where
 # "frontend" actually gets put in the bundle.
+#
+# non-frozen also always serves the *built* React bundle now, not the
+# source tree - frontend/ is a Vite project, so `npm run build` in there
+# is a required one-time step or this StaticFiles mount raises immediately
+# at import (check_dir=True), taking every test and both run modes down
+# with it. live frontend iteration is `npm run dev` (Vite's own dev
+# server, proxying /api/* to this backend) instead, not this path.
 if getattr(sys, "frozen", False):
     FRONTEND_DIR = Path(sys._MEIPASS) / "frontend"
 else:
-    FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+    FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
 app = FastAPI(title="CraniumPy")
 
