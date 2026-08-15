@@ -13,10 +13,12 @@ minutes with zero feedback on what was happening, and I couldn't find a way
 to speed it up without the accuracy falling apart. not worth it, so it's gone.
 
 registration is just the landmark-triangle alignment - that's all
-craniometrics actually needs. I had a non-rigid mode here too (deforming a
-template onto the result for topology-normalized shape comparison) but
-pulled it out entirely, not worth the runtime cost for what this app is
-actually used for.
+craniometrics actually needs on its own. a non-rigid option (deforming a
+template onto the clipped mesh, via registration.nicp) is available as an
+alternative to the plain resample in measure_cranial/the facial run
+branch - opt-in, since it's real runtime cost for the sole benefit of a
+shared topology across a cohort, not something every single-mesh analysis
+needs.
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ import trimesh
 from .asymmetry import AsymmetryResult, calculate_asymmetry
 from .clipping import clip_plane, cranial_clip, facial_clip, landmark_plane
 from .craniometrics import CranioMeasurements, extract_measurements, hc_slice_polygon, slice_center_of_mass
+from .registration.nicp import register_template
 from .registration.rigid import RigidTransform, landmark_align, procrustes_fit
 from .remesh import RepairMethod, ResampleMethod, clean_boundary, keep_largest_component, repair_mesh, resample_mesh
 
@@ -481,12 +484,33 @@ def register_and_clip_cranial(
     )
 
 
+@dataclass
+class NicpTemplateConfig:
+    """opts measure_cranial (or the facial run branch) into non-rigid
+    template fitting instead of a plain resample - see
+    registration.nicp.register_template. template must already be a
+    trimesh.Trimesh (resolving a shipped name or a filesystem path is the
+    API layer's job, not pipeline's), and already in roughly the same
+    frame as the mesh it'll be fit onto (see nicp()'s own docstring -
+    that's true here since both sides come out of the same landmark-
+    triangle registration)."""
+
+    template: trimesh.Trimesh
+    alphas: np.ndarray
+    gamma: float = 1.0
+    dist_threshold: float = 10.0
+    inner_iters: int = 3
+
+
 def measure_cranial(
     clip_result: CranialClipResult,
     com_translation: bool = True,
     n_vertices: int | None = 10_000,
     resample_method: ResampleMethod = "quadric",
+    nicp_config: NicpTemplateConfig | None = None,
     on_progress: ProgressCallback | None = None,
+    on_nicp_progress: Callable[[int, int], None] | None = None,
+    on_nicp_preview: Callable[[np.ndarray], None] | None = None,
 ) -> CranialAnalysisResult:
     """the "Run" half of the cranial pipeline: resample + measure, given
     whatever register_and_clip_cranial produced. com_translation here must
@@ -494,9 +518,30 @@ def measure_cranial(
     controls the post-resample recenter step that function deliberately
     left out, not any clip-affecting decision, so passing a different
     value here than was used for clipping doesn't make sense and isn't
-    validated against."""
+    validated against.
+
+    nicp_config, when given, replaces the plain resample (n_vertices/
+    resample_method are ignored) with a non-rigid template fit - applies
+    uniformly to both the sellion-frame and (when an alt frontal landmark
+    was used) display-frame meshes, same as the plain resample already
+    did for both. on_nicp_progress/on_nicp_preview are passed straight
+    through to nicp.register_template (see its own docstring) - kept
+    separate from the coarse (stage, detail) on_progress above since these
+    fire far more often and carry numeric/array payloads instead."""
 
     def _finish(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
+        if nicp_config is not None:
+            _report(on_progress, "nicp", "fitting template (non-rigid)")
+            return register_template(
+                nicp_config.template,
+                mesh,
+                alphas=nicp_config.alphas,
+                gamma=nicp_config.gamma,
+                dist_threshold=nicp_config.dist_threshold,
+                inner_iters=nicp_config.inner_iters,
+                on_progress=on_nicp_progress,
+                on_preview=on_nicp_preview,
+            )
         if n_vertices is not None:
             _report(on_progress, "resample", f"resampling to {n_vertices} vertices ({resample_method})")
             mesh = resample_mesh(mesh, n_vertices=n_vertices, method=resample_method)

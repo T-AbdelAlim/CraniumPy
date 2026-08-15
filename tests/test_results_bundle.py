@@ -9,10 +9,14 @@ import pytest
 import trimesh
 
 from api.results_bundle import (
+    build_analysis_bundle,
+    build_meshes_bundle,
     build_results_bundle,
     results_folder_name,
     shorten_stem,
     stem_from_filename,
+    write_analysis_to_folder,
+    write_meshes_to_folder,
     write_results_to_folder,
 )
 from craniumpy_core.craniometrics import extract_measurements
@@ -88,6 +92,98 @@ def test_build_results_bundle_uses_shortened_stem_too(sample_result):
 
     names = zipfile.ZipFile(BytesIO(zip_bytes)).namelist()
     assert all(n.startswith("CP_1016510_20210730_edited_C_3/1016510_20210730_edited_") for n in names)
+
+
+def test_write_meshes_to_folder_writes_only_mesh_files(tmp_path, sample_result):
+    mesh, _landmarks, _craniometrics = sample_result
+    results_dir = write_meshes_to_folder(
+        dest_dir=tmp_path, original_filename="scan.ply", registered_mesh=mesh, final_mesh=mesh, target="cranium", config={}
+    )
+    assert results_dir == tmp_path / "CP_scan_C_3"
+    assert sorted(p.name for p in results_dir.iterdir()) == ["scan_rg.ply", "scan_rg_C.ply"]
+
+
+def test_write_analysis_to_folder_creates_mesh_folder_if_missing(tmp_path, sample_result):
+    # the user's explicit requirement: exporting analysis before ever
+    # separately saving meshes should still produce a complete
+    # mesh-folder-plus-analysis-subfolder, not just the analysis half.
+    mesh, landmarks, craniometrics = sample_result
+    assert not (tmp_path / "CP_scan_C_3").exists()
+
+    analysis_dir = write_analysis_to_folder(
+        dest_dir=tmp_path,
+        original_filename="scan.ply",
+        registered_mesh=mesh,
+        final_mesh=mesh,
+        landmarks=landmarks,
+        target="cranium",
+        craniometrics=craniometrics,
+        asymmetry=None,
+        config={},
+    )
+
+    mesh_dir = tmp_path / "CP_scan_C_3"
+    assert analysis_dir == mesh_dir / "analysis"
+    assert sorted(p.name for p in mesh_dir.iterdir()) == ["analysis", "scan_rg.ply", "scan_rg_C.ply"]
+    assert sorted(p.name for p in analysis_dir.iterdir()) == ["scan_measurements.png", "scan_report.json"]
+
+
+def test_write_analysis_to_folder_does_not_rewrite_existing_meshes(tmp_path, sample_result):
+    mesh, landmarks, craniometrics = sample_result
+    mesh_dir = write_meshes_to_folder(
+        dest_dir=tmp_path, original_filename="scan.ply", registered_mesh=mesh, final_mesh=mesh, target="cranium", config={}
+    )
+    original_mtime = (mesh_dir / "scan_rg.ply").stat().st_mtime_ns
+
+    write_analysis_to_folder(
+        dest_dir=tmp_path,
+        original_filename="scan.ply",
+        registered_mesh=mesh,
+        final_mesh=mesh,
+        landmarks=landmarks,
+        target="cranium",
+        craniometrics=craniometrics,
+        asymmetry=None,
+        config={},
+    )
+
+    assert (mesh_dir / "scan_rg.ply").stat().st_mtime_ns == original_mtime
+
+
+def test_build_meshes_bundle_contains_only_mesh_files(sample_result):
+    import zipfile
+    from io import BytesIO
+
+    mesh, _landmarks, _craniometrics = sample_result
+    zip_bytes = build_meshes_bundle(
+        original_filename="scan.ply", registered_mesh=mesh, final_mesh=mesh, target="cranium", config={}
+    )
+    names = zipfile.ZipFile(BytesIO(zip_bytes)).namelist()
+    assert sorted(names) == ["CP_scan_C_3/scan_rg.ply", "CP_scan_C_3/scan_rg_C.ply"]
+
+
+def test_build_analysis_bundle_nests_analysis_under_mesh_folder(sample_result):
+    import zipfile
+    from io import BytesIO
+
+    mesh, landmarks, craniometrics = sample_result
+    zip_bytes = build_analysis_bundle(
+        original_filename="scan.ply",
+        registered_mesh=mesh,
+        final_mesh=mesh,
+        landmarks=landmarks,
+        target="cranium",
+        craniometrics=craniometrics,
+        asymmetry=None,
+        config={},
+    )
+    names = set(zipfile.ZipFile(BytesIO(zip_bytes)).namelist())
+    assert names == {
+        "CP_scan_C_3/scan_rg.ply",
+        "CP_scan_C_3/scan_rg_C.ply",
+        "CP_scan_C_3/analysis/scan_report.json",
+        "CP_scan_C_3/analysis/scan_measurements.png",
+    }
 
 
 @pytest.mark.parametrize(

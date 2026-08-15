@@ -39,7 +39,7 @@ export function createScene(canvas) {
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z, 1);
-    const distance = maxDim * 1.8;
+    const distance = maxDim * 2.3;
     camera.position.set(center.x, center.y, center.z + distance);
     camera.near = distance / 100;
     camera.far = distance * 100;

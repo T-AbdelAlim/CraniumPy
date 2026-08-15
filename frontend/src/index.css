@@ -41,7 +41,7 @@
   --followup: #22a6a1;
   --landmark-frontal: #1a4922;
   --landmark-left: #8b0002;
-  --landmark-right: #d4af37;
+  --landmark-right: #08457c;
   --landmark-secondary-frontal: #2a4d80;
   --moving-mesh: #2f6fed;
   --fixed-mesh: #f28c45;
@@ -51,6 +51,12 @@
   box-sizing: border-box;
 }
 
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
 body {
   margin: 0;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -58,16 +64,20 @@ body {
   color: var(--text-primary);
 }
 
+#root {
+  height: 100%;
+}
+
 /* --- shell --- */
 
 .shell {
   display: grid;
-  grid-template-columns: 200px 1fr 320px;
+  grid-template-columns: auto 1fr auto;
   grid-template-rows: 56px 1fr;
   grid-template-areas:
     "topbar topbar topbar"
     "nav workspace inspector";
-  height: 100vh;
+  height: 100%;
 }
 
 .shell-topbar {
@@ -91,9 +101,6 @@ body {
 }
 
 .shell-nav {
-  grid-area: nav;
-  background: var(--bg-surface);
-  border-right: 1px solid var(--border);
   padding: 1rem 0.75rem;
 }
 
@@ -117,6 +124,11 @@ body {
   flex-direction: column;
   background: var(--viewer-bg);
   color: var(--viewer-text);
+  /* a grid/flex item's default min-height is auto (= its content's height),
+     not 0 - without this, a tall child would grow this item (and the shell
+     grid row it's in) past 100% instead of respecting it, dragging the
+     whole page into scrolling instead of just this pane. */
+  min-height: 0;
 }
 
 .shell-workspace-tabs {
@@ -148,14 +160,11 @@ body {
 .shell-workspace-content {
   position: relative;
   flex: 1;
+  min-height: 0;
 }
 
 .shell-inspector {
-  grid-area: inspector;
-  background: var(--bg-surface);
-  border-left: 1px solid var(--border);
   padding: 1.25rem;
-  overflow-y: auto;
 }
 
 .shell-inspector h2 {
@@ -164,6 +173,80 @@ body {
   letter-spacing: 0.04em;
   color: var(--text-muted);
   margin: 0 0 1rem;
+}
+
+/* --- resizable/collapsible pane chrome (nav + inspector) --- */
+
+.shell-pane {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+  flex-shrink: 0;
+  /* same grid-blowout fix as .shell-workspace above - without this, a long
+     inspector (lots of controls) grows this pane past the viewport height
+     instead of stopping at it and letting .shell-pane-content's own
+     overflow-y:auto take over, which pushed the topbar off-screen and made
+     the whole page scroll instead of just this sidebar. */
+  min-height: 0;
+}
+
+.shell-pane-left {
+  grid-area: nav;
+  border-right: 1px solid var(--border);
+}
+
+.shell-pane-right {
+  grid-area: inspector;
+  border-left: 1px solid var(--border);
+}
+
+.shell-pane-toggle {
+  all: unset;
+  box-sizing: border-box;
+  width: 100%;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.9rem;
+  flex-shrink: 0;
+}
+
+.shell-pane-toggle:hover {
+  background: var(--bg-subtle);
+  color: var(--text-primary);
+}
+
+.shell-pane-content {
+  flex: 1;
+  overflow-y: auto;
+  min-width: 0;
+}
+
+.shell-pane-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+  z-index: 2;
+}
+
+.shell-pane-handle-left {
+  right: -3px;
+}
+
+.shell-pane-handle-right {
+  left: -3px;
+}
+
+.shell-pane-handle:hover {
+  background: var(--primary);
+  opacity: 0.4;
 }
 
 /* --- inspector content (data workspace etc.) --- */
@@ -249,6 +332,36 @@ label.checkbox:has(input:disabled) {
   background: var(--landmark-right);
 }
 
+#landmark-list li[data-name="alt_frontal"] .landmark-swatch {
+  background: var(--landmark-secondary-frontal);
+}
+
+.progress-bar {
+  margin-top: 0.75rem;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--primary);
+  transition: width 0.3s ease;
+}
+
+.progress-bar.error .progress-bar-fill {
+  background: var(--danger);
+}
+
+.progress-label {
+  margin-top: 0.35rem;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-weight: 400;
+}
+
 button {
   width: 100%;
   padding: 0.5rem;
@@ -271,14 +384,101 @@ button:disabled {
   cursor: not-allowed;
 }
 
+/* a button that still reads as clickable but isn't competing with the
+   panel's actual primary action (e.g. "change save folder..." sitting
+   below "save meshes") - blends toward the panel background instead of
+   the default blue. */
+.button-subtle {
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.button-subtle:hover {
+  background: var(--border);
+  color: var(--text-primary);
+}
+
 input[type="file"] {
   width: 100%;
   font-size: 0.85rem;
   color: var(--text-primary);
 }
 
+select {
+  width: 100%;
+  padding: 0.4rem;
+  margin: 0.3rem 0;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+
+.template-controls {
+  margin: 0.5rem 0 1rem;
+  padding: 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-subtle);
+}
+
+.disclosure-toggle {
+  width: auto;
+  margin: 0;
+  padding: 0.2rem 0;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-weight: 400;
+  font-size: 0.8rem;
+  text-decoration: underline;
+}
+
+.disclosure-toggle:hover {
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.template-controls label {
+  font-size: 0.8rem;
+  margin-top: 0.4rem;
+}
+
+.template-controls input[type="number"] {
+  width: 100%;
+  padding: 0.3rem;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
 .hidden {
   display: none !important;
+}
+
+.measurements-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.75rem 0 1.25rem;
+  font-size: 0.85rem;
+}
+
+.measurements-table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-secondary);
+  padding: 0.35rem 0.5rem 0.35rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.measurements-table td {
+  text-align: right;
+  color: var(--text-primary);
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--border);
 }
 
 /* --- viewer --- */
@@ -301,4 +501,62 @@ input[type="file"] {
   transform: translate(-50%, -50%);
   pointer-events: none;
   color: var(--viewer-text-secondary);
+}
+
+/* asymmetry heatmap's min/max legend - shown only while a facial heatmap
+   is on screen (see App.jsx's Analysis-tab wiring). */
+.heatmap-scalar-bar {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.5rem 0.4rem;
+  background: rgba(20, 22, 26, 0.7);
+  border: 1px solid var(--viewer-border);
+  border-radius: 6px;
+  font-size: 0.7rem;
+  color: var(--viewer-text);
+  pointer-events: none;
+}
+
+.scalar-bar-gradient {
+  width: 14px;
+  height: 140px;
+  border-radius: 3px;
+  background: linear-gradient(to top, #0000ff, #ffffff, #ff0000);
+}
+
+/* identifies which color is which object, whenever the viewer is showing
+   more than one at once - the static "compare to template" overlay, or a
+   live NICP fit (see App.jsx). */
+.viewer-legend {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.5rem 0.65rem;
+  background: rgba(20, 22, 26, 0.7);
+  border: 1px solid var(--viewer-border);
+  border-radius: 6px;
+  font-size: 0.75rem;
+  color: var(--viewer-text);
+  pointer-events: none;
+}
+
+.viewer-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.viewer-legend-swatch {
+  width: 0.7em;
+  height: 0.7em;
+  border-radius: 50%;
+  flex-shrink: 0;
 }

@@ -1,3 +1,5 @@
+import ResizablePane from "./ResizablePane.jsx";
+
 // the persistent application shell: left nav, top context bar, center
 // workspace (with its own tab strip), right inspector. only "Patients" is
 // rendered in the nav - Research/References/History have nothing behind
@@ -6,6 +8,11 @@
 // patient persistence gives routes something real to key on (:patientId).
 // a bottom jobs bar slots into this grid once an async job (register,
 // analyze) actually exists to report on.
+//
+// nav/inspector are each wrapped in a ResizablePane (its own width/collapse
+// state) rather than fixed grid columns - "auto 1fr auto" below just lets
+// each pane's own inline-styled width drive its track directly, so Shell
+// itself carries no width state.
 export default function Shell({ contextLabel, workspaces, activeWorkspace, onWorkspaceChange, workspace, inspectorTitle, inspector }) {
   return (
     <div className="shell">
@@ -14,9 +21,11 @@ export default function Shell({ contextLabel, workspaces, activeWorkspace, onWor
         {contextLabel && <span className="shell-context">{contextLabel}</span>}
       </header>
 
-      <nav className="shell-nav">
-        <div className="shell-nav-item active">Patients</div>
-      </nav>
+      <ResizablePane side="left" defaultWidth={200} storageKey="nav">
+        <nav className="shell-nav">
+          <div className="shell-nav-item active">Patients</div>
+        </nav>
+      </ResizablePane>
 
       <main className="shell-workspace">
         <div className="shell-workspace-tabs">
@@ -34,10 +43,12 @@ export default function Shell({ contextLabel, workspaces, activeWorkspace, onWor
         <div className="shell-workspace-content">{workspace}</div>
       </main>
 
-      <aside className="shell-inspector">
-        <h2>{inspectorTitle}</h2>
-        {inspector}
-      </aside>
+      <ResizablePane side="right" defaultWidth={320} storageKey="inspector">
+        <aside className="shell-inspector">
+          <h2>{inspectorTitle}</h2>
+          {inspector}
+        </aside>
+      </ResizablePane>
     </div>
   );
 }

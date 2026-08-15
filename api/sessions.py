@@ -102,10 +102,27 @@ class Session:
     # sellion-frame mesh survives, for the always-sellion-oriented saved 2D
     # figure (see api/results_bundle.py's _measurement_figure).
     sellion_result_mesh: trimesh.Trimesh | None = None
+    # only set once a NICP fit ("fit template") has completed - deliberately
+    # independent of result_mesh, not a copy of it: a template-deformed
+    # mesh describes the template's shape approximating this patient, not
+    # this patient's own actual anatomy, so a fit never touches
+    # result_mesh/craniometrics/asymmetry (see /run's handler) - it only
+    # ever adds this one extra artifact, which becomes the third
+    # _rg_{C|F}N.ply file on save (see api/results_bundle.py) alongside the
+    # normal two, unconditionally on top of whatever result_mesh already
+    # is. cleared by clear_clip_result() (a fresh clip invalidates any
+    # prior fit) and by a plain (non-NICP) /run.
+    nicp_result_mesh: trimesh.Trimesh | None = None
     job_status: JobStatus = "idle"
     job_error: str | None = None
-    progress: dict[str, str] = field(default_factory=lambda: {"stage": "idle", "detail": ""})
+    progress: dict[str, Any] = field(default_factory=lambda: {"stage": "idle", "detail": ""})
     result: dict[str, Any] | None = None
+    # the current in-progress NICP fit's deformed template, updated live via
+    # on_nicp_preview as the fit runs - lets /mesh/nicp-preview serve
+    # something to poll for the "watch it deform" live view. stale once the
+    # fit finishes (numerically equal to the final result_mesh's own frame
+    # by then), harmless to leave around until the next run_job clears it.
+    nicp_preview_mesh: trimesh.Trimesh | None = None
     _future: Future | None = field(default=None, repr=False)
 
     def clear_clip_result(self) -> None:
@@ -117,10 +134,11 @@ class Session:
         self.used_alt_frontal = False
         self.result_mesh = None
         self.sellion_result_mesh = None
+        self.nicp_result_mesh = None
         self.result = None
 
-    def report_progress(self, stage: str, detail: str = "") -> None:
-        self.progress = {"stage": stage, "detail": detail}
+    def report_progress(self, stage: str, detail: str = "", current: int | None = None, total: int | None = None) -> None:
+        self.progress = {"stage": stage, "detail": detail, "current": current, "total": total}
 
 
 class SessionStore:
@@ -155,6 +173,7 @@ class SessionStore:
         session.job_status = "running"
         session.job_error = None
         session.result = None
+        session.nicp_preview_mesh = None
         session.report_progress("starting", "")
 
         def _wrapped() -> None:
