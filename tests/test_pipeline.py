@@ -19,6 +19,7 @@ from craniumpy_core.clipping import landmark_plane
 from craniumpy_core.craniometrics import slice_center_of_mass
 from craniumpy_core.io import load_mesh
 from craniumpy_core.pipeline import (
+    NicpTemplateConfig,
     analyze,
     analyze_cranial,
     harmonize,
@@ -534,6 +535,26 @@ def test_register_and_clip_cranial_does_not_resample():
 
     measured = measure_cranial(clip_result, n_vertices=50)
     assert len(measured.sellion_mesh.vertices) < clipped_count
+
+
+def test_measure_cranial_with_nicp_preserves_template_topology():
+    # a small synthetic template (not a real shipped one - runtime, not
+    # realism, is what this test needs) stands in for what /run's
+    # NicpConfig resolves server-side. the point: measure_cranial's
+    # nicp_config branch returns the TEMPLATE's own topology, not
+    # whatever the plain resample path would have produced.
+    mesh, landmarks = _ellipsoid_with_landmarks()
+    repaired = repair_mesh(mesh)
+    clip_result = register_and_clip_cranial(repaired, landmarks)
+
+    template = trimesh.creation.icosphere(subdivisions=2, radius=50.0)
+    nicp_config = NicpTemplateConfig(template=template, alphas=np.linspace(50, 1, 5), inner_iters=1, dist_threshold=100.0)
+    result = measure_cranial(clip_result, nicp_config=nicp_config)
+
+    assert len(result.sellion_mesh.vertices) == len(template.vertices)
+    np.testing.assert_array_equal(result.sellion_mesh.faces, template.faces)
+    # craniometrics still computed cleanly off the deformed mesh
+    assert result.craniometrics.depth_mm > 0
 
 
 @pytest.mark.slow

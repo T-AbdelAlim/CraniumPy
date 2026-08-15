@@ -246,6 +246,21 @@ def test_analyze_cranial_with_alt_frontal_landmark(client, landmarks_payload):
     np.testing.assert_allclose(report["landmarks"]["sellion"], list(REFERENCE_TRIANGLE[0]), atol=2.0)
 
 
+def test_bundle_analysis_nests_report_under_mesh_folder(client, landmarks_payload):
+    session_id = _upload(client)
+    status = _clip_and_run(client, session_id, {"target": "cranium", "landmarks": landmarks_payload}, {"n_vertices": 3000})
+    assert status == "done"
+
+    response = client.get(f"/api/sessions/{session_id}/bundle/analysis")
+    assert response.status_code == 200
+    names = set(zipfile.ZipFile(BytesIO(response.content)).namelist())
+    mesh_names = {n for n in names if "/analysis/" not in n}
+    analysis_names = {n for n in names if "/analysis/" in n}
+    assert len(mesh_names) == 2
+    assert any(n.endswith("_report.json") for n in analysis_names)
+    assert any(n.endswith("_measurements.png") for n in analysis_names)
+
+
 def test_clip_progress_is_reported(client, landmarks_payload):
     session_id = _upload(client)
     client.post(
@@ -282,6 +297,102 @@ def test_manual_clip_mode(client, landmarks_payload):
     assert status == "done"
     results = client.get(f"/api/sessions/{session_id}/results").json()
     assert results["vertex_count"] > 0
+
+
+def test_run_with_nicp_cranial_produces_template_topology(client, landmarks_payload):
+    # "fit template" only ever runs after a completed plain run (matches
+    # the frontend's own gating - see App.jsx's pipelineRan) - the plain
+    # run's own result_mesh/craniometrics must survive a fit untouched.
+    from craniumpy_core.template_registry import load_shipped_template
+
+    session_id = _upload(client)
+    status = _clip_and_run(client, session_id, {"target": "cranium", "landmarks": landmarks_payload}, timeout=60)
+    assert status == "done"
+
+    plain_result_mesh = trimesh.load(
+        BytesIO(client.get(f"/api/sessions/{session_id}/mesh/result").content), file_type="glb", process=False, force="mesh"
+    )
+    plain_craniometrics = client.get(f"/api/sessions/{session_id}/results").json()["craniometrics"]
+    assert plain_craniometrics is not None
+
+    status = _run_run(
+        client,
+        session_id,
+        # small alpha schedule / relaxed threshold - fast is all this test
+        # needs, real tuning is exercised in test_nicp.py.
+        {"nicp": {"template": "clipped_template_xy", "alpha_start": 50, "alpha_end": 1, "alpha_steps": 3, "inner_iters": 1, "dist_threshold": 50.0}},
+        timeout=60,
+    )
+    assert status == "done"
+
+    template = load_shipped_template("clipped_template_xy")
+    nicp_mesh = trimesh.load(
+        BytesIO(client.get(f"/api/sessions/{session_id}/mesh/nicp-result").content), file_type="glb", process=False, force="mesh"
+    )
+    assert len(nicp_mesh.vertices) == len(template.vertices)
+
+    # result_mesh/craniometrics are exactly what the plain run left them as
+    # - a fit is a pure addition, not a replacement.
+    result_mesh = trimesh.load(
+        BytesIO(client.get(f"/api/sessions/{session_id}/mesh/result").content), file_type="glb", process=False, force="mesh"
+    )
+    assert len(result_mesh.vertices) == len(plain_result_mesh.vertices)
+    assert client.get(f"/api/sessions/{session_id}/results").json()["craniometrics"] == plain_craniometrics
+
+
+def test_run_with_nicp_facial_produces_template_topology(client, landmarks_payload):
+    from craniumpy_core.template_registry import load_shipped_template
+
+    session_id = _upload(client)
+    status = _clip_and_run(client, session_id, {"target": "face", "landmarks": landmarks_payload}, timeout=60)
+    assert status == "done"
+
+    plain_result_mesh = trimesh.load(
+        BytesIO(client.get(f"/api/sessions/{session_id}/mesh/result").content), file_type="glb", process=False, force="mesh"
+    )
+    plain_asymmetry = client.get(f"/api/sessions/{session_id}/results").json()["asymmetry"]
+    assert plain_asymmetry is not None
+
+    status = _run_run(
+        client,
+        session_id,
+        {"nicp": {"template": "template_face", "alpha_start": 50, "alpha_end": 1, "alpha_steps": 3, "inner_iters": 1, "dist_threshold": 50.0}},
+        timeout=60,
+    )
+    assert status == "done"
+
+    template = load_shipped_template("template_face")
+    nicp_mesh = trimesh.load(
+        BytesIO(client.get(f"/api/sessions/{session_id}/mesh/nicp-result").content), file_type="glb", process=False, force="mesh"
+    )
+    assert len(nicp_mesh.vertices) == len(template.vertices)
+
+    result_mesh = trimesh.load(
+        BytesIO(client.get(f"/api/sessions/{session_id}/mesh/result").content), file_type="glb", process=False, force="mesh"
+    )
+    assert len(result_mesh.vertices) == len(plain_result_mesh.vertices)
+    assert client.get(f"/api/sessions/{session_id}/results").json()["asymmetry"] == plain_asymmetry
+
+
+def test_bundle_meshes_before_run_returns_409(client, landmarks_payload):
+    session_id = _upload(client)
+    status = _run_clip(client, session_id, {"target": "cranium", "landmarks": landmarks_payload})
+    assert status == "done"
+    # clipped, but never run - save-meshes needs result_mesh, which only /run sets
+    response = client.get(f"/api/sessions/{session_id}/bundle/meshes")
+    assert response.status_code == 409
+
+
+def test_bundle_meshes_contains_only_mesh_files(client, landmarks_payload):
+    session_id = _upload(client)
+    status = _clip_and_run(client, session_id, {"target": "cranium", "landmarks": landmarks_payload}, {"n_vertices": 3000})
+    assert status == "done"
+
+    response = client.get(f"/api/sessions/{session_id}/bundle/meshes")
+    assert response.status_code == 200
+    names = zipfile.ZipFile(BytesIO(response.content)).namelist()
+    assert len(names) == 2
+    assert all(n.endswith("_rg.ply") or n.endswith("_rg_C.ply") for n in names)
 
 
 def test_run_before_clip_returns_409(client):
@@ -450,3 +561,96 @@ def test_save_results_to_source_folder(client, landmarks_payload, tmp_path):
     assert (saved_to / "1016510_20210730_edited_rg.ply").exists()
     assert (saved_to / "1016510_20210730_edited_rg_C.ply").exists()
     assert (saved_to / "1016510_20210730_edited_report.json").exists()
+
+
+def test_save_results_dest_dir_override(client, landmarks_payload, tmp_path):
+    # dest_dir, when given, wins over the session's own source_dir - the
+    # desktop app's "change save folder..." control (see api/schemas.py's
+    # SaveRequest).
+    import shutil
+
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    override_dir = tmp_path / "chosen"
+    override_dir.mkdir()
+    tmp_mesh = source_dir / "1016510_20210730.000112_edited.ply"
+    shutil.copy(TEMPLATE_PATH, tmp_mesh)
+
+    open_response = client.post("/api/sessions/from-paths", json={"paths": [str(tmp_mesh)]})
+    session_id = open_response.json()["session_id"]
+
+    status = _clip_and_run(client, session_id, {"target": "cranium", "landmarks": landmarks_payload})
+    assert status == "done"
+
+    save_response = client.post(f"/api/sessions/{session_id}/save", json={"dest_dir": str(override_dir)})
+    assert save_response.status_code == 200, save_response.text
+    saved_to = Path(save_response.json()["saved_to"])
+    assert saved_to == override_dir / "CP_1016510_20210730_edited_C_3_CoM"
+    assert not (source_dir / "CP_1016510_20210730_edited_C_3_CoM").exists()
+
+
+def test_save_results_dest_dir_not_a_real_folder_400s(client, landmarks_payload, tmp_path):
+    import shutil
+
+    tmp_mesh = tmp_path / "1016510_20210730.000112_edited.ply"
+    shutil.copy(TEMPLATE_PATH, tmp_mesh)
+
+    open_response = client.post("/api/sessions/from-paths", json={"paths": [str(tmp_mesh)]})
+    session_id = open_response.json()["session_id"]
+
+    status = _clip_and_run(client, session_id, {"target": "cranium", "landmarks": landmarks_payload})
+    assert status == "done"
+
+    save_response = client.post(f"/api/sessions/{session_id}/save", json={"dest_dir": "C:/nope/not-a-real-folder"})
+    assert save_response.status_code == 400
+
+
+def test_save_meshes_gains_a_third_file_after_nicp_fit(client, landmarks_payload, tmp_path):
+    # a plain run saves the usual two mesh files - no third one, even
+    # though a template is available, since none was ever fit (see
+    # api/sessions.py's Session.nicp_result_mesh).
+    import shutil
+
+    tmp_mesh = tmp_path / "patient.ply"
+    shutil.copy(TEMPLATE_PATH, tmp_mesh)
+    open_response = client.post("/api/sessions/from-paths", json={"paths": [str(tmp_mesh)]})
+    session_id = open_response.json()["session_id"]
+
+    status = _clip_and_run(client, session_id, {"target": "cranium", "landmarks": landmarks_payload})
+    assert status == "done"
+
+    save_response = client.post(f"/api/sessions/{session_id}/save/meshes")
+    assert save_response.status_code == 200, save_response.text
+    saved_to = Path(save_response.json()["saved_to"])
+    names = {p.name for p in saved_to.iterdir()}
+    assert len(names) == 2
+    assert any(n.endswith("_rg.ply") for n in names)
+    assert any(n.endswith("_rg_C.ply") for n in names)
+    assert not any(n.endswith("_rg_CN.ply") for n in names)
+
+    # fitting a template (no /clip needed - same clipped mesh) adds a third
+    # file on the next save, without disturbing the first two.
+    status = _run_run(
+        client,
+        session_id,
+        {
+            "nicp": {
+                "template": "clipped_template_xy",
+                "alpha_start": 50,
+                "alpha_end": 1,
+                "alpha_steps": 3,
+                "inner_iters": 1,
+                "dist_threshold": 50.0,
+            }
+        },
+    )
+    assert status == "done"
+
+    save_response = client.post(f"/api/sessions/{session_id}/save/meshes")
+    assert save_response.status_code == 200, save_response.text
+    saved_to = Path(save_response.json()["saved_to"])
+    names = {p.name for p in saved_to.iterdir()}
+    assert len(names) == 3
+    assert any(n.endswith("_rg.ply") for n in names)
+    assert any(n.endswith("_rg_C.ply") for n in names)
+    assert any(n.endswith("_rg_CN.ply") for n in names)

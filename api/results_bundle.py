@@ -139,9 +139,46 @@ def _asymmetry_figure(mesh: trimesh.Trimesh, asymmetry: AsymmetryResult) -> byte
     return buf.getvalue()
 
 
-def _build_report_files(
+def _build_mesh_files(
     original_filename: str,
     registered_mesh: trimesh.Trimesh,
+    final_mesh: trimesh.Trimesh,
+    target: str,
+    config: dict,
+    nicp_mesh: trimesh.Trimesh | None = None,
+) -> tuple[str, dict[str, bytes]]:
+    """(folder_name, {filename: bytes}) - the two mesh files, {stem}_rg.ply
+    / _rg_{C|F}.ply, plus a third _rg_{C|F}N.ply when nicp_mesh is given -
+    the topology-consistent template fit ("fit template" in the UI), kept
+    alongside the patient's own clipped/resampled mesh rather than in place
+    of it. {C|F} is cranial/facial, same convention as results_folder_name."""
+    stem = stem_from_filename(original_filename)
+    folder = results_folder_name(original_filename, target, config)
+
+    # bare geometry only, no visual/UV - registered_mesh still carries
+    # texture data at this point (register() deliberately keeps it, for the
+    # live viewer), but trimesh's PLY writer stores UV as double-precision
+    # while vertex positions stay float, and never writes a "TextureFile"
+    # comment pointing at the actual image - so the UV is orphaned data with
+    # no texture resolvable from the file, and the mixed float/double
+    # vertex record makes some tools (Meshmixer) read the file as empty.
+    # final_mesh never has this problem since repair_mesh already strips
+    # visual data before repair runs, further up the pipeline.
+    registered_export = trimesh.Trimesh(
+        vertices=registered_mesh.vertices, faces=registered_mesh.faces, process=False
+    )
+    target_suffix = "C" if target == "cranium" else "F"
+    files = {
+        f"{stem}_rg.ply": registered_export.export(file_type="ply"),
+        f"{stem}_rg_{target_suffix}.ply": final_mesh.export(file_type="ply"),
+    }
+    if nicp_mesh is not None:
+        files[f"{stem}_rg_{target_suffix}N.ply"] = nicp_mesh.export(file_type="ply")
+    return folder, files
+
+
+def _build_analysis_files(
+    original_filename: str,
     final_mesh: trimesh.Trimesh,
     landmarks: np.ndarray,
     target: str,
@@ -150,11 +187,9 @@ def _build_report_files(
     config: dict,
     sellion_mesh: trimesh.Trimesh | None = None,
     sellion_landmarks: np.ndarray | None = None,
-) -> tuple[str, dict[str, bytes]]:
-    """(folder_name, {filename: bytes}) - the same 4 files either delivery
-    method writes, named {stem}_rg.ply / _rg_{C|F}.ply / _report.json /
-    _measurements.png (cranium target only). {C|F} is cranial/facial, same
-    convention as results_folder_name.
+) -> dict[str, bytes]:
+    """{filename: bytes} - {stem}_report.json / _measurements.png (cranium
+    target only) / _asymmetry.png (face target only).
 
     sellion_mesh/sellion_landmarks are only given for a cranial analysis that
     used an alt_frontal_landmark - final_mesh and landmarks are the ALT
@@ -166,8 +201,6 @@ def _build_report_files(
     this is just final_mesh/landmarks again - the ordinary single-frame
     case."""
     stem = stem_from_filename(original_filename)
-    folder = results_folder_name(original_filename, target, config)
-
     figure_mesh = sellion_mesh if sellion_mesh is not None else final_mesh
     report_landmarks = sellion_landmarks if sellion_landmarks is not None else landmarks
 
@@ -177,7 +210,7 @@ def _build_report_files(
         "target": target,
         # always the landmarks craniometrics was actually computed from
         # (sellion, always - see analyze_cranial) - NOT necessarily the
-        # frame the exported mesh below is in.
+        # frame the exported mesh is in.
         "landmarks": {
             "sellion": report_landmarks[0].tolist(),
             "left_tragus": report_landmarks[1].tolist(),
@@ -201,30 +234,118 @@ def _build_report_files(
     if asymmetry is not None:
         report["asymmetry"] = {"mean_asymmetry_index": asymmetry.mean_asymmetry_index}
 
-    # bare geometry only, no visual/UV - registered_mesh still carries
-    # texture data at this point (register() deliberately keeps it, for the
-    # live viewer), but trimesh's PLY writer stores UV as double-precision
-    # while vertex positions stay float, and never writes a "TextureFile"
-    # comment pointing at the actual image - so the UV is orphaned data with
-    # no texture resolvable from the file, and the mixed float/double
-    # vertex record makes some tools (Meshmixer) read the file as empty.
-    # final_mesh never has this problem since repair_mesh already strips
-    # visual data before repair runs, further up the pipeline.
-    registered_export = trimesh.Trimesh(
-        vertices=registered_mesh.vertices, faces=registered_mesh.faces, process=False
-    )
-    target_suffix = "C" if target == "cranium" else "F"
-    files = {
-        f"{stem}_rg.ply": registered_export.export(file_type="ply"),
-        f"{stem}_rg_{target_suffix}.ply": final_mesh.export(file_type="ply"),
-        f"{stem}_report.json": json.dumps(report, indent=2).encode("utf-8"),
-    }
+    files = {f"{stem}_report.json": json.dumps(report, indent=2).encode("utf-8")}
     if craniometrics is not None:
         files[f"{stem}_measurements.png"] = _measurement_figure(figure_mesh, craniometrics)
     if asymmetry is not None:
         files[f"{stem}_asymmetry.png"] = _asymmetry_figure(final_mesh, asymmetry)
+    return files
 
-    return folder, files
+
+def _zip_files(files_by_prefix: dict[str, dict[str, bytes]]) -> bytes:
+    """{zip-path-prefix: {filename: bytes}} -> zip bytes - shared by every
+    zip-producing function below, so meshes-only/analysis-only/combined
+    bundles all build the same way."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for prefix, files in files_by_prefix.items():
+            for name, content in files.items():
+                zf.writestr(f"{prefix}/{name}" if prefix else name, content)
+    return buf.getvalue()
+
+
+def build_meshes_bundle(
+    original_filename: str,
+    registered_mesh: trimesh.Trimesh,
+    final_mesh: trimesh.Trimesh,
+    target: str,
+    config: dict,
+    nicp_mesh: trimesh.Trimesh | None = None,
+) -> bytes:
+    """zip bytes for the mesh files (two, or three when a NICP fit exists -
+    see _build_mesh_files) - the browser-download side of "save meshes"
+    (part 9)."""
+    folder, files = _build_mesh_files(original_filename, registered_mesh, final_mesh, target, config, nicp_mesh)
+    return _zip_files({folder: files})
+
+
+def write_meshes_to_folder(
+    dest_dir: Path,
+    original_filename: str,
+    registered_mesh: trimesh.Trimesh,
+    final_mesh: trimesh.Trimesh,
+    target: str,
+    config: dict,
+    nicp_mesh: trimesh.Trimesh | None = None,
+) -> Path:
+    """writes the mesh files (two, or three when a NICP fit exists) straight
+    into dest_dir/{folder} - the desktop side of "save meshes" (part 9).
+    returns the folder written."""
+    folder, files = _build_mesh_files(original_filename, registered_mesh, final_mesh, target, config, nicp_mesh)
+    results_dir = dest_dir / folder
+    results_dir.mkdir(parents=True, exist_ok=True)
+    for name, content in files.items():
+        (results_dir / name).write_bytes(content)
+    return results_dir
+
+
+def build_analysis_bundle(
+    original_filename: str,
+    registered_mesh: trimesh.Trimesh,
+    final_mesh: trimesh.Trimesh,
+    landmarks: np.ndarray,
+    target: str,
+    craniometrics: CranioMeasurements | None,
+    asymmetry: AsymmetryResult | None,
+    config: dict,
+    sellion_mesh: trimesh.Trimesh | None = None,
+    sellion_landmarks: np.ndarray | None = None,
+    nicp_mesh: trimesh.Trimesh | None = None,
+) -> bytes:
+    """zip bytes for the mesh files (two, or three - see _build_mesh_files)
+    plus a nested analysis/ subfolder - the browser-download side of
+    "export analysis" (part 10). self-contained (always includes the
+    meshes) since there's no persistent folder to add an analysis/
+    subfolder onto across separate browser downloads, unlike
+    write_analysis_to_folder below."""
+    folder, mesh_files = _build_mesh_files(original_filename, registered_mesh, final_mesh, target, config, nicp_mesh)
+    analysis_files = _build_analysis_files(
+        original_filename, final_mesh, landmarks, target, craniometrics, asymmetry, config, sellion_mesh, sellion_landmarks
+    )
+    return _zip_files({folder: mesh_files, f"{folder}/analysis": analysis_files})
+
+
+def write_analysis_to_folder(
+    dest_dir: Path,
+    original_filename: str,
+    registered_mesh: trimesh.Trimesh,
+    final_mesh: trimesh.Trimesh,
+    landmarks: np.ndarray,
+    target: str,
+    craniometrics: CranioMeasurements | None,
+    asymmetry: AsymmetryResult | None,
+    config: dict,
+    sellion_mesh: trimesh.Trimesh | None = None,
+    sellion_landmarks: np.ndarray | None = None,
+    nicp_mesh: trimesh.Trimesh | None = None,
+) -> Path:
+    """writes the report/figures into dest_dir/{folder}/analysis/ - the
+    desktop side of "export analysis" (part 10). if the mesh folder doesn't
+    exist yet (meshes were never separately saved), writes those first -
+    see write_meshes_to_folder. returns the analysis folder written."""
+    folder_name = results_folder_name(original_filename, target, config)
+    results_dir = dest_dir / folder_name
+    if not results_dir.exists():
+        write_meshes_to_folder(dest_dir, original_filename, registered_mesh, final_mesh, target, config, nicp_mesh)
+
+    analysis_dir = results_dir / "analysis"
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+    files = _build_analysis_files(
+        original_filename, final_mesh, landmarks, target, craniometrics, asymmetry, config, sellion_mesh, sellion_landmarks
+    )
+    for name, content in files.items():
+        (analysis_dir / name).write_bytes(content)
+    return analysis_dir
 
 
 def build_results_bundle(
@@ -238,18 +359,19 @@ def build_results_bundle(
     config: dict,
     sellion_mesh: trimesh.Trimesh | None = None,
     sellion_landmarks: np.ndarray | None = None,
+    nicp_mesh: trimesh.Trimesh | None = None,
 ) -> bytes:
-    """zip bytes for the results folder (see results_folder_name) - the
-    browser-download path."""
-    folder, files = _build_report_files(
-        original_filename, registered_mesh, final_mesh, landmarks, target, craniometrics, asymmetry, config,
-        sellion_mesh, sellion_landmarks,
+    """zip bytes for the results folder (see results_folder_name), meshes
+    (two, or three - see _build_mesh_files) and analysis flat together -
+    the original "everything in one shot" browser-download path (pre-dates
+    the separate save-meshes/export-analysis split - part 9/10 - and keeps
+    its existing flat layout for backward compatibility rather than
+    adopting their nested analysis/ convention)."""
+    folder, mesh_files = _build_mesh_files(original_filename, registered_mesh, final_mesh, target, config, nicp_mesh)
+    analysis_files = _build_analysis_files(
+        original_filename, final_mesh, landmarks, target, craniometrics, asymmetry, config, sellion_mesh, sellion_landmarks
     )
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for name, content in files.items():
-            zf.writestr(f"{folder}/{name}", content)
-    return buf.getvalue()
+    return _zip_files({folder: {**mesh_files, **analysis_files}})
 
 
 def write_results_to_folder(
@@ -264,17 +386,19 @@ def write_results_to_folder(
     config: dict,
     sellion_mesh: trimesh.Trimesh | None = None,
     sellion_landmarks: np.ndarray | None = None,
+    nicp_mesh: trimesh.Trimesh | None = None,
 ) -> Path:
     """writes the results folder (see results_folder_name) straight into
-    dest_dir - the desktop app's "save next to the original mesh" path, no
-    zip/download step needed since we already know a real folder to put it
-    in. returns the folder written."""
-    folder, files = _build_report_files(
-        original_filename, registered_mesh, final_mesh, landmarks, target, craniometrics, asymmetry, config,
-        sellion_mesh, sellion_landmarks,
+    dest_dir, meshes and analysis flat together - the original "everything
+    in one shot" desktop-save path (see build_results_bundle for why this
+    stays flat rather than nesting analysis/ like part 9/10's split
+    functions do)."""
+    folder, mesh_files = _build_mesh_files(original_filename, registered_mesh, final_mesh, target, config, nicp_mesh)
+    analysis_files = _build_analysis_files(
+        original_filename, final_mesh, landmarks, target, craniometrics, asymmetry, config, sellion_mesh, sellion_landmarks
     )
     results_dir = dest_dir / folder
     results_dir.mkdir(parents=True, exist_ok=True)
-    for name, content in files.items():
+    for name, content in {**mesh_files, **analysis_files}.items():
         (results_dir / name).write_bytes(content)
     return results_dir

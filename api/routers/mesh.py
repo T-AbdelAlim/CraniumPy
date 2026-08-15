@@ -18,9 +18,17 @@ from trimesh.resolvers import ZipResolver
 
 from craniumpy_core import pipeline
 from craniumpy_core.asymmetry import calculate_asymmetry
-from craniumpy_core.io import mesh_to_glb, strip_uninteresting_vertex_colors
+from craniumpy_core.io import load_mesh, mesh_to_glb, strip_uninteresting_vertex_colors
 from craniumpy_core.template_registry import SHIPPED_TEMPLATES, load_shipped_template
-from api.results_bundle import build_results_bundle, results_folder_name, write_results_to_folder
+from api.results_bundle import (
+    build_analysis_bundle,
+    build_meshes_bundle,
+    build_results_bundle,
+    results_folder_name,
+    write_analysis_to_folder,
+    write_meshes_to_folder,
+    write_results_to_folder,
+)
 from api.schemas import (
     AlignRequest,
     AnalyzeRequest,
@@ -30,10 +38,12 @@ from api.schemas import (
     CraniometricsResponse,
     HarmonizeConfig,
     LandmarkPoint,
+    NicpConfig,
     OpenFromPathsRequest,
     RegisteredTransformResponse,
     ResultsResponse,
     RunRequest,
+    SaveRequest,
     SaveResultsResponse,
     StatusResponse,
     TemplateInfo,
@@ -71,6 +81,28 @@ def _pure_align(
         alt_landmarks = np.array([alt_frontal, landmarks[1], landmarks[2]])
         return pipeline.register(mesh, alt_landmarks, target="cranium", com_translation=False, on_progress=on_progress)
     return pipeline.register(mesh, landmarks, target=target, com_translation=False, on_progress=on_progress)
+
+
+def _resolve_nicp_config(nicp: NicpConfig | None) -> pipeline.NicpTemplateConfig | None:
+    """loads whichever template NicpConfig points at (a shipped name or a
+    real filesystem path - the same two options the template-overlay
+    viewer feature resolves) and builds the alphas schedule from the
+    three scalar knobs the request actually carries."""
+    if nicp is None:
+        return None
+    if nicp.template is not None:
+        template_mesh = load_shipped_template(nicp.template)
+    elif nicp.custom_template_path is not None:
+        template_mesh = load_mesh(Path(nicp.custom_template_path))
+    else:
+        raise HTTPException(status_code=400, detail="nicp needs either template or custom_template_path")
+    return pipeline.NicpTemplateConfig(
+        template=template_mesh,
+        alphas=np.linspace(nicp.alpha_start, nicp.alpha_end, nicp.alpha_steps),
+        gamma=nicp.gamma,
+        dist_threshold=nicp.dist_threshold,
+        inner_iters=nicp.inner_iters,
+    )
 
 
 def _load_primary_and_resolver(files: list[UploadFile]) -> tuple[str, dict[str, bytes]]:
@@ -452,8 +484,22 @@ def start_run(session_id: str, request: RunRequest) -> StatusResponse:
         raise HTTPException(status_code=409, detail="no clipped mesh yet -- run /clip first")
 
     clip_request: ClipRequest = session.last_clip_config
+    # store.run_job resets session.result to None the moment the job
+    # starts (before _run below ever executes) - a NICP fit needs to hand
+    # back whatever it was before that reset, not the wiped value, since
+    # it deliberately doesn't recompute it. captured here, outside _run,
+    # specifically to read it before that reset happens.
+    previous_result = session.result
 
     def _run() -> dict:
+        nicp_config = _resolve_nicp_config(request.nicp)
+
+        def _on_nicp_progress(step: int, total: int) -> None:
+            session.report_progress("nicp", f"stiffness step {step}/{total}", current=step, total=total)
+
+        def _on_nicp_preview(vertices: np.ndarray) -> None:
+            session.nicp_preview_mesh = trimesh.Trimesh(vertices=vertices, faces=nicp_config.template.faces, process=False)
+
         analyze_request = AnalyzeRequest(
             target=clip_request.target,
             landmarks=clip_request.landmarks,
@@ -466,6 +512,30 @@ def start_run(session_id: str, request: RunRequest) -> StatusResponse:
                 repair_method=clip_request.repair_method,
             ),
         )
+
+        if nicp_config is not None:
+            # "fit template" only ever produces an additional artifact mesh
+            # (the third _rg_{C|F}N.ply, see Session.nicp_result_mesh) - it
+            # deliberately doesn't touch result_mesh, craniometrics, or
+            # asymmetry, since a template-deformed mesh describes the
+            # template's shape approximating this patient, not the
+            # patient's own actual anatomy those numbers are about. session
+            # .result stays exactly what the last plain run left it as -
+            # returning it unchanged here is a no-op assignment, not a
+            # recompute.
+            session.report_progress("nicp", "fitting template (non-rigid)")
+            session.nicp_result_mesh = pipeline.register_template(
+                nicp_config.template,
+                session.clipped_mesh,
+                alphas=nicp_config.alphas,
+                gamma=nicp_config.gamma,
+                dist_threshold=nicp_config.dist_threshold,
+                inner_iters=nicp_config.inner_iters,
+                on_progress=_on_nicp_progress,
+                on_preview=_on_nicp_preview,
+            )
+            session.report_progress("done", "")
+            return previous_result
 
         if clip_request.target == "cranium":
             clip_result = pipeline.CranialClipResult(
@@ -486,6 +556,7 @@ def start_run(session_id: str, request: RunRequest) -> StatusResponse:
             )
             session.result_mesh = result.display_mesh
             session.sellion_result_mesh = result.sellion_mesh
+            session.nicp_result_mesh = None
             session.report_progress("done", "")
             return {
                 "landmarks": result.display_landmarks,
@@ -499,7 +570,7 @@ def start_run(session_id: str, request: RunRequest) -> StatusResponse:
             }
 
         # facial: no alt-frontal, no CoM recenter tail (harmonize()'s
-        # recenter step is cranium-only) - resample then measure.
+        # recenter step is cranium-only) - plain resample, then measure.
         session.sellion_result_mesh = None
         if request.n_vertices is not None:
             session.report_progress("resample", f"resampling to {request.n_vertices} vertices ({request.resample_method})")
@@ -509,6 +580,7 @@ def start_run(session_id: str, request: RunRequest) -> StatusResponse:
         else:
             result_mesh = session.clipped_mesh
         session.result_mesh = result_mesh
+        session.nicp_result_mesh = None
 
         session.report_progress("analyze", "computing measurements")
         asymmetry = calculate_asymmetry(result_mesh)
@@ -538,7 +610,12 @@ def get_status(session_id: str) -> StatusResponse:
     session = _get_session(session_id)
     from api.schemas import ProgressInfo
 
-    progress = ProgressInfo(stage=session.progress["stage"], detail=session.progress["detail"])
+    progress = ProgressInfo(
+        stage=session.progress["stage"],
+        detail=session.progress["detail"],
+        current=session.progress.get("current"),
+        total=session.progress.get("total"),
+    )
     return StatusResponse(status=session.job_status, error=session.job_error, progress=progress)
 
 
@@ -589,6 +666,35 @@ def get_results(session_id: str) -> ResultsResponse:
     )
 
 
+@router.get("/{session_id}/mesh/nicp-preview")
+def get_nicp_preview_mesh(session_id: str):
+    """the current in-progress NICP fit's deformed template, as GLB - polled
+    by the frontend while a "fit template" job is running, for a live view
+    of the template converging onto the mesh. has to come before
+    /{session_id}/mesh/{stage} below, or that route's {stage} would swallow
+    "nicp-preview" first."""
+    session = _get_session(session_id)
+    if session.nicp_preview_mesh is None:
+        raise HTTPException(status_code=409, detail="no nicp fit in progress")
+    glb_bytes = mesh_to_glb(session.nicp_preview_mesh)
+    return Response(content=glb_bytes, media_type="model/gltf-binary")
+
+
+@router.get("/{session_id}/mesh/nicp-result")
+def get_nicp_result_mesh(session_id: str):
+    """the finished template-topology mesh from the last completed "fit
+    template" - the same thing that becomes the third _rg_{C|F}N.ply file
+    on save (see Session.nicp_result_mesh). doesn't touch result_mesh/
+    craniometrics, so this is the only way to fetch the fitted mesh
+    directly without a full save/export. has to come before
+    /{session_id}/mesh/{stage} below, same reasoning as nicp-preview."""
+    session = _get_session(session_id)
+    if session.nicp_result_mesh is None:
+        raise HTTPException(status_code=409, detail="no completed template fit yet -- run /run with nicp first")
+    glb_bytes = mesh_to_glb(session.nicp_result_mesh)
+    return Response(content=glb_bytes, media_type="model/gltf-binary")
+
+
 @router.get("/{session_id}/mesh/{stage}")
 def export_mesh(session_id: str, stage: str):
     session = _get_session(session_id)
@@ -635,6 +741,7 @@ def download_results_bundle(session_id: str):
         config=config,
         sellion_mesh=session.sellion_result_mesh,
         sellion_landmarks=r["sellion_landmarks"],
+        nicp_mesh=session.nicp_result_mesh,
     )
     return Response(
         content=zip_bytes,
@@ -643,20 +750,33 @@ def download_results_bundle(session_id: str):
     )
 
 
-@router.post("/{session_id}/save", response_model=SaveResultsResponse)
-def save_results_to_source_folder(session_id: str) -> SaveResultsResponse:
-    """writes results straight into a CP_{stem}_{C|F}_{3|4}[_CoM]/ folder
-    next to the original mesh file (see results_bundle.results_folder_name)
-    - only works for a session opened via open_mesh_from_paths (desktop
-    app, native file picker), since that's the only case where we actually
-    know a real folder to write into. the frontend falls back to the zip
-    download (/bundle) when this 400s."""
-    session = _get_session(session_id)
-    if session.source_dir is None:
+def _resolve_dest_dir(session: Session, save_request: SaveRequest) -> Path:
+    """picks the real folder a /save* endpoint writes into: the explicit
+    override from a native folder-picker dialog (see desktop/app.py's
+    pick_folder) if the caller gave one, else the folder the session's
+    mesh was originally opened from. 400s if neither is available - only a
+    session opened via open_mesh_from_paths (desktop app, native file
+    picker) has a real source folder, since that's the only case where we
+    actually know a real filesystem path at all. the frontend falls back
+    to the zip download (/bundle*) when this happens."""
+    dest_dir = Path(save_request.dest_dir) if save_request.dest_dir else session.source_dir
+    if dest_dir is None:
         raise HTTPException(
             status_code=400,
-            detail="this session wasn't opened from a real file path, nowhere to save to - use /bundle instead",
+            detail="this session wasn't opened from a real file path, nowhere to save to - use the bundle download instead",
         )
+    if not dest_dir.is_dir():
+        raise HTTPException(status_code=400, detail=f"not a real folder: {dest_dir}")
+    return dest_dir
+
+
+@router.post("/{session_id}/save", response_model=SaveResultsResponse)
+def save_results_to_source_folder(session_id: str, save_request: SaveRequest = SaveRequest()) -> SaveResultsResponse:
+    """writes results straight into a CP_{stem}_{C|F}_{3|4}[_CoM]/ folder
+    inside the destination folder (see results_bundle.results_folder_name
+    and _resolve_dest_dir above)."""
+    session = _get_session(session_id)
+    dest_dir = _resolve_dest_dir(session, save_request)
     if session.job_status != "done" or session.result is None or session.aligned_mesh is None:
         raise HTTPException(status_code=409, detail=f"no completed analysis yet (status: {session.job_status})")
 
@@ -664,7 +784,7 @@ def save_results_to_source_folder(session_id: str) -> SaveResultsResponse:
     request: AnalyzeRequest = r["request"]
 
     results_dir = write_results_to_folder(
-        dest_dir=session.source_dir,
+        dest_dir=dest_dir,
         original_filename=session.original_filename,
         registered_mesh=session.aligned_mesh,
         final_mesh=session.result_mesh,
@@ -675,5 +795,132 @@ def save_results_to_source_folder(session_id: str) -> SaveResultsResponse:
         config=request.model_dump(),
         sellion_mesh=session.sellion_result_mesh,
         sellion_landmarks=r["sellion_landmarks"],
+        nicp_mesh=session.nicp_result_mesh,
     )
     return SaveResultsResponse(saved_to=str(results_dir))
+
+
+def _require_completed_run(session: Session) -> ClipRequest:
+    """the "meshes" endpoints (save/bundle) only need a completed /run, not
+    a full analyze - see Session.result_mesh/aligned_mesh/last_clip_config
+    (all three are set together, by /clip then /run, well before
+    session.result's craniometrics/asymmetry exist for a target that
+    doesn't compute one of them). returns the ClipRequest that produced the
+    current result, since it already carries target/alt_frontal_landmark/
+    com_translation - everything results_folder_name and the mesh writer
+    need, without touching session.result at all."""
+    if session.result_mesh is None or session.aligned_mesh is None or session.last_clip_config is None:
+        raise HTTPException(status_code=409, detail="no completed run yet -- run /run first")
+    return session.last_clip_config
+
+
+@router.get("/{session_id}/bundle/meshes")
+def download_meshes_bundle(session_id: str):
+    session = _get_session(session_id)
+    clip_request = _require_completed_run(session)
+    config = clip_request.model_dump()
+    folder_name = results_folder_name(session.original_filename, clip_request.target, config)
+
+    zip_bytes = build_meshes_bundle(
+        original_filename=session.original_filename,
+        registered_mesh=session.aligned_mesh,
+        final_mesh=session.result_mesh,
+        target=clip_request.target,
+        config=config,
+        nicp_mesh=session.nicp_result_mesh,
+    )
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{folder_name}.zip"'},
+    )
+
+
+@router.post("/{session_id}/save/meshes", response_model=SaveResultsResponse)
+def save_meshes_to_source_folder(session_id: str, save_request: SaveRequest = SaveRequest()) -> SaveResultsResponse:
+    """writes just the two mesh files (_rg.ply / _rg_{C|F}.ply) into a
+    CP_{stem}_{C|F}_{3|4}[_CoM]/ folder inside the destination folder - the
+    lighter-weight save that only needs a completed /run, not a full
+    craniometrics/asymmetry pass (see /save for "everything, including the
+    analysis report"). desktop-only, same as /save - the frontend falls
+    back to /bundle/meshes when this 400s."""
+    session = _get_session(session_id)
+    dest_dir = _resolve_dest_dir(session, save_request)
+    clip_request = _require_completed_run(session)
+
+    results_dir = write_meshes_to_folder(
+        dest_dir=dest_dir,
+        original_filename=session.original_filename,
+        registered_mesh=session.aligned_mesh,
+        final_mesh=session.result_mesh,
+        target=clip_request.target,
+        config=clip_request.model_dump(),
+        nicp_mesh=session.nicp_result_mesh,
+    )
+    return SaveResultsResponse(saved_to=str(results_dir))
+
+
+@router.get("/{session_id}/bundle/analysis")
+def download_analysis_bundle(session_id: str):
+    session = _get_session(session_id)
+    if session.job_status != "done" or session.result is None or session.aligned_mesh is None:
+        raise HTTPException(status_code=409, detail=f"no completed analysis yet (status: {session.job_status})")
+
+    r = session.result
+    request: AnalyzeRequest = r["request"]
+    config = request.model_dump()
+    folder_name = results_folder_name(session.original_filename, request.target, config)
+
+    zip_bytes = build_analysis_bundle(
+        original_filename=session.original_filename,
+        registered_mesh=session.aligned_mesh,
+        final_mesh=session.result_mesh,
+        landmarks=r["landmarks"],
+        target=request.target,
+        craniometrics=r["craniometrics"],
+        asymmetry=r["asymmetry"],
+        config=config,
+        sellion_mesh=session.sellion_result_mesh,
+        sellion_landmarks=r["sellion_landmarks"],
+        nicp_mesh=session.nicp_result_mesh,
+    )
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{folder_name}.zip"'},
+    )
+
+
+@router.post("/{session_id}/save/analysis", response_model=SaveResultsResponse)
+def save_analysis_to_source_folder(session_id: str, save_request: SaveRequest = SaveRequest()) -> SaveResultsResponse:
+    """writes the report/figures into a
+    CP_{stem}_{C|F}_{3|4}[_CoM]/analysis/ subfolder inside the destination
+    folder, creating the mesh folder (and its mesh files) first if it
+    doesn't exist yet - see results_bundle.write_analysis_to_folder, and
+    the user-facing requirement it implements: exporting analysis before
+    ever separately saving meshes should still produce the meshes, not
+    just the report. desktop-only, same as /save - the frontend falls back
+    to /bundle/analysis when this 400s."""
+    session = _get_session(session_id)
+    dest_dir = _resolve_dest_dir(session, save_request)
+    if session.job_status != "done" or session.result is None or session.aligned_mesh is None:
+        raise HTTPException(status_code=409, detail=f"no completed analysis yet (status: {session.job_status})")
+
+    r = session.result
+    request: AnalyzeRequest = r["request"]
+
+    analysis_dir = write_analysis_to_folder(
+        dest_dir=dest_dir,
+        original_filename=session.original_filename,
+        registered_mesh=session.aligned_mesh,
+        final_mesh=session.result_mesh,
+        landmarks=r["landmarks"],
+        target=request.target,
+        craniometrics=r["craniometrics"],
+        asymmetry=r["asymmetry"],
+        config=request.model_dump(),
+        sellion_mesh=session.sellion_result_mesh,
+        sellion_landmarks=r["sellion_landmarks"],
+        nicp_mesh=session.nicp_result_mesh,
+    )
+    return SaveResultsResponse(saved_to=str(analysis_dir))

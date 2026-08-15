@@ -85,13 +85,39 @@ class ClipRequest(BaseModel):
     repair_method: Literal["pymeshfix", "trimesh"] = "pymeshfix"
 
 
+class NicpConfig(BaseModel):
+    """opts into non-rigid template fitting instead of a plain resample -
+    see craniumpy_core.registration.nicp. template is a shipped template
+    name (see template_registry.SHIPPED_TEMPLATES); custom_template_path
+    is a real filesystem path instead (desktop app only, same
+    path-resolution the template-overlay viewer feature already uses) -
+    exactly one of the two should be given. alpha_start/alpha_end/
+    alpha_steps reconstruct nicp()'s alphas stiffness schedule
+    (np.linspace(alpha_start, alpha_end, alpha_steps)) - exposed as three
+    numbers instead of a raw array since that's what a form field can
+    actually hold."""
+
+    template: str | None = None
+    custom_template_path: str | None = None
+    alpha_start: float = 200.0
+    alpha_end: float = 1.0
+    alpha_steps: int = 20
+    gamma: float = 1.0
+    dist_threshold: float = 10.0
+    inner_iters: int = 3
+
+
 class RunRequest(BaseModel):
     """the "Run" stage's request body - resample + measure, on whatever
     /clip already produced. no target/landmarks/clipping here - those
-    were already committed by /clip."""
+    were already committed by /clip.
+
+    nicp, when given, replaces the plain resample entirely (n_vertices/
+    resample_method are ignored) - see NicpConfig."""
 
     n_vertices: int | None = 10_000
     resample_method: Literal["quadric", "voronoi"] = "quadric"
+    nicp: NicpConfig | None = None
 
 
 class ClipUndoResponse(BaseModel):
@@ -119,6 +145,16 @@ class OpenFromPathsRequest(BaseModel):
     paths: list[str] = Field(min_length=1)
 
 
+class SaveRequest(BaseModel):
+    """body for /save, /save/meshes, /save/analysis. dest_dir, when given,
+    overrides the default destination (next to the original mesh file,
+    session.source_dir) - the desktop app's "change save folder..." control
+    (a native folder-picker dialog) is the only thing that ever sets this;
+    left out (None), the save goes wherever it always has."""
+
+    dest_dir: str | None = None
+
+
 class SaveResultsResponse(BaseModel):
     saved_to: str
 
@@ -126,6 +162,10 @@ class SaveResultsResponse(BaseModel):
 class ProgressInfo(BaseModel):
     stage: str
     detail: str
+    # only meaningful for "nicp"'s stiffness-step-by-step progress - lets the
+    # frontend show a real percentage instead of the stage guessing one.
+    current: int | None = None
+    total: int | None = None
 
 
 class StatusResponse(BaseModel):

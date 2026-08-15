@@ -85,8 +85,65 @@ export async function displayMesh({ sceneBag, gltfLoader, meshStateRef, url, sel
   return { hasTexture };
 }
 
+// swaps in a new geometry on targetObject's mesh children, in place -
+// leaves targetObject's own materials/transform untouched, unlike
+// displayMesh which always resets both. used for anything that needs to
+// show a mesh's shape changing over time without the jump-cut a fresh
+// displayMesh call would cause (camera reframe, material flicker) on every
+// update - assumes newObject's mesh children line up 1:1, in order, with
+// targetObject's (true for every caller today: a live NICP preview always
+// has the same topology as whatever it's updating).
+function swapGeometryInPlace(targetObject, newObject) {
+  const newGeometries = [];
+  newObject.traverse((child) => {
+    if (child.isMesh) newGeometries.push(child.geometry);
+  });
+
+  let i = 0;
+  targetObject.traverse((child) => {
+    if (!child.isMesh) return;
+    const newGeometry = newGeometries[i++];
+    if (!newGeometry) return;
+    newGeometry.computeVertexNormals();
+    child.geometry.dispose();
+    child.geometry = newGeometry;
+  });
+
+  // the freshly-loaded object's own materials are never used (this call
+  // only ever swaps geometry) - dispose them; the geometries they came
+  // with were just adopted by targetObject's children above, so those are
+  // left alone.
+  newObject.traverse((child) => {
+    if (!child.isMesh) return;
+    child.material?.dispose();
+  });
+}
+
+// in-place swap against an arbitrary standalone object - used for the NICP
+// live-preview overlay (see Viewer.jsx's updateNicpPreview), which needs to
+// update its own geometry every poll tick while the main displayed mesh
+// (the patient, fixed) stays completely untouched underneath it.
+export async function updateObjectGeometry({ gltfLoader, targetObject, url }) {
+  const newObject = await loadGlb(gltfLoader, url);
+  swapGeometryInPlace(targetObject, newObject);
+}
+
 export function applyWireframeState(meshStateRef, on) {
   for (const m of meshStateRef.current.materials) m.wireframe = on;
+}
+
+// dims the mesh a bit so a measurement line/HC ring running along the far
+// side of the surface (from the current camera angle) doesn't just vanish
+// into it - same fixed 0.75 the old app used while a measurements overlay
+// was showing, reset to 1.0 (fully opaque, the normal state) otherwise. no
+// user-facing slider, same as before - just tied to whether an overlay is
+// currently on (see Viewer.jsx's showMeasurementsOverlay/showHeatmap).
+export function applyOpacityState(meshStateRef, opacity) {
+  for (const m of meshStateRef.current.materials) {
+    m.transparent = opacity < 1;
+    m.opacity = opacity;
+    m.needsUpdate = true;
+  }
 }
 
 // swaps in the textured or plain material per showTexture - shared shape

@@ -65,6 +65,16 @@ class Api:
         )
         return list(result) if result else None
 
+    def pick_folder(self) -> str | None:
+        """lets the user override where /save* writes, instead of always
+        going next to the original mesh file (see api/schemas.py's
+        SaveRequest.dest_dir) - the frontend's "change save folder..."
+        control."""
+        if self._window is None:
+            return None
+        result = self._window.create_file_dialog(webview.FileDialog.FOLDER)
+        return result[0] if result else None
+
 
 def main() -> None:
     server_thread = threading.Thread(target=_run_server, daemon=True)

@@ -2,9 +2,23 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { useThreeScene } from "../three/useThreeScene.js";
-import { applyTextureState, applyWireframeState, disposeMesh, displayMesh as displayMeshImpl } from "../three/meshDisplay.js";
+import { applyOpacityState, applyTextureState, applyWireframeState, disposeMesh, displayMesh as displayMeshImpl, loadGlb, updateObjectGeometry } from "../three/meshDisplay.js";
 import { pointerToNdc, raycastMesh, raycastMarkers } from "../three/picking.js";
 import { syncLandmarkMarkers, disposeLandmarkMarkers } from "../three/landmarksLayer.js";
+import { addTemplateOverlay, removeTemplateOverlay, removeTemplateOverlayExtras } from "../three/templateOverlay.js";
+import { addMeasurementsOverlay, removeMeasurementsOverlay, applyHeatmap, removeHeatmap } from "../three/measurementsLayer.js";
+import { addNodesOverlay, removeNodesOverlay, resyncNodesGeometry } from "../three/nicpFitVisualization.js";
+
+// deforming-template color during a live NICP fit - matches the --hc red
+// token already used elsewhere in this app, so "moving/deforming" reads as
+// a consistent color across the UI rather than introducing a new one.
+const NICP_DEFORM_COLOR = 0xd1453d;
+// same beige plainMaterial() (three/meshDisplay.js) uses - the target/
+// patient mesh's node dots use this regardless of whatever material the
+// mesh actually has on (plain, textured, vertex-colored) - this is a
+// technical visualization aid during a fit, not meant to track the mesh's
+// real appearance.
+const TARGET_NODE_COLOR = 0xe8d9c0;
 
 // reusable viewer: knows how to load and show a GLB and nothing else - no
 // sessions, no fetch, no upload, no landmark *naming*. wireframe/
@@ -23,9 +37,16 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
   const raycasterRef = useRef(null);
   const meshStateRef = useRef({ object: null, materials: [], markerRadius: 2 });
   const markersRef = useRef({});
+  const templateOverlayRef = useRef(null);
+  const measurementsOverlayRef = useRef(null);
+  const heatmapRef = useRef(null);
+  const nicpPreviewRef = useRef(null);
+  const nicpPreviewNodesRef = useRef(null);
+  const mainMeshNodesRef = useRef(null);
   const draggingNameRef = useRef(null);
   const onPickRef = useRef(onPick);
   const onDragRef = useRef(onDrag);
+  const wireframeRef = useRef(wireframe);
 
   useEffect(() => {
     onPickRef.current = onPick;
@@ -35,12 +56,28 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
     onDragRef.current = onDrag;
   }, [onDrag]);
 
+  // read by hideNicpPreview to restore the patient mesh's wireframe state
+  // to whatever the checkbox actually says, rather than assuming it was
+  // off before the fit forced it on.
+  useEffect(() => {
+    wireframeRef.current = wireframe;
+  }, [wireframe]);
+
   useEffect(() => {
     gltfLoaderRef.current = new GLTFLoader();
     raycasterRef.current = new THREE.Raycaster();
     return () => {
       disposeMesh(meshStateRef.current.object);
       disposeLandmarkMarkers(markersRef);
+      if (sceneBagRef.current) {
+        removeTemplateOverlay(sceneBagRef.current, templateOverlayRef.current);
+        removeMeasurementsOverlay(sceneBagRef.current, measurementsOverlayRef.current);
+        if (nicpPreviewRef.current) sceneBagRef.current.scene.remove(nicpPreviewRef.current);
+      }
+      removeHeatmap(heatmapRef.current);
+      removeNodesOverlay(nicpPreviewNodesRef.current);
+      removeNodesOverlay(mainMeshNodesRef.current);
+      disposeMesh(nicpPreviewRef.current);
     };
   }, []);
 
@@ -118,6 +155,26 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
 
   useImperativeHandle(ref, () => ({
     async displayMesh(url, { selectionHasTexture }) {
+      // whatever the template/measurements overlay was comparing against
+      // is about to be disposed - drop them (and the heatmap, which holds
+      // a direct reference to the old mesh's material) rather than leave
+      // them pointing at a stale/disposed mesh; the caller re-shows
+      // whichever were on once the new mesh is in.
+      if (sceneBagRef.current) {
+        removeTemplateOverlay(sceneBagRef.current, templateOverlayRef.current);
+        removeMeasurementsOverlay(sceneBagRef.current, measurementsOverlayRef.current);
+        if (nicpPreviewRef.current) sceneBagRef.current.scene.remove(nicpPreviewRef.current);
+      }
+      templateOverlayRef.current = null;
+      measurementsOverlayRef.current = null;
+      removeHeatmap(heatmapRef.current);
+      heatmapRef.current = null;
+      removeNodesOverlay(nicpPreviewNodesRef.current);
+      nicpPreviewNodesRef.current = null;
+      removeNodesOverlay(mainMeshNodesRef.current);
+      mainMeshNodesRef.current = null;
+      disposeMesh(nicpPreviewRef.current);
+      nicpPreviewRef.current = null;
       return displayMeshImpl({
         sceneBag: sceneBagRef.current,
         gltfLoader: gltfLoaderRef.current,
@@ -125,6 +182,160 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
         url,
         selectionHasTexture,
       });
+    },
+    // a live NICP fit's deforming template, as its own standalone object -
+    // rendered as a red wireframe + vertex-node cloud (see
+    // three/nicpFitVisualization.js), so the topology visibly adopts the
+    // patient's shape rather than just a solid surface warping. if
+    // "compare to template" was already showing a template mesh, THAT
+    // exact object is repurposed here rather than spawning a visually
+    // duplicate second one - it's the same mesh, just recolored and now
+    // being deformed instead of held static; its axes/CoG markers get
+    // dropped first since they'd be stale the moment the mesh starts
+    // moving. the patient's own mesh gets the same wireframe+nodes
+    // treatment (in its own existing color, just dimmed) so both objects
+    // read as "topology adopting a shape" the same way. first call sets
+    // all of this up; every call after that just swaps the deforming
+    // object's geometry in place (no re-add, no flicker) and re-points its
+    // node cloud at the new geometry.
+    async updateNicpPreview(url) {
+      const sceneBag = sceneBagRef.current;
+      if (!sceneBag) return;
+      if (!nicpPreviewRef.current) {
+        let object;
+        if (templateOverlayRef.current) {
+          object = templateOverlayRef.current.templateObject;
+          removeTemplateOverlayExtras(sceneBag, templateOverlayRef.current);
+          templateOverlayRef.current = null;
+        } else {
+          object = await loadGlb(gltfLoaderRef.current, url);
+          sceneBag.scene.add(object);
+        }
+        object.traverse((child) => {
+          if (!child.isMesh) return;
+          child.geometry.computeVertexNormals();
+          child.material?.dispose();
+          child.material = new THREE.MeshBasicMaterial({
+            color: NICP_DEFORM_COLOR,
+            wireframe: true,
+            transparent: true,
+            opacity: 0.35,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+          });
+        });
+        nicpPreviewRef.current = object;
+        nicpPreviewNodesRef.current = addNodesOverlay(object, NICP_DEFORM_COLOR, meshStateRef.current.markerRadius * 0.4);
+
+        applyWireframeState(meshStateRef, true);
+        applyOpacityState(meshStateRef, 0.75);
+        if (meshStateRef.current.object && !mainMeshNodesRef.current) {
+          mainMeshNodesRef.current = addNodesOverlay(
+            meshStateRef.current.object,
+            TARGET_NODE_COLOR,
+            meshStateRef.current.markerRadius * 0.4,
+          );
+        }
+      } else {
+        await updateObjectGeometry({ gltfLoader: gltfLoaderRef.current, targetObject: nicpPreviewRef.current, url });
+        resyncNodesGeometry(nicpPreviewNodesRef.current);
+      }
+    },
+    hideNicpPreview() {
+      const sceneBag = sceneBagRef.current;
+      if (!sceneBag || !nicpPreviewRef.current) return;
+      sceneBag.scene.remove(nicpPreviewRef.current);
+      disposeMesh(nicpPreviewRef.current);
+      nicpPreviewRef.current = null;
+      removeNodesOverlay(nicpPreviewNodesRef.current);
+      nicpPreviewNodesRef.current = null;
+      removeNodesOverlay(mainMeshNodesRef.current);
+      mainMeshNodesRef.current = null;
+      applyWireframeState(meshStateRef, wireframeRef.current);
+      applyOpacityState(meshStateRef, 1.0);
+    },
+    // loads a template GLB and adds it (+ axes, CoG markers) alongside
+    // whatever mesh is currently shown - returns the mesh/template centroid
+    // offset (mm) for the panel's readout, or null if there's no mesh to
+    // compare against yet.
+    async showTemplateOverlay(url) {
+      const sceneBag = sceneBagRef.current;
+      const meshObject = meshStateRef.current.object;
+      if (!sceneBag || !meshObject) return null;
+      removeTemplateOverlay(sceneBag, templateOverlayRef.current);
+      templateOverlayRef.current = null;
+      const templateObject = await loadGlb(gltfLoaderRef.current, url);
+      const { handle, offset } = addTemplateOverlay({
+        sceneBag,
+        templateObject,
+        meshObject,
+        markerRadius: meshStateRef.current.markerRadius,
+      });
+      templateOverlayRef.current = handle;
+      return offset;
+    },
+    hideTemplateOverlay() {
+      const sceneBag = sceneBagRef.current;
+      if (!sceneBag) return;
+      removeTemplateOverlay(sceneBag, templateOverlayRef.current);
+      templateOverlayRef.current = null;
+    },
+    // HC-slice ring + BPD/OFD spans, live on the currently-shown (cranial)
+    // result mesh - the Analysis workspace's cranial visualization. dims
+    // the mesh a bit (same fixed 0.75 the old app used) so a line running
+    // along the far side of the surface doesn't just disappear into it.
+    showMeasurementsOverlay({ hcPolygon, frontOpt, occOpt, lhOpt, rhOpt }) {
+      const sceneBag = sceneBagRef.current;
+      if (!sceneBag) return;
+      removeMeasurementsOverlay(sceneBag, measurementsOverlayRef.current);
+      measurementsOverlayRef.current = addMeasurementsOverlay({
+        sceneBag,
+        hcPolygon,
+        frontOpt,
+        occOpt,
+        lhOpt,
+        rhOpt,
+        markerRadius: meshStateRef.current.markerRadius,
+      });
+      applyOpacityState(meshStateRef, 0.75);
+    },
+    hideMeasurementsOverlay() {
+      const sceneBag = sceneBagRef.current;
+      if (!sceneBag) return;
+      removeMeasurementsOverlay(sceneBag, measurementsOverlayRef.current);
+      measurementsOverlayRef.current = null;
+      applyOpacityState(meshStateRef, 1.0);
+    },
+    // per-vertex asymmetry heatmap on the currently-shown (facial) result
+    // mesh - the Analysis workspace's facial visualization. applyHeatmap
+    // swaps in fresh per-child materials outside of meshStateRef's own
+    // materials list, so that list gets rebuilt here (same pattern
+    // applyTextureState uses) before dimming, or the opacity change
+    // wouldn't reach the heatmap material at all.
+    showHeatmap(heatmap) {
+      const meshObject = meshStateRef.current.object;
+      if (!meshObject) return;
+      removeHeatmap(heatmapRef.current);
+      heatmapRef.current = applyHeatmap(meshObject, heatmap);
+      const materials = [];
+      meshObject.traverse((child) => {
+        if (child.isMesh) materials.push(child.material);
+      });
+      meshStateRef.current.materials = materials;
+      applyOpacityState(meshStateRef, 0.75);
+    },
+    hideHeatmap() {
+      removeHeatmap(heatmapRef.current);
+      heatmapRef.current = null;
+      const meshObject = meshStateRef.current.object;
+      if (meshObject) {
+        const materials = [];
+        meshObject.traverse((child) => {
+          if (child.isMesh) materials.push(child.material);
+        });
+        meshStateRef.current.materials = materials;
+      }
+      applyOpacityState(meshStateRef, 1.0);
     },
   }));
 
