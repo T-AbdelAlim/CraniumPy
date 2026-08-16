@@ -147,15 +147,25 @@ export async function getResults(sessionId) {
   return response.json();
 }
 
-// desktop: writes the report/figures into the mesh folder's analysis/
-// subfolder, creating the mesh folder (and its mesh files) first if it
-// doesn't exist yet - see api/results_bundle.write_analysis_to_folder.
-// destDir/error-shape same as saveMeshes above.
-export async function saveAnalysis(sessionId, destDir) {
+// desktop: writes the report/figures (including the summary spreadsheet
+// and PDF report - see api/results_bundle._build_analysis_files) into the
+// mesh folder's analysis/ subfolder, creating the mesh folder (and its
+// mesh files) first if it doesn't exist yet - see
+// api/results_bundle.write_analysis_to_folder. destDir/error-shape same as
+// saveMeshes above. metadata is the sidebar form's patient/visit fields
+// (see api/schemas.py's PatientMetadata); cohortXlsxPath, when set, also
+// upserts this session's row into that external cohort file (see
+// api/results_bundle._upsert_cohort_xlsx) - desktop-only, there's no
+// browser equivalent (see analysisBundleUrl below).
+export async function saveAnalysis(sessionId, destDir, metadata, cohortXlsxPath) {
   const response = await fetch(`/api/sessions/${sessionId}/save/analysis`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ dest_dir: destDir || null }),
+    body: JSON.stringify({
+      dest_dir: destDir || null,
+      metadata: metadata || {},
+      cohort_xlsx_path: cohortXlsxPath || null,
+    }),
   });
   if (!response.ok) {
     const error = new Error(await response.text());
@@ -165,9 +175,15 @@ export async function saveAnalysis(sessionId, destDir) {
   return response.json(); // {saved_to}
 }
 
-// browser: zip-download url for the meshes plus a nested analysis/.
-export function analysisBundleUrl(sessionId) {
-  return `/api/sessions/${sessionId}/bundle/analysis`;
+// browser: zip-download url for the meshes plus a nested analysis/
+// (summary spreadsheet + PDF report included, same as the desktop save
+// above) - metadata rides along as query params since a GET download
+// can't carry a JSON body. no cohort param here - a one-shot zip download
+// has no persistent file to append a cohort row into.
+export function analysisBundleUrl(sessionId, metadata) {
+  const params = new URLSearchParams(metadata || {});
+  const query = params.toString();
+  return `/api/sessions/${sessionId}/bundle/analysis${query ? `?${query}` : ""}`;
 }
 
 // polls /status until the job is done or errored, returning the final
@@ -200,4 +216,11 @@ export async function pollStatus(sessionId, onProgress) {
 // stiffness step.
 export function nicpPreviewMeshUrl(sessionId) {
   return `/api/sessions/${sessionId}/mesh/nicp-preview`;
+}
+
+// the finished template-topology mesh from the last completed "fit
+// template" - what the viewer switches to once a fit finishes, see
+// App.jsx's handleFitTemplate.
+export function nicpResultMeshUrl(sessionId) {
+  return `/api/sessions/${sessionId}/mesh/nicp-result`;
 }

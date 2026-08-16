@@ -198,6 +198,32 @@ def _circumference_search(mesh: trimesh.Trimesh, slice_height: float, slice_d: i
     return hc
 
 
+def find_hc_slice_height(
+    mesh: trimesh.Trimesh,
+    landmarks: np.ndarray | None = None,
+    slice_d: int = 1,
+    ear_safety_margin_mm: float = 5.0,
+) -> float:
+    """just the "which height is the HC slice" search, factored out of
+    extract_measurements so metopic.py's facial-frame reconstruction (see
+    pipeline.hc_slice_height_facial_frame) can reuse the exact same search
+    without pulling in the rest of extract_measurements's cranial-only
+    circumference/BPD/OFD machinery. extract_measurements below calls this
+    internally - same landmarks/ear-avoidance behavior described there.
+
+    intentionally doesn't do the >60cm circumference re-search
+    (_circumference_search) - that's a circumference-reporting quirk (see
+    this module's docstring), not part of "which height is the HC slice"."""
+    min_y = None
+    if landmarks is not None:
+        landmarks = np.asarray(landmarks)
+        min_y = float(max(landmarks[1][1], landmarks[2][1])) + ear_safety_margin_mm
+
+    profiles = _scan_slices(mesh, slice_d)
+    index = _select_slice_index(profiles, slice_d, min_y=min_y)
+    return profiles[index].y
+
+
 def extract_measurements(
     mesh: trimesh.Trimesh,
     slice_d: int = 1,
@@ -217,14 +243,7 @@ def extract_measurements(
     - the regression baseline in tests/fixtures never had landmarks to
     give it in the first place, since it runs on a raw, unregistered
     mesh."""
-    min_y = None
-    if landmarks is not None:
-        landmarks = np.asarray(landmarks)
-        min_y = float(max(landmarks[1][1], landmarks[2][1])) + ear_safety_margin_mm
-
-    profiles = _scan_slices(mesh, slice_d)
-    index = _select_slice_index(profiles, slice_d, min_y=min_y)
-    slice_height = profiles[index].y
+    slice_height = find_hc_slice_height(mesh, landmarks, slice_d, ear_safety_margin_mm)
 
     hc = _circumference_search(mesh, slice_height, slice_d, max_hc_search)
 
@@ -251,6 +270,106 @@ def extract_measurements(
         occ_opt=occ_opt,
         lh_opt=lh_opt,
         rh_opt=rh_opt,
+    )
+
+
+@dataclass
+class FrontalBossingResult:
+    angle_deg: float
+    sellion: np.ndarray  # (3,)
+    frontal_point: np.ndarray  # (3,) - the most anterior point of the forehead, above sellion
+    profile: np.ndarray  # (N, 3) the sagittal (midline) contour, for drawing
+    # unit vector for "horizontal" - the direction angle_deg was actually
+    # measured against. always +z in the frame the angle was computed in
+    # (see frontal_bossing below), but a display frame reached via a
+    # secondary frontal landmark is rotated relative to that frame, so
+    # anything DRAWING this construction in another frame needs the rotated
+    # direction rather than that frame's own +z (see
+    # pipeline.measure_cranial). kept here rather than recomputed by each
+    # consumer so the drawn reference line can't disagree with the number.
+    horizontal: np.ndarray = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.horizontal is None:
+            self.horizontal = np.array([0.0, 0.0, 1.0])
+
+
+def _ordered_sagittal_profile(section) -> np.ndarray:
+    """the longest connected piece of a mesh cross-section, in its own
+    connectivity order - same technique metopic.forehead_contour uses for
+    the horizontal HC slice, applied here to a vertical sagittal one.
+    mesh.section()'s own .vertices is just an unordered point soup; a
+    single mesh entity's own .discrete(vertices) walks it in actual
+    surface order, which is what a clean single line needs. returns an
+    empty (0, 3) array if the section has nothing to walk."""
+    if section is None or len(section.entities) == 0:
+        return np.empty((0, 3))
+    pieces = [e.discrete(section.vertices) for e in section.entities]
+    pieces = [p for p in pieces if len(p) > 0]
+    if not pieces:
+        return np.empty((0, 3))
+    return max(pieces, key=len)
+
+
+def frontal_bossing(mesh: trimesh.Trimesh, sellion: np.ndarray) -> FrontalBossingResult | None:
+    """how much the forehead bulges forward, measured in the sagittal
+    (midline) plane through sellion: slices the mesh at x = sellion.x,
+    finds the most anterior (max z) point ABOVE sellion (y > sellion.y -
+    restricted to the forehead, not the nose/lips/chin below sellion,
+    which would otherwise win this search on a facial-target mesh that
+    still has a nose on it), and reports the angle between horizontal (the
+    z-axis, through sellion) and the sellion -> that point vector.
+
+    a forehead that bulges mostly straight out before curving up reads as
+    a small angle (close to 0, near-horizontal - a prominent/bossed
+    forehead); one that goes mostly straight up with little forward
+    bulge reads as a large angle (close to 90, near-vertical - a flatter
+    or receding forehead). works the same in either registered frame
+    (cranial or facial) - it's defined purely relative to sellion's own
+    position, not any shared plane/height the way the metopic HC-slice
+    analysis needs. None if the plane misses the mesh, or nothing on it
+    sits above sellion at all.
+
+    the given sellion is snapped onto this mesh's own surface before
+    anything else. the landmark comes from a click on the RAW scan, while
+    this mesh has since been repaired, clipped and resampled - and quadric
+    decimation pulls a tight concavity like the nasal root slightly inward,
+    which leaves the original pick sitting a millimetre or two off the
+    surface in front of it. that showed up as a visible gap between the
+    drawn sellion marker and the mesh, and it also means the angle's own
+    origin wasn't quite on the surface the rest of the construction (the
+    section, the frontal point) was taken from. snapping fixes both, and
+    makes the value independent of how far decimation happened to move
+    that spot.
+    """
+    sellion = np.asarray(sellion, dtype=np.float64)
+    snapped, _, _ = trimesh.proximity.closest_point(mesh, sellion[np.newaxis, :])
+    sellion = snapped[0]
+
+    section = mesh.section(plane_normal=[1, 0, 0], plane_origin=[sellion[0], 0, 0])
+    if section is None or len(section.vertices) == 0:
+        return None
+
+    pts = np.asarray(section.vertices)
+    above = pts[:, 1] > sellion[1]
+    if not above.any():
+        return None
+
+    candidates = pts[above]
+    frontal_point = candidates[np.argmax(candidates[:, 2])]
+    dy = frontal_point[1] - sellion[1]
+    dz = frontal_point[2] - sellion[2]
+    angle_deg = float(np.degrees(np.arctan2(dy, dz)))
+
+    ordered = _ordered_sagittal_profile(section)
+    profile = ordered if len(ordered) else pts
+
+    return FrontalBossingResult(
+        angle_deg=angle_deg,
+        sellion=sellion,
+        frontal_point=frontal_point,
+        profile=profile,
+        horizontal=np.array([0.0, 0.0, 1.0]),
     )
 
 

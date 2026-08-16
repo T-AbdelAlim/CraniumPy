@@ -5,6 +5,7 @@ import UploadPanel from "./workspaces/data/UploadPanel.jsx";
 import MeshViewToggles from "./workspaces/data/MeshViewToggles.jsx";
 import PreprocessingPanel from "./workspaces/preprocessing/PreprocessingPanel.jsx";
 import AnalysisPanel from "./workspaces/analysis/AnalysisPanel.jsx";
+import PatientMetadataForm from "./components/PatientMetadataForm.jsx";
 import {
   meshUrl,
   startAlign,
@@ -17,6 +18,7 @@ import {
   customTemplateMeshUrl,
   uploadCustomTemplate,
   nicpPreviewMeshUrl,
+  nicpResultMeshUrl,
   saveMeshes,
   meshesBundleUrl,
   getResults,
@@ -27,7 +29,7 @@ import { LANDMARK_NAMES, ALT_FRONTAL_NAME, LANDMARK_COLORS, nextUnpickedLandmark
 import { heatmapMaxAbs } from "./three/measurementsLayer.js";
 import { applyTransform, applyInverseTransform } from "./lib/transform.js";
 import { defaultTemplateForTarget, templateChoiceStorageKey, customTemplatePathStorageKey } from "./lib/templates.js";
-import { isDesktopApp, pickFileNative, pickFolderNative } from "./lib/desktop.js";
+import { isDesktopApp, pickFileNative, pickFolderNative, pickExcelFileNative } from "./lib/desktop.js";
 
 const WORKSPACES = [
   { id: "data", label: "Data" },
@@ -46,7 +48,34 @@ const WORKSPACES = [
 // progress bar, not squeezed into this coarse stage-weight guess.
 const RUN_STAGE_PROGRESS = { register: 5, repair: 15, clip: 60, resample: 75, analyze: 92 };
 
+// backend stage identifiers aren't always meant to be read literally -
+// "starting" in particular is just the one-tick placeholder
+// SessionStore.run_job (api/sessions.py) sets before a job's real first
+// stage report ever arrives, so shown as-is it's just the bare word
+// "starting" sitting under a 0% bar with no detail attached. every status
+// line driven by a poll loop's (stage, detail) callback should read
+// through this instead of interpolating stage/detail directly.
+function describeStage(stage, detail) {
+  if (stage === "starting") return "Preparing...";
+  return detail ? `${stage} - ${detail}` : stage;
+}
+
 const NICP_DEFAULTS = { alphaStart: 200, alphaEnd: 1, alphaSteps: 20, gamma: 1.0, distThreshold: 10.0, innerIters: 3 };
+
+// every patient/visit field, blank - file_name/file_path get filled in
+// separately on upload (see handleUploaded), the rest are the user's to
+// type. matches api/schemas.py's PatientMetadata field set.
+const BLANK_PATIENT_METADATA = {
+  file_name: "",
+  file_path: "",
+  patient_id: "",
+  sex: "",
+  date_imaging: "",
+  age_imaging: "",
+  treatment: "",
+  age_surgery_months: "",
+  free_variable: "",
+};
 
 function App() {
   const viewerRef = useRef(null);
@@ -121,21 +150,84 @@ function App() {
 
   const [analysisResults, setAnalysisResults] = useState(null);
   const [analysisStatus, setAnalysisStatus] = useState("");
+  // "asymmetry" | "metopic" - only meaningful when a facial result carries
+  // both (see craniumpy_core.metopic's module docstring) - AnalysisPanel's
+  // mode toggle sets this, and it's what picks which live viewer overlay
+  // shows (see the results-fetch effect below).
+  const [analysisViewMode, setAnalysisViewMode] = useState("metopic");
+  // mesh opacity while an Analysis overlay (HC-line, heatmap, or metopic
+  // contour) is showing - never touches the overlay's own lines/markers,
+  // just the underlying mesh surface (see Viewer.jsx's setMeshOpacity).
+  // same slider for cranial and facial. 0.35 default keeps the overlay
+  // readable without hiding the mesh surface entirely - see Viewer.jsx's
+  // ANALYSIS_DEFAULT_MESH_OPACITY, which this mirrors.
+  const [analysisMeshOpacity, setAnalysisMeshOpacity] = useState(0.35);
+  // true right after a completed NICP fit swaps the viewer to show the
+  // fitted template mesh instead of the patient's own result mesh (see
+  // handleFitTemplate) - craniometrics/asymmetry/metopic overlays are all
+  // computed against result_mesh, never the NICP fit, so the Analysis-tab
+  // overlay effect below checks this and restores result_mesh first
+  // whenever it's true, rather than drawing those overlays on the wrong
+  // mesh.
+  const [showingNicpResult, setShowingNicpResult] = useState(false);
   const [exportingAnalysis, setExportingAnalysis] = useState(false);
   const [exportAnalysisStatus, setExportAnalysisStatus] = useState("");
 
-  async function handleUploaded({ sessionId: newSessionId, meshLabel: newMeshLabel, selectionHasTexture: newSelectionHasTexture }) {
+  // patient/visit metadata form (sidebar) - see PatientMetadataForm.jsx and
+  // api/schemas.py's PatientMetadata. cohortMode/cohortPath deliberately
+  // DON'T reset on a fresh upload (see handleUploaded) - unlike the 6
+  // per-patient fields, "which cohort file am I building" is a
+  // batch-level choice that should survive across a whole session of
+  // uploading one patient after another, not just one.
+  const [patientMetadata, setPatientMetadata] = useState(BLANK_PATIENT_METADATA);
+  const [cohortMode, setCohortMode] = useState("none"); // "none" | "create" | "append"
+  const [cohortPath, setCohortPath] = useState(null);
+
+  async function handleUploaded({
+    sessionId: newSessionId,
+    meshLabel: newMeshLabel,
+    filePath: newFilePath,
+    selectionHasTexture: newSelectionHasTexture,
+  }) {
     setSessionId(newSessionId);
     setMeshLabel(newMeshLabel);
     setSelectionHasTexture(newSelectionHasTexture);
     setWireframe(false);
     resetPreprocessingState();
+    // a fresh mesh almost always means a new patient - carrying over the
+    // previous patient's sex/treatment/etc by accident is worse than
+    // having to retype, so every field resets, not just the identity ones.
+    setPatientMetadata({ ...BLANK_PATIENT_METADATA, file_name: newMeshLabel || "", file_path: newFilePath || "" });
     const { hasTexture: loadedHasTexture } = await viewerRef.current.displayMesh(meshUrl(newSessionId), {
       selectionHasTexture: newSelectionHasTexture,
     });
     setHasTexture(loadedHasTexture);
     setTextureEnabled(loadedHasTexture);
     setMeshRevision((n) => n + 1);
+  }
+
+  function handlePatientMetadataFieldChange(field, value) {
+    setPatientMetadata((prev) => ({ ...prev, [field]: value }));
+  }
+
+  // "none" clears the cohort target immediately. "create"/"append" open the
+  // matching native dialog (Save vs Open - see desktop/app.py's
+  // pick_excel_file) and only commit to the new mode once a real path comes
+  // back, so a cancelled dialog leaves the previous choice in place instead
+  // of silently switching to a mode with no path behind it.
+  async function handleCohortModeChange(mode) {
+    if (mode === "none") {
+      setCohortMode("none");
+      setCohortPath(null);
+      return;
+    }
+    const path = await pickExcelFileNative(mode === "create", (msg) =>
+      setExportAnalysisStatus(`Couldn't open the file picker: ${msg}`)
+    );
+    if (path) {
+      setCohortMode(mode);
+      setCohortPath(path);
+    }
   }
 
   function resetPreprocessingState() {
@@ -158,6 +250,7 @@ function App() {
     setNicpProgress(0);
     setNicpStatus("");
     setNicpError(false);
+    setShowingNicpResult(false);
     setSavingMeshes(false);
     setSaveMeshesStatus("");
     setSaveDestDir(null);
@@ -216,10 +309,7 @@ function App() {
   // re-derives the default template choice whenever target changes,
   // preferring whatever was last picked for that target (remembered
   // per-target, same as legacy) - ported from
-  // frontend_legacy/app.js's populateTemplateSelect. deliberately not
-  // re-run on useAltFrontal/comTranslation alone (matches legacy, which
-  // only re-populates on a target change) - toggling those updates what
-  // the *next* target switch defaults to, not the current selection.
+  // frontend_legacy/app.js's populateTemplateSelect.
   //
   // gated on shippedTemplates actually being loaded: setting
   // selectedTemplate before the <select>'s real options exist briefly
@@ -235,6 +325,27 @@ function App() {
     setCustomTemplatePath(localStorage.getItem(customTemplatePathStorageKey(target)) || "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target, shippedTemplates]);
+
+  // the shipped cranial templates come in four variants - one per
+  // (frontal landmark, CoM) combination - because each is built in that
+  // exact registered frame. so unlike a remembered *preference*, which
+  // frame is correct isn't the user's choice at all: ticking the 4th
+  // landmark or toggling CoM changes which of the four is the only one
+  // that will line up, and leaving the previous pick selected shows an
+  // overlay that's visibly offset from a perfectly good registration.
+  // switching automatically is the point.
+  //
+  // "custom" is left alone - if the user picked their own file, they mean
+  // it, and there's no variant of it to switch to.
+  useEffect(() => {
+    if (shippedTemplates.length === 0) return;
+    if (target !== "cranium" || selectedTemplate === "custom") return;
+    const derived = defaultTemplateForTarget(target, useAltFrontal, comTranslation);
+    if (derived === selectedTemplate) return;
+    setSelectedTemplate(derived);
+    localStorage.setItem(templateChoiceStorageKey(target), derived);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [useAltFrontal, comTranslation, shippedTemplates]);
 
   function handleTemplateChange(name) {
     setSelectedTemplate(name);
@@ -273,9 +384,17 @@ function App() {
   // result. PreprocessingPanel only renders the checkbox once pipelineRan
   // anyway, but this covers the case where pipelineRan flips back to false
   // (reset) while a comparison from a previous run was still showing.
+  //
+  // also gated on being on the Preprocessing tab specifically - the
+  // checkbox living there is a Preprocessing-workspace control, and its
+  // state staying checked shouldn't make the template comparison bleed
+  // into the Analysis workspace's own overlays (HC-line, heatmap, forehead
+  // morphology, frontal bossing) once the user switches tabs. switching
+  // back to Preprocessing with the checkbox still on re-shows it exactly
+  // as it was, no re-toggle needed.
   useEffect(() => {
     async function refresh() {
-      if (!showTemplateOverlay || !pipelineRan) {
+      if (!showTemplateOverlay || !pipelineRan || activeWorkspace !== "preprocessing") {
         viewerRef.current?.hideTemplateOverlay();
         setTemplateOffset(null);
         setTemplateStatus("");
@@ -293,7 +412,15 @@ function App() {
     }
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showTemplateOverlay, pipelineRan, selectedTemplate, customTemplatePath, customTemplateBlobUrl, meshRevision]);
+  }, [
+    showTemplateOverlay,
+    pipelineRan,
+    activeWorkspace,
+    selectedTemplate,
+    customTemplatePath,
+    customTemplateBlobUrl,
+    meshRevision,
+  ]);
 
   // the mesh currently on screen is the aligned one for as long as
   // alignSucceeded holds (reset is the only thing that reverts to the
@@ -328,6 +455,26 @@ function App() {
         return rest;
       });
     }
+    // pipelineRan gates the whole template/compare/fit-template/save-meshes
+    // section (see PreprocessingPanel) - a completed run described the OLD
+    // target's clip/measurements, so switching target has to hide that
+    // section again until "preprocess mesh" actually runs for the new one.
+    // landmarks/alignment deliberately survive this - /clip re-registers
+    // from scratch regardless of target, so there's no need to force a
+    // re-align, just a fresh preprocess-mesh run.
+    setPipelineRan(false);
+    setRunStarted(false);
+    setRunProgress(0);
+    setRunStatus("");
+    setRunError(false);
+    setFittingTemplate(false);
+    setNicpFitStarted(false);
+    setNicpProgress(0);
+    setNicpStatus("");
+    setNicpError(false);
+    setAnalysisResults(null);
+    setAnalysisStatus("");
+    setShowingNicpResult(false);
   }
 
   function handleUseAltFrontalChange(enabled) {
@@ -357,7 +504,7 @@ function App() {
 
   async function handleAlign() {
     setAligning(true);
-    setAlignStatus("Starting...");
+    setAlignStatus("Preparing...");
     try {
       await startAlign(sessionId, {
         target,
@@ -366,7 +513,7 @@ function App() {
       });
       const result = await pollStatus(sessionId, (stage, detail) => {
         if (stage === "error") setAlignStatus(`Error: ${detail}`);
-        else if (stage !== "done") setAlignStatus(`${stage}${detail ? " - " + detail : ""}...`);
+        else if (stage !== "done") setAlignStatus(describeStage(stage, detail));
       });
       if (result.status === "done") {
         await viewerRef.current.displayMesh(meshUrl(sessionId, "registered"), { selectionHasTexture });
@@ -418,7 +565,7 @@ function App() {
         const percent = Math.max(RUN_STAGE_PROGRESS[stage] ?? lastPercent, lastPercent);
         lastPercent = percent;
         setRunProgress(percent);
-        setRunStatus(detail ? `${stage} - ${detail}` : stage);
+        setRunStatus(describeStage(stage, detail));
       }
     }
 
@@ -441,6 +588,7 @@ function App() {
         // opt back out, not in, every time.
         setShowTemplateOverlay(true);
         await viewerRef.current.displayMesh(meshUrl(sessionId, "result"), { selectionHasTexture });
+        setShowingNicpResult(false);
         setMeshRevision((n) => n + 1);
         setRunProgress(100);
         setRunStatus("Run complete: ✓");
@@ -462,9 +610,12 @@ function App() {
   // in parallel so the template visibly deforms onto the mesh as it fits.
   // deliberately never touches result_mesh/craniometrics on the backend
   // (see /run's handler) - it only produces the extra saved artifact
-  // (session.nicp_result_mesh), so there's nothing to reload into the
-  // viewer once it's done; hideNicpPreview alone already puts the viewer
-  // back to showing the patient's own mesh, undecorated.
+  // (session.nicp_result_mesh) - but once the fit's done, the viewer
+  // switches to showing THAT mesh (see setShowingNicpResult below), since
+  // that's the thing the user just asked to see. the Analysis-tab overlay
+  // effect is what puts the patient's own result_mesh back once it's
+  // actually needed (craniometrics/heatmap/metopic are all computed
+  // against result_mesh, not the fit).
   async function handleFitTemplate() {
     const nicpConfig = resolveNicpRequestConfig();
     if (nicpConfig === undefined) {
@@ -511,9 +662,7 @@ function App() {
       setNicpStatus(
         stage === "nicp" && progress?.total
           ? `fitting template - stiffness step ${progress.current}/${progress.total}`
-          : detail
-            ? `${stage} - ${detail}`
-            : stage,
+          : describeStage(stage, detail),
       );
     }
 
@@ -523,6 +672,22 @@ function App() {
       if (result.status === "done") {
         setNicpProgress(100);
         setNicpStatus("Fit complete: ✓");
+        // show the thing the user just fit, not the patient's own mesh
+        // unchanged - this also tears down the live preview object (see
+        // Viewer.jsx's displayMesh), so the finally block's own
+        // hideNicpPreview call below becomes a harmless no-op for the
+        // success path, same as it always was for the failure path.
+        await viewerRef.current.displayMesh(nicpResultMeshUrl(sessionId), { selectionHasTexture: false });
+        setShowingNicpResult(true);
+        // land on just the fitted mesh, not a template comparison drawn on
+        // top of it - if "compare to template" was checked, switch it back
+        // off rather than re-showing it against the new result; the user
+        // can turn it on again themselves if they want that. this also
+        // covers the "mesh stuck looking like the deforming preview"
+        // symptom the redraw-against-the-fit-result behavior could hit,
+        // since there's now nothing left to redraw.
+        setShowTemplateOverlay(false);
+        viewerRef.current?.hideTemplateOverlay();
       }
     } catch (err) {
       setNicpError(true);
@@ -530,30 +695,35 @@ function App() {
     } finally {
       nicpPollingRef.current = false;
       // the only place the fit's visualization (red wireframe+nodes
-      // template, dimmed patient mesh) ever gets torn down, success or
-      // failure alike - puts the viewer back to showing the patient's own
-      // mesh normally.
+      // template, dimmed patient mesh) ever gets torn down - on failure
+      // this is what puts the viewer back to showing the patient's own
+      // mesh normally; on success, the displayMesh call above already tore
+      // it down as part of loading the fit result, so this is a no-op by
+      // the time it runs.
       viewerRef.current?.hideNicpPreview();
       setFittingTemplate(false);
-      // if "compare to template" was checked, its mesh just got repurposed
-      // as the deforming preview (see Viewer.jsx's updateNicpPreview) and
-      // needs to be redrawn as a normal static comparison again - the
-      // effect above already does that, it just needs a nudge to re-run.
+      // on success, showTemplateOverlay was just switched off above, so
+      // this bump just lets the compare-to-template effect (and anything
+      // else keyed on meshRevision, e.g. the Analysis tab's overlays)
+      // notice the mesh actually changed - not a redraw request.
       setMeshRevision((n) => n + 1);
     }
   }
 
-  // fetches craniometrics/asymmetry once a completed run exists and the
-  // Analysis tab is actually open, and drives the matching live viewer
-  // overlay (HC-line/BPD/OFD for cranial, heatmap for facial) - re-fetches
-  // on meshRevision too, so re-running the pipeline (target switch, a
-  // fresh NICP fit) with the tab already open picks up the new numbers
-  // instead of showing stale ones.
+  // fetches craniometrics/asymmetry/metopic once a completed run exists and
+  // the Analysis tab is actually open - re-fetches on meshRevision too, so
+  // re-running the pipeline (target switch, a fresh NICP fit) with the tab
+  // already open picks up the new numbers instead of showing stale ones.
+  // resets analysisViewMode back to "metopic" (Forehead Morphology, the
+  // default view) on every fresh fetch so a mode picked for a previous
+  // session/run doesn't silently carry over.
   useEffect(() => {
     const onAnalysisTab = activeWorkspace === "analysis";
     if (!onAnalysisTab || !pipelineRan || !sessionId) {
       viewerRef.current?.hideMeasurementsOverlay();
       viewerRef.current?.hideHeatmap();
+      viewerRef.current?.hideMetopicOverlay();
+      viewerRef.current?.hideFrontalBossingOverlay();
       return;
     }
     let cancelled = false;
@@ -563,19 +733,8 @@ function App() {
         const results = await getResults(sessionId);
         if (cancelled) return;
         setAnalysisResults(results);
+        setAnalysisViewMode("metopic");
         setAnalysisStatus("");
-        if (results.craniometrics) {
-          viewerRef.current?.showMeasurementsOverlay({
-            hcPolygon: results.craniometrics.hc_slice_polygon,
-            frontOpt: results.craniometrics.front_opt,
-            occOpt: results.craniometrics.occ_opt,
-            lhOpt: results.craniometrics.lh_opt,
-            rhOpt: results.craniometrics.rh_opt,
-          });
-        }
-        if (results.asymmetry) {
-          viewerRef.current?.showHeatmap(results.asymmetry.heatmap);
-        }
       } catch (err) {
         if (!cancelled) setAnalysisStatus(`Failed to load results: ${err.message}`);
       }
@@ -586,13 +745,88 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeWorkspace, pipelineRan, sessionId, meshRevision]);
 
+  // drives the live viewer overlay to match whatever's currently loaded and
+  // selected (HC-line/BPD/OFD for cranial, heatmap or the metopic contour
+  // overlay for facial) - kept separate from the fetch above so toggling
+  // AnalysisPanel's asymmetry/metopic switch swaps overlays immediately,
+  // with no re-fetch needed.
+  useEffect(() => {
+    if (!analysisResults) return;
+    (async () => {
+      // craniometrics/asymmetry/metopic were all computed against
+      // result_mesh - if the viewer's currently showing a completed NICP
+      // fit instead (see handleFitTemplate), swap back before drawing
+      // anything, or these overlays would end up positioned against the
+      // wrong mesh entirely.
+      if (showingNicpResult) {
+        await viewerRef.current?.displayMesh(meshUrl(sessionId, "result"), { selectionHasTexture });
+        setShowingNicpResult(false);
+      }
+      viewerRef.current?.hideMeasurementsOverlay();
+      viewerRef.current?.hideHeatmap();
+      viewerRef.current?.hideMetopicOverlay();
+      viewerRef.current?.hideFrontalBossingOverlay();
+      if (analysisResults.craniometrics) {
+        viewerRef.current?.showMeasurementsOverlay({
+          hcPolygon: analysisResults.craniometrics.hc_slice_polygon,
+          frontOpt: analysisResults.craniometrics.front_opt,
+          occOpt: analysisResults.craniometrics.occ_opt,
+          lhOpt: analysisResults.craniometrics.lh_opt,
+          rhOpt: analysisResults.craniometrics.rh_opt,
+        });
+      }
+      // mirrors AnalysisPanel.jsx's own showAsymmetry/showMetopic
+      // derivation exactly, so the live 3D overlay always matches whatever
+      // the panel's numbers/mode-toggle are currently showing - Forehead
+      // Morphology is the default view (see the results-fetch effect
+      // above resetting to "metopic"), Facial Asymmetry only shows once
+      // explicitly selected.
+      const showModeToggle = analysisResults.asymmetry && analysisResults.metopic;
+      const showAsymmetry = analysisResults.asymmetry && (!showModeToggle || analysisViewMode === "asymmetry");
+      const showMetopic = analysisResults.metopic && (!showModeToggle || analysisViewMode !== "asymmetry");
+      if (showMetopic) {
+        viewerRef.current?.showMetopicOverlay(analysisResults.metopic);
+      } else if (showAsymmetry) {
+        viewerRef.current?.showHeatmap(analysisResults.asymmetry.heatmap);
+      }
+      // not mutually exclusive with anything above except the asymmetry
+      // heatmap specifically (see AnalysisPanel.jsx's showFrontalBossing) -
+      // computed for both targets, shows alongside craniometrics or the
+      // Forehead Morphology overlay, just not the plain asymmetry view.
+      if (analysisResults.frontal_bossing && !showAsymmetry) {
+        viewerRef.current?.showFrontalBossingOverlay(analysisResults.frontal_bossing);
+      }
+      // each show*Overlay call above just reset the mesh to its own default
+      // opacity - apply the user's actual slider value on top of that.
+      viewerRef.current?.setMeshOpacity(analysisMeshOpacity);
+    })();
+    // deliberately not deps of this effect (see handleAnalysisMeshOpacityChange
+    // for the opacity one): dragging the opacity slider shouldn't rebuild the
+    // whole overlay, and showingNicpResult is read once per run, not watched.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [analysisResults, analysisViewMode]);
+
+  function handleAnalysisMeshOpacityChange(value) {
+    setAnalysisMeshOpacity(value);
+    viewerRef.current?.setMeshOpacity(value);
+  }
+
   // same desktop-first-then-bundle-download fallback as handleSaveMeshes.
+  // patientMetadata rides along either way (POST body or GET query params -
+  // see api/sessions.js's saveAnalysis/analysisBundleUrl); cohortPath only
+  // on the desktop/POST path, since a one-shot zip download has nowhere
+  // persistent to append a cohort row into.
   async function handleExportAnalysis() {
     setExportingAnalysis(true);
     if (isDesktopApp()) {
       setExportAnalysisStatus("Exporting...");
       try {
-        const { saved_to: savedTo } = await saveAnalysis(sessionId, saveDestDir);
+        const { saved_to: savedTo } = await saveAnalysis(
+          sessionId,
+          saveDestDir,
+          patientMetadata,
+          cohortMode !== "none" ? cohortPath : null
+        );
         setExportAnalysisStatus(`Saved to ${savedTo}`);
         setExportingAnalysis(false);
         return;
@@ -606,20 +840,29 @@ function App() {
     }
     setExportAnalysisStatus("");
     setExportingAnalysis(false);
-    window.location.href = analysisBundleUrl(sessionId);
+    window.location.href = analysisBundleUrl(sessionId, patientMetadata);
   }
 
   // what the viewer actually shows: raw picks on the raw mesh before
   // alignment, the same picks re-projected into the aligned frame while
   // either "adjust picks" is active or the secondary-frontal checkbox gets
-  // ticked post-align (so there's something to click against for the extra
-  // point), or nothing once aligned and neither applies - this alone gives
-  // "remove landmarks after registration, only show them when adjust (or
-  // the alt-frontal pick) is toggled" with no separate hide/show
-  // bookkeeping. locked to hidden again once the pipeline has run - landmark
-  // *positions* are locked in at that point (align/adjust picks stay
-  // disabled); only target/resample tuning can still trigger a re-run.
-  const showAlignedLandmarks = alignSucceeded && !pipelineRan && (adjustingInAlignedFrame || useAltFrontal);
+  // ticked post-align with no 4th point picked yet (so there's something
+  // to click against for that extra point), or nothing once aligned and
+  // neither applies - this alone gives "remove landmarks after
+  // registration, only show them when adjust (or an unplaced alt-frontal
+  // pick) is toggled" with no separate hide/show bookkeeping. the
+  // "!landmarks[ALT_FRONTAL_NAME]" half matters: without it, a session
+  // that had all 4 landmarks (including alt-frontal) picked from the
+  // start never hides them after align at all, since useAltFrontal alone
+  // stays true forever once ticked - only the *unplaced* 4th-point case
+  // needs the aligned markers kept visible as click targets. locked to
+  // hidden again once the pipeline has run - landmark *positions* are
+  // locked in at that point (align/adjust picks stay disabled); only
+  // target/resample tuning can still trigger a re-run.
+  const showAlignedLandmarks =
+    alignSucceeded &&
+    !pipelineRan &&
+    (adjustingInAlignedFrame || (useAltFrontal && !landmarks[ALT_FRONTAL_NAME]));
   const displayLandmarks = !alignSucceeded
     ? landmarks
     : showAlignedLandmarks
@@ -637,6 +880,18 @@ function App() {
       activeWorkspace={activeWorkspace}
       onWorkspaceChange={setActiveWorkspace}
       inspectorTitle={inspectorTitle}
+      metadataForm={
+        sessionId != null && (
+          <PatientMetadataForm
+            metadata={patientMetadata}
+            onFieldChange={handlePatientMetadataFieldChange}
+            isDesktop={isDesktopApp()}
+            cohortMode={cohortMode}
+            cohortPath={cohortPath}
+            onCohortModeChange={handleCohortModeChange}
+          />
+        )
+      }
       inspector={
         onPreprocessingTab ? (
           <PreprocessingPanel
@@ -697,6 +952,10 @@ function App() {
             pipelineRan={pipelineRan}
             analysisResults={analysisResults}
             analysisStatus={analysisStatus}
+            analysisViewMode={analysisViewMode}
+            onSetAnalysisViewMode={setAnalysisViewMode}
+            analysisMeshOpacity={analysisMeshOpacity}
+            onAnalysisMeshOpacityChange={handleAnalysisMeshOpacityChange}
             onExportAnalysis={handleExportAnalysis}
             exportingAnalysis={exportingAnalysis}
             exportAnalysisStatus={exportAnalysisStatus}
@@ -732,7 +991,9 @@ function App() {
             onDrag={onPreprocessingTab ? handleDrag : undefined}
           />
           {sessionId == null && <p className="hint overlay">Upload a mesh to begin.</p>}
-          {onAnalysisTab && analysisResults?.asymmetry && (
+          {onAnalysisTab &&
+            analysisResults?.asymmetry &&
+            (!analysisResults?.metopic || analysisViewMode === "asymmetry") && (
             <div className="heatmap-scalar-bar">
               <span>+{heatmapMaxAbs(analysisResults.asymmetry.heatmap).toFixed(1)} mm</span>
               <div className="scalar-bar-gradient" />

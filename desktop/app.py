@@ -75,6 +75,24 @@ class Api:
         result = self._window.create_file_dialog(webview.FileDialog.FOLDER)
         return result[0] if result else None
 
+    def pick_excel_file(self, save: bool = False) -> str | None:
+        """the frontend's cohort-spreadsheet picker (see api/schemas.py's
+        SaveRequest.cohort_xlsx_path) - save=True opens a native Save
+        dialog (defaulting to cohort.xlsx, for "create a new cohort
+        file"), False opens a native Open dialog (for "add to an existing
+        one"). the backend side doesn't actually care which dialog
+        produced the path - create-vs-append collapses to the same upsert
+        operation either way, see results_bundle._upsert_cohort_xlsx."""
+        if self._window is None:
+            return None
+        dialog_type = webview.FileDialog.SAVE if save else webview.FileDialog.OPEN
+        result = self._window.create_file_dialog(
+            dialog_type,
+            save_filename="cohort.xlsx" if save else "",
+            file_types=("Excel files (*.xlsx)", "All files (*.*)"),
+        )
+        return result[0] if result else None
+
 
 def main() -> None:
     server_thread = threading.Thread(target=_run_server, daemon=True)
@@ -86,7 +104,7 @@ def main() -> None:
     webview.settings["ALLOW_DOWNLOADS"] = True
 
     api = Api()
-    window = webview.create_window("CraniumPy", f"http://{HOST}:{PORT}", width=1280, height=800, js_api=api)
+    window = webview.create_window("CranioSuite", f"http://{HOST}:{PORT}", width=1280, height=800, js_api=api)
     api._window = window
     webview.start()
 

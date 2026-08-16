@@ -113,6 +113,23 @@ class Session:
     # is. cleared by clear_clip_result() (a fresh clip invalidates any
     # prior fit) and by a plain (non-NICP) /run.
     nicp_result_mesh: trimesh.Trimesh | None = None
+    # the api.schemas.NicpConfig that produced nicp_result_mesh above - None
+    # whenever nicp_result_mesh is, kept as its own field (not read back out
+    # of the RunRequest that triggered it) purely so the save/export
+    # endpoints can report which template a fit actually used without
+    # threading a whole RunRequest through them. typed loosely (Any) to
+    # avoid api.sessions depending on api.schemas, same reasoning as
+    # last_clip_config above.
+    last_nicp_config: Any | None = None
+    # facial-target only - the HC slice height (in this session's facial
+    # registration frame), computed once by /clip via
+    # pipeline.hc_slice_height_facial_frame and reused by /run's metopic
+    # analysis, so both always describe the literal same plane a cranial
+    # run on this same patient would have used - see
+    # craniumpy_core.metopic's module docstring. None for cranial-target
+    # sessions (extract_measurements finds its own slice height inline, as
+    # it always has) or before /clip has run.
+    hc_slice_height: float | None = None
     job_status: JobStatus = "idle"
     job_error: str | None = None
     progress: dict[str, Any] = field(default_factory=lambda: {"stage": "idle", "detail": ""})
@@ -135,6 +152,8 @@ class Session:
         self.result_mesh = None
         self.sellion_result_mesh = None
         self.nicp_result_mesh = None
+        self.last_nicp_config = None
+        self.hc_slice_height = None
         self.result = None
 
     def report_progress(self, stage: str, detail: str = "", current: int | None = None, total: int | None = None) -> None:

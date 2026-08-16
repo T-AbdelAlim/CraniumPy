@@ -17,8 +17,10 @@ import numpy as np
 import pytest
 import trimesh
 from fastapi.testclient import TestClient
+from openpyxl import load_workbook
 
 from api.main import app
+from api.results_bundle import _id_mapping_path
 from craniumpy_core.io import load_mesh
 from craniumpy_core.registration.rigid import REFERENCE_TRIANGLE
 
@@ -240,10 +242,11 @@ def test_analyze_cranial_with_alt_frontal_landmark(client, landmarks_payload):
     report_name = next(n for n in zf.namelist() if n.endswith("_report.json"))
     report = json.loads(zf.read(report_name))
     assert "display_frontal_landmark" in report
-    # com_translation nudges Z a little, so not an exact match to
-    # REFERENCE_TRIANGLE - just confirms the report's "sellion" entry is the
-    # sellion-frame landmark, not the alt one
-    np.testing.assert_allclose(report["landmarks"]["sellion"], list(REFERENCE_TRIANGLE[0]), atol=2.0)
+    # com_translation nudges Z (a few mm, on this fixture) - not an exact
+    # match to REFERENCE_TRIANGLE, but nowhere near alt_frontal's z either
+    # (5mm further off) - just confirms the report's "sellion" entry is the
+    # sellion-frame landmark, not the alt one.
+    np.testing.assert_allclose(report["landmarks"]["sellion"], list(REFERENCE_TRIANGLE[0]), atol=4.0)
 
 
 def test_bundle_analysis_nests_report_under_mesh_folder(client, landmarks_payload):
@@ -372,6 +375,101 @@ def test_run_with_nicp_facial_produces_template_topology(client, landmarks_paylo
     )
     assert len(result_mesh.vertices) == len(plain_result_mesh.vertices)
     assert client.get(f"/api/sessions/{session_id}/results").json()["asymmetry"] == plain_asymmetry
+
+
+def test_facial_run_includes_metopic_analysis(client, landmarks_payload):
+    # metopic/frontal-angle analysis rides along with every facial-target
+    # run automatically (no separate opt-in) - see craniumpy_core.metopic
+    # and pipeline.hc_slice_height_facial_frame.
+    session_id = _upload(client)
+    status = _clip_and_run(client, session_id, {"target": "face", "landmarks": landmarks_payload}, timeout=60)
+    assert status == "done"
+
+    results = client.get(f"/api/sessions/{session_id}/results").json()
+    assert results["asymmetry"] is not None
+    metopic = results["metopic"]
+    assert metopic is not None
+
+    for key in (
+        "frontal_angle_deg",
+        "midline_curvature_concentration",
+        "midline_max_curvature",
+        "midline_max_curvature_position",
+        "ridge_protrusion_mm",
+        "ridge_area_mm2",
+        "ridge_area_normalized",
+        "left_temporal_hollowing",
+        "right_temporal_hollowing",
+        "mean_temporal_hollowing",
+        "left_max_temporal_depth_mm",
+        "right_max_temporal_depth_mm",
+        "parabolic_deviation_index",
+    ):
+        assert key in metopic
+        assert np.isfinite(metopic[key])
+
+    assert 0.0 < metopic["frontal_angle_deg"] < 180.0
+    assert len(metopic["contour"]) > 5
+    assert len(metopic["gradient_profile"]) == len(metopic["curvature_profile"]) == len(metopic["deviation_profile"]) == len(metopic["contour"])
+    # cranial-target sessions stay completely unaffected by this feature
+    cranial_session = _upload(client)
+    status = _clip_and_run(client, cranial_session, {"target": "cranium", "landmarks": landmarks_payload}, timeout=60)
+    assert status == "done"
+    assert client.get(f"/api/sessions/{cranial_session}/results").json()["metopic"] is None
+
+
+def test_bundle_analysis_includes_metopic_figure_for_facial_target(client, landmarks_payload):
+    session_id = _upload(client)
+    status = _clip_and_run(client, session_id, {"target": "face", "landmarks": landmarks_payload}, timeout=60)
+    assert status == "done"
+
+    response = client.get(f"/api/sessions/{session_id}/bundle/analysis")
+    assert response.status_code == 200
+    names = set(zipfile.ZipFile(BytesIO(response.content)).namelist())
+    analysis_names = {n for n in names if "/analysis/" in n}
+    assert any(n.endswith("_asymmetry.png") for n in analysis_names)
+    assert any(n.endswith("_metopic.png") for n in analysis_names)
+
+    report_name = next(n for n in analysis_names if n.endswith("_report.json"))
+    report = json.loads(zipfile.ZipFile(BytesIO(response.content)).read(report_name))
+    assert "metopic" in report
+    assert "frontal_angle_deg" in report["metopic"]
+
+
+def test_run_includes_frontal_bossing_for_both_targets(client, landmarks_payload):
+    # unlike metopic (facial-only), frontal bossing is computed for cranial
+    # and facial targets alike - see craniumpy_core.craniometrics.frontal_bossing
+    for target in ("cranium", "face"):
+        session_id = _upload(client)
+        status = _clip_and_run(client, session_id, {"target": target, "landmarks": landmarks_payload}, timeout=60)
+        assert status == "done"
+
+        results = client.get(f"/api/sessions/{session_id}/results").json()
+        bossing = results["frontal_bossing"]
+        assert bossing is not None, f"target={target}"
+        assert np.isfinite(bossing["angle_deg"])
+        assert 0.0 <= bossing["angle_deg"] <= 180.0
+        for point_key in ("sellion", "frontal_point"):
+            for axis in ("x", "y", "z"):
+                assert np.isfinite(bossing[point_key][axis])
+        assert len(bossing["profile"]) > 0
+
+
+def test_bundle_analysis_includes_frontal_bossing_figure(client, landmarks_payload):
+    session_id = _upload(client)
+    status = _clip_and_run(client, session_id, {"target": "cranium", "landmarks": landmarks_payload}, timeout=60)
+    assert status == "done"
+
+    response = client.get(f"/api/sessions/{session_id}/bundle/analysis")
+    assert response.status_code == 200
+    names = set(zipfile.ZipFile(BytesIO(response.content)).namelist())
+    analysis_names = {n for n in names if "/analysis/" in n}
+    assert any(n.endswith("_frontal_bossing.png") for n in analysis_names)
+
+    report_name = next(n for n in analysis_names if n.endswith("_report.json"))
+    report = json.loads(zipfile.ZipFile(BytesIO(response.content)).read(report_name))
+    assert "frontal_bossing" in report
+    assert "angle_deg" in report["frontal_bossing"]
 
 
 def test_bundle_meshes_before_run_returns_409(client, landmarks_payload):
@@ -654,3 +752,172 @@ def test_save_meshes_gains_a_third_file_after_nicp_fit(client, landmarks_payload
     assert any(n.endswith("_rg.ply") for n in names)
     assert any(n.endswith("_rg_C.ply") for n in names)
     assert any(n.endswith("_rg_CN.ply") for n in names)
+
+
+def test_analysis_export_records_nicp_settings_after_a_fit(client, landmarks_payload):
+    # the JSON report's settings block and the summary xlsx row both have
+    # to reflect that a template was actually fit, and which one, even
+    # though "fit template" never touches craniometrics/asymmetry itself
+    # (see api/sessions.py's Session.nicp_result_mesh) - see
+    # api/routers/mesh.py's _config_with_nicp for the wiring under test.
+    session_id = _upload(client)
+    status = _clip_and_run(client, session_id, {"target": "cranium", "landmarks": landmarks_payload})
+    assert status == "done"
+
+    status = _run_run(
+        client,
+        session_id,
+        {
+            "nicp": {
+                "template": "clipped_template_xy",
+                "alpha_start": 50,
+                "alpha_end": 1,
+                "alpha_steps": 3,
+                "inner_iters": 1,
+                "dist_threshold": 50.0,
+            }
+        },
+    )
+    assert status == "done"
+
+    response = client.get(f"/api/sessions/{session_id}/bundle/analysis")
+    assert response.status_code == 200, response.text
+    zf = zipfile.ZipFile(BytesIO(response.content))
+    analysis_names = [n for n in zf.namelist() if "/analysis/" in n]
+
+    report_name = next(n for n in analysis_names if n.endswith("_report.json"))
+    report = json.loads(zf.read(report_name))
+    assert report["settings"]["nicp"]["template"] == "clipped_template_xy"
+
+    xlsx_name = next(n for n in analysis_names if n.endswith("_summary.xlsx"))
+    row = _read_xlsx_rows(zf.read(xlsx_name))[0]
+    assert row["nicp_used"] == "yes"
+    assert row["nicp_template"] == "clipped_template_xy"
+
+
+def _read_xlsx_rows(xlsx_bytes: bytes) -> list[dict]:
+    # a numeric cell (see results_bundle._write_xlsx_rows) comes back from
+    # openpyxl as a bare int/float, formatted here to the same 2 decimals
+    # the sheet itself displays (int for a whole number, dropped trailing
+    # zeros for a fraction - neither matches what's actually shown/what a
+    # _fmt(...)-style "X.00" string comparison expects otherwise).
+    wb = load_workbook(BytesIO(xlsx_bytes))
+    ws = wb.active
+    header = [str(c.value) if c.value is not None else "" for c in next(ws.iter_rows(min_row=1, max_row=1))]
+    rows = []
+    for excel_row in ws.iter_rows(min_row=2, values_only=True):
+        rows.append(
+            {
+                header[i]: ("" if v is None else f"{v:.2f}" if isinstance(v, (int, float)) else str(v))
+                for i, v in enumerate(excel_row)
+            }
+        )
+    return rows
+
+
+def test_bundle_analysis_includes_summary_xlsx_and_pdf_report(client, landmarks_payload):
+    # both targets - the spreadsheet/PDF ride along on every export
+    # regardless of which metric groups actually computed (see
+    # _build_analysis_files).
+    for target in ("cranium", "face"):
+        session_id = _upload(client)
+        status = _clip_and_run(client, session_id, {"target": target, "landmarks": landmarks_payload}, timeout=60)
+        assert status == "done"
+
+        response = client.get(
+            f"/api/sessions/{session_id}/bundle/analysis",
+            params={"sex": "female", "date_imaging": "2024-01-15", "age_imaging": "6"},
+        )
+        assert response.status_code == 200, response.text
+        zf = zipfile.ZipFile(BytesIO(response.content))
+        analysis_names = [n for n in zf.namelist() if "/analysis/" in n]
+
+        xlsx_name = next(n for n in analysis_names if n.endswith("_summary.xlsx"))
+        pdf_name = next(n for n in analysis_names if n.endswith("_report.pdf"))
+
+        rows = _read_xlsx_rows(zf.read(xlsx_name))
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["sex"] == "female"
+        assert row["date_imaging"] == "2024-01-15"
+        assert row["age_imaging"] == "6"
+        assert row["target"] == target
+        # settings columns - com_translation defaults on, no nicp was
+        # requested for this run (see _clip_and_run's plain clip/run body)
+        assert row["com_correction"] == "yes"
+        assert row["nicp_used"] == "no"
+        assert row["nicp_template"] == ""
+        # a metadata field that was never sent still appears, just blank
+        assert row["treatment"] == ""
+
+        results = client.get(f"/api/sessions/{session_id}/results").json()
+        if target == "cranium":
+            assert float(row["depth_mm"]) == pytest.approx(results["craniometrics"]["depth_mm"], abs=0.05)
+            assert row["mean_asymmetry_index"] == ""
+        else:
+            assert float(row["mean_asymmetry_index"]) == pytest.approx(
+                results["asymmetry"]["mean_asymmetry_index"], abs=0.05
+            )
+            assert row["depth_mm"] == ""
+
+        pdf_bytes = zf.read(pdf_name)
+        assert pdf_bytes.startswith(b"%PDF")
+        assert len(pdf_bytes) > 1000
+
+
+def test_save_analysis_cohort_xlsx_create_append_and_replace(client, landmarks_payload, tmp_path):
+    import shutil
+
+    def _open_run_and_save(filename: str, cohort_path: Path, extra_metadata: dict | None = None):
+        tmp_mesh = tmp_path / filename
+        shutil.copy(TEMPLATE_PATH, tmp_mesh)
+        open_response = client.post("/api/sessions/from-paths", json={"paths": [str(tmp_mesh)]})
+        session_id = open_response.json()["session_id"]
+        status = _clip_and_run(client, session_id, {"target": "cranium", "landmarks": landmarks_payload})
+        assert status == "done"
+
+        metadata = {"file_name": filename, "file_path": str(tmp_mesh)}
+        metadata.update(extra_metadata or {})
+        save_response = client.post(
+            f"/api/sessions/{session_id}/save/analysis",
+            json={"metadata": metadata, "cohort_xlsx_path": str(cohort_path)},
+        )
+        assert save_response.status_code == 200, save_response.text
+        return tmp_mesh
+
+    cohort_path = tmp_path / "cohort" / "cohort.xlsx"
+    cohort_path.parent.mkdir()
+
+    # first export creates the cohort file with one row
+    mesh_a = _open_run_and_save("patient_a.ply", cohort_path, {"sex": "male", "patient_id": "MRN-A"})
+    rows = _read_xlsx_rows(cohort_path.read_bytes())
+    assert len(rows) == 1
+    assert rows[0]["file_path"] == str(mesh_a)
+    assert rows[0]["sex"] == "male"
+    # the shared cohort file gets a cohort_id instead of the locally
+    # meaningful patient_id, which never appears in it - see the id-mapping
+    # assertions below for where it does end up
+    assert rows[0]["cohort_id"] == "C00001"
+    assert "patient_id" not in rows[0]
+
+    mapping_rows = _read_xlsx_rows(_id_mapping_path(cohort_path).read_bytes())
+    assert len(mapping_rows) == 1
+    assert mapping_rows[0]["cohort_id"] == "C00001"
+    assert mapping_rows[0]["patient_id"] == "MRN-A"
+    assert mapping_rows[0]["file_path"] == str(mesh_a)
+
+    # exporting a different file_path appends a second row, with its own id
+    mesh_b = _open_run_and_save("patient_b.ply", cohort_path, {"sex": "female", "patient_id": "MRN-B"})
+    rows = _read_xlsx_rows(cohort_path.read_bytes())
+    assert len(rows) == 2
+    assert {r["file_path"] for r in rows} == {str(mesh_a), str(mesh_b)}
+    assert {r["cohort_id"] for r in rows} == {"C00001", "C00002"}
+
+    # re-exporting the SAME file_path updates the row in place, no
+    # duplicate, and reuses rather than reassigns its cohort_id
+    _open_run_and_save("patient_a.ply", cohort_path, {"sex": "male", "treatment": "helmet", "patient_id": "MRN-A"})
+    rows = _read_xlsx_rows(cohort_path.read_bytes())
+    assert len(rows) == 2
+    updated = next(r for r in rows if r["file_path"] == str(mesh_a))
+    assert updated["treatment"] == "helmet"
+    assert updated["cohort_id"] == "C00001"

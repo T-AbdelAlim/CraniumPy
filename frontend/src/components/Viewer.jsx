@@ -7,6 +7,8 @@ import { pointerToNdc, raycastMesh, raycastMarkers } from "../three/picking.js";
 import { syncLandmarkMarkers, disposeLandmarkMarkers } from "../three/landmarksLayer.js";
 import { addTemplateOverlay, removeTemplateOverlay, removeTemplateOverlayExtras } from "../three/templateOverlay.js";
 import { addMeasurementsOverlay, removeMeasurementsOverlay, applyHeatmap, removeHeatmap } from "../three/measurementsLayer.js";
+import { addMetopicOverlay, removeMetopicOverlay } from "../three/metopicOverlay.js";
+import { addFrontalBossingOverlay, removeFrontalBossingOverlay } from "../three/frontalBossingOverlay.js";
 import { addNodesOverlay, removeNodesOverlay, resyncNodesGeometry } from "../three/nicpFitVisualization.js";
 
 // deforming-template color during a live NICP fit - matches the --hc red
@@ -19,6 +21,12 @@ const NICP_DEFORM_COLOR = 0xd1453d;
 // technical visualization aid during a fit, not meant to track the mesh's
 // real appearance.
 const TARGET_NODE_COLOR = 0xe8d9c0;
+// Analysis workspace's starting mesh opacity, whenever a measurements/
+// heatmap/metopic overlay first shows - the user's own opacity slider
+// (App.jsx's analysisMeshOpacity, via setMeshOpacity) immediately overrides
+// this on every subsequent render, but this is what a fresh overlay shows
+// before that ever fires.
+const ANALYSIS_DEFAULT_MESH_OPACITY = 0.35;
 
 // reusable viewer: knows how to load and show a GLB and nothing else - no
 // sessions, no fetch, no upload, no landmark *naming*. wireframe/
@@ -38,8 +46,17 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
   const meshStateRef = useRef({ object: null, materials: [], markerRadius: 2 });
   const markersRef = useRef({});
   const templateOverlayRef = useRef(null);
+  // bumped on every operation that changes what templateOverlayRef "owns"
+  // (a fresh showTemplateOverlay call, hiding it, a mesh swap, or the NICP
+  // preview repurposing it) - showTemplateOverlay checks this after its own
+  // async GLB load resolves, so a call superseded by a newer one (or a
+  // reset) while still loading just discards its result instead of adding
+  // a second template object nothing then owns/cleans up. see
+  // showTemplateOverlay's own comment for the race this fixes.
+  const templateOverlayTokenRef = useRef(0);
   const measurementsOverlayRef = useRef(null);
-  const heatmapRef = useRef(null);
+  const metopicOverlayRef = useRef(null);
+  const frontalBossingOverlayRef = useRef(null);
   const nicpPreviewRef = useRef(null);
   const nicpPreviewNodesRef = useRef(null);
   const mainMeshNodesRef = useRef(null);
@@ -72,9 +89,10 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
       if (sceneBagRef.current) {
         removeTemplateOverlay(sceneBagRef.current, templateOverlayRef.current);
         removeMeasurementsOverlay(sceneBagRef.current, measurementsOverlayRef.current);
+        removeMetopicOverlay(sceneBagRef.current, metopicOverlayRef.current);
+        removeFrontalBossingOverlay(sceneBagRef.current, frontalBossingOverlayRef.current);
         if (nicpPreviewRef.current) sceneBagRef.current.scene.remove(nicpPreviewRef.current);
       }
-      removeHeatmap(heatmapRef.current);
       removeNodesOverlay(nicpPreviewNodesRef.current);
       removeNodesOverlay(mainMeshNodesRef.current);
       disposeMesh(nicpPreviewRef.current);
@@ -160,15 +178,18 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
       // a direct reference to the old mesh's material) rather than leave
       // them pointing at a stale/disposed mesh; the caller re-shows
       // whichever were on once the new mesh is in.
+      templateOverlayTokenRef.current++;
       if (sceneBagRef.current) {
         removeTemplateOverlay(sceneBagRef.current, templateOverlayRef.current);
         removeMeasurementsOverlay(sceneBagRef.current, measurementsOverlayRef.current);
+        removeMetopicOverlay(sceneBagRef.current, metopicOverlayRef.current);
+        removeFrontalBossingOverlay(sceneBagRef.current, frontalBossingOverlayRef.current);
         if (nicpPreviewRef.current) sceneBagRef.current.scene.remove(nicpPreviewRef.current);
       }
       templateOverlayRef.current = null;
       measurementsOverlayRef.current = null;
-      removeHeatmap(heatmapRef.current);
-      heatmapRef.current = null;
+      metopicOverlayRef.current = null;
+      frontalBossingOverlayRef.current = null;
       removeNodesOverlay(nicpPreviewNodesRef.current);
       nicpPreviewNodesRef.current = null;
       removeNodesOverlay(mainMeshNodesRef.current);
@@ -204,6 +225,7 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
       if (!nicpPreviewRef.current) {
         let object;
         if (templateOverlayRef.current) {
+          templateOverlayTokenRef.current++;
           object = templateOverlayRef.current.templateObject;
           removeTemplateOverlayExtras(sceneBag, templateOverlayRef.current);
           templateOverlayRef.current = null;
@@ -258,13 +280,26 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
     // whatever mesh is currently shown - returns the mesh/template centroid
     // offset (mm) for the panel's readout, or null if there's no mesh to
     // compare against yet.
+    // the caller (App.jsx's compare-to-template effect) can fire this again
+    // - a different template picked, a fresh pipeline run - before a
+    // previous call's GLB load has even resolved, since neither this
+    // method nor the effect await/cancel each other. the token makes only
+    // the LATEST call actually win: an earlier call whose load resolves
+    // after being superseded just disposes what it loaded instead of
+    // adding a second template object that templateOverlayRef then has no
+    // way to track/remove - that was the "two templates on top of each
+    // other, two axes systems" bug.
     async showTemplateOverlay(url) {
       const sceneBag = sceneBagRef.current;
       const meshObject = meshStateRef.current.object;
       if (!sceneBag || !meshObject) return null;
-      removeTemplateOverlay(sceneBag, templateOverlayRef.current);
-      templateOverlayRef.current = null;
+      const token = ++templateOverlayTokenRef.current;
       const templateObject = await loadGlb(gltfLoaderRef.current, url);
+      if (token !== templateOverlayTokenRef.current) {
+        disposeMesh(templateObject);
+        return null;
+      }
+      removeTemplateOverlay(sceneBag, templateOverlayRef.current);
       const { handle, offset } = addTemplateOverlay({
         sceneBag,
         templateObject,
@@ -276,14 +311,16 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
     },
     hideTemplateOverlay() {
       const sceneBag = sceneBagRef.current;
+      templateOverlayTokenRef.current++;
       if (!sceneBag) return;
       removeTemplateOverlay(sceneBag, templateOverlayRef.current);
       templateOverlayRef.current = null;
     },
     // HC-slice ring + BPD/OFD spans, live on the currently-shown (cranial)
     // result mesh - the Analysis workspace's cranial visualization. dims
-    // the mesh a bit (same fixed 0.75 the old app used) so a line running
-    // along the far side of the surface doesn't just disappear into it.
+    // the mesh so a line running along the far side of the surface doesn't
+    // just disappear into it - the user's own opacity slider (App.jsx's
+    // analysisMeshOpacity) takes over immediately after via setMeshOpacity.
     showMeasurementsOverlay({ hcPolygon, frontOpt, occOpt, lhOpt, rhOpt }) {
       const sceneBag = sceneBagRef.current;
       if (!sceneBag) return;
@@ -295,9 +332,9 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
         occOpt,
         lhOpt,
         rhOpt,
-        markerRadius: meshStateRef.current.markerRadius,
+        markerRadius: meshStateRef.current.markerRadius * 1.2,
       });
-      applyOpacityState(meshStateRef, 0.75);
+      applyOpacityState(meshStateRef, ANALYSIS_DEFAULT_MESH_OPACITY);
     },
     hideMeasurementsOverlay() {
       const sceneBag = sceneBagRef.current;
@@ -308,34 +345,74 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
     },
     // per-vertex asymmetry heatmap on the currently-shown (facial) result
     // mesh - the Analysis workspace's facial visualization. applyHeatmap
-    // swaps in fresh per-child materials outside of meshStateRef's own
-    // materials list, so that list gets rebuilt here (same pattern
-    // applyTextureState uses) before dimming, or the opacity change
-    // wouldn't reach the heatmap material at all.
+    // tints whichever material(s) are already assigned in place (see its
+    // own docstring) rather than swapping in new ones, so
+    // meshStateRef.current.materials already points at the right objects -
+    // no rebuild needed the way texture toggling needs one.
     showHeatmap(heatmap) {
       const meshObject = meshStateRef.current.object;
       if (!meshObject) return;
-      removeHeatmap(heatmapRef.current);
-      heatmapRef.current = applyHeatmap(meshObject, heatmap);
-      const materials = [];
-      meshObject.traverse((child) => {
-        if (child.isMesh) materials.push(child.material);
-      });
-      meshStateRef.current.materials = materials;
-      applyOpacityState(meshStateRef, 0.75);
+      applyHeatmap(meshObject, heatmap);
+      applyOpacityState(meshStateRef, ANALYSIS_DEFAULT_MESH_OPACITY);
     },
     hideHeatmap() {
-      removeHeatmap(heatmapRef.current);
-      heatmapRef.current = null;
-      const meshObject = meshStateRef.current.object;
-      if (meshObject) {
-        const materials = [];
-        meshObject.traverse((child) => {
-          if (child.isMesh) materials.push(child.material);
-        });
-        meshStateRef.current.materials = materials;
-      }
+      removeHeatmap(meshStateRef.current.object);
       applyOpacityState(meshStateRef, 1.0);
+    },
+    // forehead contour + fitted parabola + regions + frontal-angle
+    // construction, live on the currently-shown (facial) result mesh -
+    // the Analysis workspace's metopic/frontal-shape visualization,
+    // mutually exclusive with the heatmap above (see App.jsx's
+    // analysisViewMode). same dim-the-mesh treatment as the other two
+    // overlays, so the contour/regions read clearly against the surface.
+    showMetopicOverlay(metopic) {
+      const sceneBag = sceneBagRef.current;
+      if (!sceneBag) return;
+      removeMetopicOverlay(sceneBag, metopicOverlayRef.current);
+      metopicOverlayRef.current = addMetopicOverlay({
+        sceneBag,
+        metopic,
+        markerRadius: meshStateRef.current.markerRadius * 1.2,
+      });
+      applyOpacityState(meshStateRef, ANALYSIS_DEFAULT_MESH_OPACITY);
+    },
+    hideMetopicOverlay() {
+      const sceneBag = sceneBagRef.current;
+      if (!sceneBag) return;
+      removeMetopicOverlay(sceneBag, metopicOverlayRef.current);
+      metopicOverlayRef.current = null;
+      applyOpacityState(meshStateRef, 1.0);
+    },
+    // sellion -> forehead-point angle, live on whichever result mesh is
+    // currently shown (cranial or facial) - unlike the heatmap/metopic pair
+    // above, this one isn't mutually exclusive with anything: it shows
+    // alongside the HC/BPD/OFD overlay on a cranial target, or alongside
+    // the heatmap/metopic overlay on a facial one. doesn't touch mesh
+    // opacity itself - whichever of those already dimmed the mesh owns that.
+    showFrontalBossingOverlay(frontalBossing) {
+      const sceneBag = sceneBagRef.current;
+      if (!sceneBag) return;
+      removeFrontalBossingOverlay(sceneBag, frontalBossingOverlayRef.current);
+      frontalBossingOverlayRef.current = addFrontalBossingOverlay({
+        sceneBag,
+        frontalBossing,
+        markerRadius: meshStateRef.current.markerRadius * 1.2,
+      });
+    },
+    hideFrontalBossingOverlay() {
+      const sceneBag = sceneBagRef.current;
+      if (!sceneBag) return;
+      removeFrontalBossingOverlay(sceneBag, frontalBossingOverlayRef.current);
+      frontalBossingOverlayRef.current = null;
+    },
+    // the Analysis workspace's opacity slider - only ever touches the
+    // mesh's own material(s), never the measurement/heatmap/metopic
+    // overlay objects (separate Object3Ds with their own materials, see
+    // measurementsLayer.js/metopicOverlay.js) - so dragging it makes the
+    // surface more see-through without fading the lines/markers drawn on
+    // top of it.
+    setMeshOpacity(value) {
+      applyOpacityState(meshStateRef, value);
     },
   }));
 
