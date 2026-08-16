@@ -10,7 +10,7 @@
     * [Visualization](#visualization)
     * [Automated measurement extraction](#automated-measurement-extraction)
     * [Forehead morphology and frontal bossing](#forehead-morphology-and-frontal-bossing)
-    * [Facial asymmetry calculation](#facial-asymmetry-calculation)
+    * [Asymmetry calculation](#asymmetry-calculation)
     * [Mesh cleanup](#mesh-cleanup)
     * [Patient/visit metadata and reporting](#patientvisit-metadata-and-reporting)
     * [Cohort export and cohort IDs](#cohort-export-and-cohort-ids)
@@ -40,8 +40,9 @@ Current capabilities (rigid registration and manual landmarking only, see [Regis
 * Mesh repair ([PyMeshFix](https://pymeshfix.pyvista.org/)) and optional resampling to a target vertex count.
 * [Validated](http://dx.doi.org/10.1097/SCS.0000000000009448) automated cranial measurements (OFD, BPD, cephalic index, occipitofrontal circumference, mesh volume).
 * Forehead morphology and frontal bossing: a bossing angle, a fitted-parabola deviation profile, ridge protrusion/area, temporal hollowing, and a parabolic deviation index.
-* Facial asymmetry scoring, with an in-viewer colour scale.
-* Patient/visit metadata entry, a plain-language PDF report, and a per-patient/cohort Excel export that tracks the settings each run actually used (center-of-mass correction, NICP template) alongside every measurement - see [Patient/visit metadata and reporting](#patientvisit-metadata-and-reporting).
+* Asymmetry scoring for both cranial and facial targets, with an in-viewer colour scale and a side-on companion figure in the saved report.
+* Switching between Cranial Vault and Face & Forehead mid-session keeps your landmarks and alignment, and instantly restores whatever scene you'd already built for that target - nothing gets recomputed.
+* Patient/visit metadata entry (including a diagnosis field with a craniosynostosis-subtype quick-pick), a plain-language PDF report, and a per-patient/cohort Excel export that tracks the settings each run actually used (center-of-mass correction, NICP template) alongside every measurement - see [Patient/visit metadata and reporting](#patientvisit-metadata-and-reporting). Checkboxes let you choose what to include (measurements/asymmetry/meshes) each time you export.
 
 ![Reconstruction](resources/CraniumPy_info.png)
 
@@ -78,7 +79,9 @@ Once your landmarks are picked, press **"align"**. This is purely the rigid land
 
 **"adjust picks"** puts your landmarks back on screen, now on the aligned mesh instead of the raw scan - often an easier pose to judge a click against. **Alt-drag** a marker to move it, then press "align" again to re-register with the adjustment. The app tracks the rigid transform "align" used, so a drag on the aligned mesh gets converted back to the raw scan's own coordinates before it's stored - "run pipeline" and the saved report always end up describing whatever you most recently adjusted, however many times you've adjusted and re-aligned.
 
-**"undo"** goes back to the raw, unaligned mesh. Changing a landmark, the alt-frontal toggle, or the target (cranial/facial) invalidates the current alignment - you'll need to press "align" again before "run pipeline" unlocks.
+**"reset"** goes back to the raw, unaligned mesh and clears every target's scene for this upload. Changing a landmark or the alt-frontal toggle invalidates the current alignment - you'll need to press "align" again before "run pipeline" unlocks.
+
+Switching between **Cranial Vault** and **Face & Forehead** does not invalidate alignment: your landmarks carry over, and a quick automatic re-registration keeps the preview accurate for whichever target you just switched to. If you'd already run the pipeline for that target earlier in the session, the exact scene you left - mesh, template comparison, everything - comes back instantly instead of being recomputed. Switching to a target you haven't processed yet starts it from the aligned mesh, same as usual.
 
 **"run pipeline"** is the actual committed step: repairs the mesh, clips it to the plane guided by your landmarks (cranial or facial, matching the target you picked - there's no manual clip-plane option right now), resamples if checked, and applies center-of-mass correction if checked - all in one go. The clip boundary is left open, not capped, since repair runs before clipping, so exported meshes may appear open at the cut. Repair is the slow part - it only actually runs on the first "run pipeline" press per mesh; later presses (different vertex count, re-aligned landmarks, toggling center-of-mass correction) reuse that already-repaired mesh instead of re-running it.
 
@@ -95,9 +98,13 @@ Fitting is deliberately independent of the rest of the analysis: it never touche
 ### Visualization
 After analysis, "Visualization" lets you show either the metrics/asymmetry view or a template comparison over the result mesh, never both at once, since they'd occupy the same space on the viewer.
 
-**Metrics** (cranial, default): draws the HC circumference ring (red), BPD span (blue), and OFD span (green) on the mesh, the same colours as the saved 2D figure, plus the frontal bossing construction (sellion, most-anterior forehead point, and the horizontal reference the angle was measured against). The mesh goes semi-transparent while these are showing so a line running along the far side stays visible, and a panel over the viewer shows the numeric values.
+**Cranial Vault** - **Cranial Measurements** (default): draws the HC circumference ring (red), BPD span (blue), and OFD span (green) on the mesh, the same colours as the saved 2D figure, plus the frontal bossing construction (sellion, the forehead point at the same slice height as the HC ring, and the horizontal reference the angle was measured against). A toggle switches to **Cranial Asymmetry** - see below. The mesh goes semi-transparent while these are showing so a line running along the far side stays visible, and a panel over the viewer shows the numeric values.
 
-**Asymmetry** (facial, default): tints the mesh with the same blue(dented in)/white/red(protruding out) heatmap as the saved 2D figure, with a colour scale bar over the viewer. Toggle to **Forehead Morphology** to see the fitted-parabola contour, frontal-angle construction, and ridge/temporal region overlays instead.
+**Face & Forehead** - **Forehead Morphology** (default): the fitted-parabola contour, frontal-angle construction, and ridge/temporal region overlays, plus the same frontal bossing construction as above. A toggle switches to **Facial Asymmetry** - see below.
+
+**Asymmetry** (either target): tints the mesh with the same blue(dented in)/white/red(protruding out) heatmap as the saved 2D figure, with a colour scale bar over the viewer. The saved report additionally includes a second, side-on companion figure of the same heatmap.
+
+Every measurement and graph in the Analysis panel has a hover (?) icon explaining what it is and how it's derived - the forehead-morphology profile graphs additionally shade the ridge/temple windows each number above is actually computed from, and show a dashed reference curve for the fitted-parabola comparison every deviation-based number is measured against (see [Forehead morphology and frontal bossing](#forehead-morphology-and-frontal-bossing)).
 
 **Template alignment**: displays a semi-transparent reference template over the result, with axes and center-of-gravity markers for both meshes. Hidden automatically once a NICP fit exists, since the fitted mesh is the more informative comparison at that point.
 
@@ -118,26 +125,30 @@ Validated for pediatric heads only. Hard-coded sanity bounds apply (see `src/cra
 ### Forehead morphology and frontal bossing
 Computed for both cranial and facial targets, from the same head-circumference slice height a cranial run on the same patient would use (reconstructed in the facial frame when needed, so the two always describe the same physical plane):
 
-* **Frontal bossing angle** - the angle, in the sagittal plane through sellion, between horizontal and the vector to the most anterior point of the forehead. A smaller angle reads as a more prominent, forward-projecting forehead; larger reads as flatter/receding. Computed once, at the same stage as the cranial measurements, and carried into whichever frame is displayed (including a secondary frontal landmark's frame) without being re-derived, so the drawn construction never disagrees with the reported number.
-* **Forehead contour analysis** - a parabola robustly fitted to the lateral portions of the 2D forehead contour, from which a frontal angle, forehead width, midline curvature concentration, midline ridge protrusion/area, per-side temporal hollowing and maximum temporal depth, and an overall parabolic deviation index are derived. See `src/craniumpy_core/metopic.py` for the closed-form definitions.
+* **Frontal bossing angle** - the angle, in the sagittal plane through sellion, between horizontal and the vector to the forehead point at the same slice height used for the head-circumference measurement, so the two numbers are read off a matching physical plane. A smaller angle reads as a more prominent, forward-projecting forehead; larger reads as flatter/receding. Computed once, at the same stage as the cranial measurements, and carried into whichever frame is displayed (including a secondary frontal landmark's frame) without being re-derived, so the drawn construction never disagrees with the reported number.
+* **Forehead contour analysis** - a parabola robustly fitted to the lateral portions ("shoulders") of the 2D forehead contour - specifically fit to this patient's own contour, not to a healthy-head template - from which a frontal angle, forehead width, midline curvature concentration, midline ridge protrusion/area (signed: positive means the center sticks out past the parabola, negative means it falls short of it), per-side temporal hollowing and maximum temporal depth, and an overall parabolic deviation index are derived. Because the reference parabola comes from this same forehead's own flanks rather than a population norm, deviation from it is best read as "how localized to the center this is relative to the rest of this forehead," not "how abnormal this forehead is" outright - see [Known issues](#known-issues). See `src/craniumpy_core/metopic.py` for the closed-form definitions.
 
 These forehead metrics are new, reproducible definitions with a reference implementation, not yet validated against a clinical severity score - see [Known issues](#known-issues).
 
-### Facial asymmetry calculation
-Mirrors a facially-registered mesh across the midline and measures per-vertex distance to the mirrored surface, producing a heatmap (mm) and a mean facial asymmetry index (MFAI). The viewer shows a colour scale bar alongside the heatmap. The saved figure has its own.
+### Asymmetry calculation
+Mirrors a registered mesh across the midline and measures per-vertex distance to the mirrored surface, producing a heatmap (mm) and a mean asymmetry index - computed the same way for both targets (a cranial asymmetry index, shown top-down, and a facial asymmetry index, shown frontally). The viewer shows a colour scale bar alongside the heatmap; the saved figures have their own, plus a second, side-on companion figure.
 
-The heatmap and MFAI describe opposite halves of the face by default, a quirk carried over from the original algorithm (see `src/craniumpy_core/asymmetry.py`).
+The heatmap and the index describe opposite halves by default, a quirk carried over from the original algorithm (see `src/craniumpy_core/asymmetry.py`).
 
 ### Mesh cleanup
 Resampling to a target vertex count (optional, default 10000) is one part of what "run pipeline" does - see [Registration and clipping](#registration-and-clipping) above for the rest (repair, clip, center-of-mass correction). The measurement algorithm was validated at 10000 vertices.
 
 ### Patient/visit metadata and reporting
-A form in the sidebar collects patient/visit fields before you export: patient ID, sex, imaging date, age at imaging, treatment, age at surgery, and one free-text variable - all optional, left blank if not filled in. File name and path are captured automatically from whatever you loaded.
+A form in the sidebar collects patient/visit fields before you export: patient ID, diagnosis, sex, imaging date, age at imaging, treatment, age at surgery, and one free-text variable - all optional, left blank if not filled in. Diagnosis is a plain text field by default (type anything - useful beyond craniosynostosis), with a quick-pick dropdown alongside it for the common craniosynostosis subtypes, "Syndromic" (which prompts you to type the syndrome name right after), and "Unknown". File name and path are captured automatically from whatever you loaded.
 
-Exporting analysis produces, alongside the meshes:
+Three checkboxes above "export analysis" - **measurements**, **asymmetry**, **meshes** - choose what actually gets written, all ticked by default. Unticking one leaves that section out of the report/PDF/spreadsheet entirely (not just hidden), or skips the mesh files.
+
+Exporting analysis produces, alongside the meshes (whichever of these are ticked above):
 * A machine-readable **JSON report**, with the registered landmarks, every computed measurement, and a `settings` block recording exactly what this run used - target, landmark count, center-of-mass correction, and whether/which NICP template was fit.
-* A **per-patient Excel spreadsheet** (`..._summary.xlsx`), one formatted row: the patient/visit fields, the same settings as the JSON report (as readable yes/no and template-name columns, not a dumped settings blob), and every measurement - numeric columns are real numbers (so Excel can sort/filter/average them directly), laid out as a proper Excel table with a frozen, filterable header.
-* A multi-page **PDF report**, vector-based so figures and text stay sharp at any zoom, pairing each measurement with a one-line plain-language explanation - meant to be printed and handed to parents during a visit.
+* A **per-patient Excel spreadsheet** (`..._summary_cranial.xlsx` or `..._summary_frontal.xlsx`), one formatted row: the patient/visit fields, the same settings as the JSON report (as readable yes/no and template-name columns, not a dumped settings blob), and every measurement - numeric columns are real numbers (so Excel can sort/filter/average them directly), laid out as a proper Excel table with a frozen, filterable header.
+* A multi-page **PDF report** (`..._report_cranial.pdf` or `..._report_frontal.pdf`), vector-based so figures and text stay sharp at any zoom, pairing each measurement with a one-line plain-language explanation, asymmetry always last regardless of target - meant to be printed and handed to parents during a visit.
+
+The report/summary/PDF filenames end in `_cranial` or `_frontal` depending on which target you ran, so exporting both for the same patient doesn't overwrite one with the other.
 
 ### Cohort export and cohort IDs
 Desktop app only. Alongside the per-patient files, you can point "export analysis" at a cohort Excel file to accumulate rows across sessions, meant to eventually be **shared across centers** for pooled analysis. Re-exporting the same source file updates its existing row instead of duplicating it.
@@ -193,6 +204,7 @@ The standalone Windows .exe is built from this same code via `desktop/craniumpy.
 * No automatic landmark detection.
 * Every per-side ("left"/"right") label in the forehead-morphology and facial-asymmetry output follows the sign of the frame's own x-axis as implemented (x<0 = left) - the shipped reference triangle places the left tragus at *positive* x, so these labels currently read as the anatomical opposite of what they say. Magnitudes and the overall indices are unaffected; only which side a per-side number is attributed to. Worth fixing in code - flagged here so it isn't silently relied on until then.
 * The forehead-morphology measurements (frontal angle, ridge protrusion/area, temporal hollowing, parabolic deviation index) are reproducible, closed-form definitions with a reference implementation, but have not yet been validated against a clinical severity score or an independent measurement of the same quantity - treat them as internally comparable, not yet clinically interpretable.
+* The "ideal parabola" every forehead deviation-based number is measured against is fit to this same patient's own forehead (the lateral "shoulders", specifically), not to a healthy-population reference - see [Forehead morphology and frontal bossing](#forehead-morphology-and-frontal-bossing). That makes every one of those numbers self-referential: if the condition being measured also affects the shoulders the parabola is fit to, not just the center, the reference inherits that distortion too, and the reported deviation understates it. How much that matters for any given condition - i.e. how confined it actually stays to the center - isn't something this app can answer without real scans to check against.
 
 ## Citation
 Kindly consider citing the software if it supports your research:

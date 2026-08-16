@@ -14,6 +14,23 @@ below are the most likely thing to need retuning once real scans exist to
 check against - kept as named constants for exactly that reason, not folded
 into the math.
 
+the "ideal parabola" every deviation-based quantity here is measured against
+(deviation_profile, ridge_protrusion_mm, ridge_area_mm2, the temporal
+hollowing metrics, parabolic_deviation_index) is fit to THIS patient's own
+forehead - specifically the "shoulder" windows just outside the central
+ridge (SHOULDER_INNER_U..SHOULDER_OUTER_U, both sides of the midline), not
+to any healthy-population reference. that makes every one of those numbers
+self-referential, not a deviation-from-normal: a real forehead, healthy or
+not, was never exactly a parabola to begin with, so "near zero" means "this
+forehead's center matches what its own flanks predict," not "this forehead
+is normal." and if the condition being measured also distorts the flanks
+(not just the center), the fit inherits that distortion too - the reported
+deviation then reads as "more localized to the center than the rest of this
+forehead already is," not "abnormal" in any absolute sense. how much that
+matters in practice - i.e. how confined a given condition actually stays to
+the center versus how far it reaches into the shoulder windows - isn't
+something this module can answer without real scans to check against.
+
 axis convention: this module works in the same 2D plane the forehead
 contour lives in (the mesh's own x/z at a fixed y = slice height) - x is
 left-right (same sign convention as asymmetry.py's _half_mask: x<0 left,
@@ -83,6 +100,10 @@ class MetopicResult:
 
     ridge_protrusion_mm: float
     ridge_protrusion_position: float  # u
+    # signed: positive means the central window sticks out past the ideal
+    # parabola on net, negative means it falls short of it on net (a flat/
+    # recessed center relative to what the shoulders imply) - see
+    # analyze_forehead's own comment on ridge_area_mm2 below.
     ridge_area_mm2: float
     ridge_area_normalized: float
 
@@ -301,7 +322,15 @@ def analyze_forehead(mesh: trimesh.Trimesh, slice_height: float) -> MetopicResul
     # see above), unlike the central-window-only quantities below.
     ridge_protrusion_mm = float(deviation[ridge_idx])
     ridge_protrusion_position = float(u[ridge_idx])
-    ridge_area_mm2 = _trapz(np.clip(deviation[central_mask], 0.0, None), s[central_mask]) if central_mask.sum() > 1 else 0.0
+    # signed net area between the contour and the ideal parabola across the
+    # whole central window - NOT clipped to the protruding part only. an
+    # earlier clipped ("protrusion-only") version read a flat 0 whenever a
+    # patient's center sat below the parabola across the whole window (a
+    # real, seen-in-practice case - a center recessed relative to what this
+    # forehead's own shoulders predict, not merely "no ridge"), silently
+    # losing that signal instead of reporting it with a negative sign the
+    # way ridge_protrusion_mm already did.
+    ridge_area_mm2 = _trapz(deviation[central_mask], s[central_mask]) if central_mask.sum() > 1 else 0.0
     ridge_area_normalized = ridge_area_mm2 / (forehead_width_mm**2) if forehead_width_mm > 1e-6 else 0.0
 
     left_temporal_mask = _window_mask(u, u0, TEMPORAL_INNER_U, TEMPORAL_OUTER_U, side=-1)

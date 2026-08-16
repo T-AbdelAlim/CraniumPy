@@ -208,6 +208,30 @@ def test_analyze_forehead_central_bump_sharpens_frontal_angle_and_raises_ridge_m
     assert bumped.right_temporal_hollowing == pytest.approx(0.0, abs=0.05)
 
 
+def test_analyze_forehead_recessed_center_gives_negative_ridge_area_not_zero():
+    # the reverse of the bump test above: a center that sits BELOW the
+    # ideal parabola across the whole central window (a flat/recessed
+    # center relative to what this forehead's own shoulders predict) - a
+    # real, seen-in-practice case, not just a synthetic edge case. ridge_area_mm2
+    # used to be clipped to the protruding part only, so this read a flat 0
+    # (indistinguishable from "no ridge, no dip either") - it's signed now,
+    # so a genuine recession comes through as negative instead of vanishing.
+    x = np.linspace(-70, 70, 300)
+    baseline = analyze_forehead(_strip_mesh(x, _rounded_forehead(x)), 100.0)
+
+    # wide enough (sigma=20) that it depresses the whole central window,
+    # not just a narrow notch ridge_protrusion_mm's own apex search
+    # (the most anterior point within +/-15mm of the midline - see
+    # RIDGE_APEX_X_WINDOW_MM) could sidestep by landing just outside it.
+    dip = _rounded_forehead(x) - 6.0 * np.exp(-(x**2) / (2 * 20.0**2))
+    dipped = analyze_forehead(_strip_mesh(x, dip), 100.0)
+
+    assert baseline is not None and dipped is not None
+    assert dipped.ridge_protrusion_mm < baseline.ridge_protrusion_mm - 1.0
+    assert dipped.ridge_area_mm2 < 0.0
+    assert dipped.ridge_area_normalized < 0.0
+
+
 def test_ridge_apex_is_the_most_anterior_point_within_the_x_window_not_the_max_deviation_point():
     # M has to be "the most forward point near the midline", a physical
     # location - not whichever point happens to deviate most from the
