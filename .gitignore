@@ -3,6 +3,7 @@
 *.exe
 /build
 /dist
+/paper
 
 # Python
 __pycache__/

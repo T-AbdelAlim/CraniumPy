@@ -66,7 +66,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name="CraniumPy",
+    name="CranioSuite",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
