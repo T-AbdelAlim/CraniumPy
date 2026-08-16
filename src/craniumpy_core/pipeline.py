@@ -28,6 +28,7 @@ from typing import Callable, Literal
 
 import numpy as np
 import trimesh
+from scipy.spatial import cKDTree
 
 from .asymmetry import AsymmetryResult, calculate_asymmetry
 from .clipping import clip_plane, cranial_clip, facial_clip, landmark_plane
@@ -178,33 +179,40 @@ def rough_bounding_clip(
     front_margin: float = 50.0,
     bottom_margin: float = 100.0,
 ) -> trimesh.Trimesh:
-    """crops the raw, unrepaired mesh down to a generous box around the head
-    before the expensive repair step - repair's runtime scales with mesh
-    size, and a full photogrammetry scan can carry a lot of torso,
+    """crops the raw, unrepaired mesh down to a generous area around the
+    head before the expensive repair step - repair's runtime scales with
+    mesh size, and a full photogrammetry scan can carry a lot of torso,
     background, or hair that has nothing to do with the cranial/facial clip
     that happens afterward, on the repaired result.
 
-    open on 2 sides on purpose: nothing bounds the back of the head (no
-    reliable margin exists there - occiput shape varies too much to guess a
-    safe cutoff) or the top (nothing irrelevant tends to sit there anyway).
-    the other 3 margins (left/right, front, bottom - all in mesh units, mm)
-    are generous specifically so this rough cut can never end up removing
-    anything the real cranial_clip/facial_clip pass would have kept - all
-    it's for is throwing away obviously-irrelevant mass before the slow
-    part. side_margin extends past whichever of left_tragus/right_tragus is
+    the left/right/front boundary is an ellipse in the horizontal (x, z)
+    plane, not a box - a head's actual cross-section is rounded, so a box's
+    sharp diagonal corners were always wasted margin nothing anatomical
+    ever reached anyway (see _clip_frontal_ellipse). open on 2 sides on
+    purpose: nothing bounds the back of the head (no reliable margin exists
+    there - occiput shape varies too much to guess a safe cutoff) or the
+    top (nothing irrelevant tends to sit there anyway). the other 3 margins
+    (left/right, front, bottom - all in mesh units, mm) are generous
+    specifically so this rough cut can never end up removing anything the
+    real cranial_clip/facial_clip pass would have kept - all it's for is
+    throwing away obviously-irrelevant mass before the slow part.
+    side_margin extends past whichever of left_tragus/right_tragus is
     further out, front_margin extends past whichever of sellion/
     alt_frontal_landmark sits further forward (can't tell "forward" apart
-    for a single point in isolation, so this takes both when given),
-    bottom_margin extends below the same landmark plane cranial_clip's own
-    final cut uses (see clipping.landmark_plane) - not the flat y=0 you'd
-    get from a naive axis-aligned box, so it stays a true margin even on a
-    head registered at an angle.
+    for a single point in isolation, so this takes both when given) - the
+    ellipse's own x/z reach in each of those individual directions matches
+    those margins exactly, same as the box's did; only the diagonal corners
+    between them are now rounded off. bottom_margin extends below the same
+    landmark plane cranial_clip's own final cut uses (see
+    clipping.landmark_plane) - not the flat y=0 you'd get from a naive
+    axis-aligned box, so it stays a true margin even on a head registered
+    at an angle.
 
-    the box itself is computed in a fresh, pure landmark-triangle
+    the ellipse/plane are computed in a fresh, pure landmark-triangle
     registration (same one register() would produce with
-    com_translation=False) purely to get sensible axis-aligned bounds - the
-    crop is applied back in the mesh's own original frame before returning,
-    so callers don't need to care this detour happened.
+    com_translation=False) purely to get a sensible axis-aligned frame to
+    work in - the crop is applied back in the mesh's own original frame
+    before returning, so callers don't need to care this detour happened.
     """
     landmarks = np.asarray(landmarks, dtype=np.float64)
     transform = landmark_align(landmarks)
@@ -218,15 +226,56 @@ def rough_bounding_clip(
 
     plane_normal, plane_origin = landmark_plane(aligned_landmarks)
 
+    # an ellipse in the horizontal (x, z) plane, standing in for the 3 flat
+    # cuts (left, right, front) a plain box would use - a head's actual
+    # cross-section is rounded, not rectangular, so a box's sharp corners
+    # were always wasted margin nothing anatomical ever reached anyway;
+    # rounding them off trims a bit more irrelevant mass before the slow
+    # repair step, without giving up any margin in the direction that
+    # matters (see the bound-preserving x_center/x_semi_axis below). left/
+    # right stay tied to side_margin past the tragus positions and front to
+    # front_margin past sellion/alt_frontal_landmark, exactly as before.
+    left_bound = left_tragus[0] + side_margin
+    right_bound = right_tragus[0] - side_margin
+    x_center = (left_bound + right_bound) / 2.0
+    x_semi_axis = abs(left_bound - right_bound) / 2.0
+    z_center = plane_origin[2]
+    z_semi_axis = max((front_z + front_margin) - z_center, 1.0)
+
     result = trimesh.Trimesh(vertices=transform.apply(np.asarray(mesh.vertices)), faces=mesh.faces, process=False)
-    result = clip_plane(result, normal=[1, 0, 0], origin=[right_tragus[0] - side_margin, 0, 0])
-    result = clip_plane(result, normal=[-1, 0, 0], origin=[left_tragus[0] + side_margin, 0, 0])
-    result = clip_plane(result, normal=[0, 0, -1], origin=[0, 0, front_z + front_margin])
+    result = _clip_frontal_ellipse(result, x_center, x_semi_axis, z_center, z_semi_axis)
     result = clip_plane(result, normal=plane_normal, origin=plane_origin - plane_normal * bottom_margin)
 
     return trimesh.Trimesh(
         vertices=transform.inverse_apply(np.asarray(result.vertices)), faces=result.faces, process=False
     )
+
+
+def _clip_frontal_ellipse(
+    mesh: trimesh.Trimesh, x_center: float, x_semi_axis: float, z_center: float, z_semi_axis: float
+) -> trimesh.Trimesh:
+    """keeps whole faces inside an ellipse in the x-z (horizontal) plane,
+    for z >= z_center - z_semi_axis (the front half) - z below that is left
+    completely untouched, same as rough_bounding_clip's own front-only cut
+    always was (see its docstring: nothing bounds the back, occiput shape
+    varies too much to guess a safe cutoff). a whole-face mask rather than
+    a real geometric cut, same reasoning as clipping.clip_sphere: this only
+    ever throws away obviously-irrelevant mass before repair, so boundary
+    precision doesn't matter here the way it does for the real cranial_clip/
+    facial_clip cuts."""
+    vertices = np.asarray(mesh.vertices)
+    x, z = vertices[:, 0], vertices[:, 2]
+    inside_ellipse = ((x - x_center) / x_semi_axis) ** 2 + ((z - z_center) / z_semi_axis) ** 2 <= 1.0
+    vertex_kept = (z < z_center - z_semi_axis) | inside_ellipse
+    face_indices = np.nonzero(vertex_kept[mesh.faces].all(axis=1))[0]
+    if len(face_indices) == 0:
+        # mesh.submesh([...], append=True) hands back a bare (empty) list
+        # instead of a Trimesh when there's nothing left, rather than an
+        # empty mesh - trips up callers that expect a Trimesh back
+        # unconditionally (this function's own type, and every caller of
+        # it downstream).
+        return trimesh.Trimesh(vertices=np.empty((0, 3)), faces=np.empty((0, 3), dtype=np.int64), process=False)
+    return mesh.submesh([face_indices], append=True)
 
 
 def harmonize(
@@ -424,6 +473,19 @@ class CranialAnalysisResult:
     # different position for the same number. == frontal_bossing when
     # there's no alt frontal landmark (single frame, nothing to carry).
     display_frontal_bossing: FrontalBossingResult | None
+    # cranial asymmetry - same mirror-and-ICP method as facial's, always
+    # computed from the sellion pass, same reasoning as craniometrics/
+    # frontal_bossing (see measure_cranial).
+    asymmetry: AsymmetryResult | None
+    # asymmetry carried into the display frame: mean_asymmetry_index is a
+    # property of the mesh's own shape, unaffected by rigid pose, so it's
+    # copied rather than recomputed (same "carry, don't recompute" reasoning
+    # as display_frontal_bossing's angle_deg); the heatmap is per-vertex and
+    # sellion_mesh/display_mesh don't share vertex correspondence, so each
+    # display_mesh vertex instead borrows its value from the nearest
+    # transformed sellion-mesh vertex (see measure_cranial). ==
+    # asymmetry when there's no alt frontal landmark.
+    display_asymmetry: AsymmetryResult | None
     sellion_mesh: trimesh.Trimesh  # post-harmonize, sellion frame - always this, for the saved 2D figure
     sellion_landmarks: np.ndarray
     sellion_hc_polygon: np.ndarray | None
@@ -637,11 +699,19 @@ def measure_cranial(
     # always the sellion pass, same reasoning as craniometrics itself -
     # "how much does the forehead bulge relative to sellion" shouldn't
     # depend on which frontal point got clicked for the display frame.
-    bossing = frontal_bossing(sellion_mesh, sellion_landmarks[0])
+    # anchored to the same slice_height craniometrics just chose, so the
+    # bossing angle's forehead point sits on the same reference plane the
+    # HC/OFD/BPD numbers do (see frontal_bossing's own docstring).
+    bossing = frontal_bossing(sellion_mesh, sellion_landmarks[0], craniometrics.slice_height)
     sellion_hc_polygon = hc_slice_polygon(sellion_mesh, craniometrics.slice_height)
     sellion_bpd_ofd_points = np.array(
         [craniometrics.front_opt, craniometrics.occ_opt, craniometrics.lh_opt, craniometrics.rh_opt]
     )
+    # same mirror-and-ICP method as facial asymmetry, applied to the
+    # cranial cap instead of the face - both are already registered onto
+    # the same x=0-midline reference frame, so calculate_asymmetry needs
+    # nothing target-specific to work here.
+    asymmetry = calculate_asymmetry(sellion_mesh)
 
     if not clip_result.used_alt_frontal:
         _report(on_progress, "done", "")
@@ -654,6 +724,8 @@ def measure_cranial(
             craniometrics=craniometrics,
             frontal_bossing=bossing,
             display_frontal_bossing=bossing,
+            asymmetry=asymmetry,
+            display_asymmetry=asymmetry,
             sellion_mesh=sellion_mesh,
             sellion_landmarks=sellion_landmarks,
             sellion_hc_polygon=sellion_hc_polygon,
@@ -725,6 +797,24 @@ def measure_cranial(
     else:
         display_bossing = None
 
+    # mean_asymmetry_index is a property of the mesh's own shape (how far
+    # each vertex sits from its mirrored counterpart), unaffected by which
+    # rigid frame it's viewed in - copied, not recomputed, same reasoning
+    # as frontal_bossing.angle_deg above. the heatmap is per-vertex though,
+    # and sellion_mesh/display_mesh don't share vertex correspondence (each
+    # was independently clipped/resampled) - so instead of transforming
+    # sellion_mesh's own heatmap array directly, every display_mesh vertex
+    # looks up the value carried by whichever transformed sellion_mesh
+    # vertex ends up nearest to it. a nearest-neighbour resample of a
+    # scalar field between two meshes describing the same anatomy, not a
+    # surface snap - display_mesh's own vertices are already ON its
+    # surface, unlike the handful of constructed points above.
+    sellion_positions_in_display = to_display(np.asarray(sellion_mesh.vertices))
+    nearest = cKDTree(sellion_positions_in_display).query(np.asarray(display_mesh.vertices))[1]
+    display_asymmetry = AsymmetryResult(
+        heatmap=asymmetry.heatmap[nearest], mean_asymmetry_index=asymmetry.mean_asymmetry_index
+    )
+
     _report(on_progress, "done", "")
     return CranialAnalysisResult(
         display_registered_mesh=clip_result.display_registered_mesh,
@@ -735,6 +825,8 @@ def measure_cranial(
         craniometrics=craniometrics,
         frontal_bossing=bossing,
         display_frontal_bossing=display_bossing,
+        asymmetry=asymmetry,
+        display_asymmetry=display_asymmetry,
         sellion_mesh=sellion_mesh,
         sellion_landmarks=sellion_landmarks,
         sellion_hc_polygon=sellion_hc_polygon,

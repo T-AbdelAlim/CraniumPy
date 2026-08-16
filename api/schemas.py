@@ -120,6 +120,25 @@ class RunRequest(BaseModel):
     nicp: NicpConfig | None = None
 
 
+class SwitchTargetRequest(BaseModel):
+    target: Literal["cranium", "face"]
+
+
+class SwitchTargetResponse(BaseModel):
+    """what the frontend needs to redraw the restored (or freshly blank)
+    scene without recomputing anything - see api/sessions.py's
+    Session.switch_active_target. restored=False means new_target has never
+    been aligned/clipped/run this session, so the frontend's own per-target
+    UI snapshot (if any) should be discarded too rather than reapplied
+    against backend fields that no longer describe it."""
+
+    restored: bool
+    align_succeeded: bool
+    pipeline_ran: bool
+    has_nicp_result: bool
+    used_alt_frontal: bool
+
+
 class ClipUndoResponse(BaseModel):
     # False if there was nothing to undo (no clip had been run yet) - not
     # an error, just a no-op.
@@ -157,6 +176,7 @@ class PatientMetadata(BaseModel):
     file_name: str = ""
     file_path: str = ""
     patient_id: str = ""
+    diagnosis: str = ""
     sex: str = ""
     date_imaging: str = ""
     age_imaging: str = ""
@@ -178,11 +198,23 @@ class SaveRequest(BaseModel):
     cohort_xlsx_path, when given, additionally upserts this session's row
     into that external spreadsheet (desktop-only - see
     write_analysis_to_folder's cohort_xlsx_path param; a browser zip
-    download has no persistent file to append to)."""
+    download has no persistent file to append to).
+
+    include_measurements/include_asymmetry/include_meshes are the "export
+    analysis" checkboxes (see App.jsx's AnalysisPanel) - only meaningful on
+    /save/analysis (the other two endpoints don't look at them). unticking
+    include_measurements/include_asymmetry drops the corresponding
+    craniometrics-or-metopic-and-frontal_bossing / asymmetry section from
+    the report and PDF entirely (see save_analysis_to_source_folder), not
+    just hides it - unticking include_meshes skips writing/zipping the mesh
+    files alongside the report."""
 
     dest_dir: str | None = None
     metadata: PatientMetadata = PatientMetadata()
     cohort_xlsx_path: str | None = None
+    include_measurements: bool = True
+    include_asymmetry: bool = True
+    include_meshes: bool = True
 
 
 class SaveResultsResponse(BaseModel):

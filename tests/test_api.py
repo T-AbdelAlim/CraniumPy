@@ -239,7 +239,7 @@ def test_analyze_cranial_with_alt_frontal_landmark(client, landmarks_payload):
     bundle = client.get(f"/api/sessions/{session_alt}/bundle")
     assert bundle.status_code == 200
     zf = zipfile.ZipFile(BytesIO(bundle.content))
-    report_name = next(n for n in zf.namelist() if n.endswith("_report.json"))
+    report_name = next(n for n in zf.namelist() if n.endswith("_report_cranial.json"))
     report = json.loads(zf.read(report_name))
     assert "display_frontal_landmark" in report
     # com_translation nudges Z (a few mm, on this fixture) - not an exact
@@ -260,7 +260,7 @@ def test_bundle_analysis_nests_report_under_mesh_folder(client, landmarks_payloa
     mesh_names = {n for n in names if "/analysis/" not in n}
     analysis_names = {n for n in names if "/analysis/" in n}
     assert len(mesh_names) == 2
-    assert any(n.endswith("_report.json") for n in analysis_names)
+    assert any(n.endswith("_report_cranial.json") for n in analysis_names)
     assert any(n.endswith("_measurements.png") for n in analysis_names)
 
 
@@ -430,7 +430,7 @@ def test_bundle_analysis_includes_metopic_figure_for_facial_target(client, landm
     assert any(n.endswith("_asymmetry.png") for n in analysis_names)
     assert any(n.endswith("_metopic.png") for n in analysis_names)
 
-    report_name = next(n for n in analysis_names if n.endswith("_report.json"))
+    report_name = next(n for n in analysis_names if n.endswith("_report_frontal.json"))
     report = json.loads(zipfile.ZipFile(BytesIO(response.content)).read(report_name))
     assert "metopic" in report
     assert "frontal_angle_deg" in report["metopic"]
@@ -466,10 +466,27 @@ def test_bundle_analysis_includes_frontal_bossing_figure(client, landmarks_paylo
     analysis_names = {n for n in names if "/analysis/" in n}
     assert any(n.endswith("_frontal_bossing.png") for n in analysis_names)
 
-    report_name = next(n for n in analysis_names if n.endswith("_report.json"))
+    report_name = next(n for n in analysis_names if n.endswith("_report_cranial.json"))
     report = json.loads(zipfile.ZipFile(BytesIO(response.content)).read(report_name))
     assert "frontal_bossing" in report
     assert "angle_deg" in report["frontal_bossing"]
+
+
+def test_bundle_analysis_includes_asymmetry_sagittal_figure_for_both_targets(client, landmarks_payload):
+    # the sagittal (side-view) asymmetry figure rides along as its own PNG,
+    # in addition to the existing top/frontal-view one - see
+    # api/results_bundle.py's _build_analysis_files.
+    for target, primary_suffix in (("cranium", "cranial_asymmetry"), ("face", "asymmetry")):
+        session_id = _upload(client)
+        status = _clip_and_run(client, session_id, {"target": target, "landmarks": landmarks_payload}, timeout=60)
+        assert status == "done"
+
+        response = client.get(f"/api/sessions/{session_id}/bundle/analysis")
+        assert response.status_code == 200
+        names = set(zipfile.ZipFile(BytesIO(response.content)).namelist())
+        analysis_names = {n for n in names if "/analysis/" in n}
+        assert any(n.endswith(f"_{primary_suffix}.png") for n in analysis_names), f"target={target}"
+        assert any(n.endswith(f"_{primary_suffix}_sagittal.png") for n in analysis_names), f"target={target}"
 
 
 def test_bundle_meshes_before_run_returns_409(client, landmarks_payload):
@@ -535,6 +552,76 @@ def test_reclip_invalidates_previous_run_result(client, landmarks_payload):
     status = _run_clip(client, session_id, {"target": "cranium", "landmarks": landmarks_payload})
     assert status == "done"
     assert client.get(f"/api/sessions/{session_id}/results").status_code == 409
+
+
+def test_switch_target_never_visited_reports_not_restored_and_stays_blank(client, landmarks_payload):
+    session_id = _upload(client)
+    assert _clip_and_run(client, session_id, {"target": "cranium", "landmarks": landmarks_payload}) == "done"
+
+    response = client.post(f"/api/sessions/{session_id}/switch-target", json={"target": "face"})
+    assert response.status_code == 200
+    assert response.json() == {
+        "restored": False,
+        "align_succeeded": False,
+        "pipeline_ran": False,
+        "has_nicp_result": False,
+        "used_alt_frontal": False,
+    }
+    # a genuinely blank facial scene, not the cranial one left showing
+    assert client.get(f"/api/sessions/{session_id}/mesh/registered").status_code == 409
+    assert client.get(f"/api/sessions/{session_id}/results").status_code == 409
+
+
+def test_switch_target_restores_a_previously_processed_target_without_recomputation(client, landmarks_payload, monkeypatch):
+    # proves the "snapshot, don't recompute" contract end to end: switching
+    # back to cranial after visiting facial must reuse exactly what the
+    # first cranial run produced, without ever calling back into the
+    # register/clip pipeline for it a second time.
+    import craniumpy_core.pipeline as pipeline_module
+
+    real_register_and_clip = pipeline_module.register_and_clip_cranial
+    call_count = {"n": 0}
+
+    def counting_register_and_clip(*args, **kwargs):
+        call_count["n"] += 1
+        return real_register_and_clip(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline_module, "register_and_clip_cranial", counting_register_and_clip)
+
+    session_id = _upload(client)
+    assert _clip_and_run(client, session_id, {"target": "cranium", "landmarks": landmarks_payload}) == "done"
+    assert call_count["n"] == 1
+    cranial_results = client.get(f"/api/sessions/{session_id}/results").json()
+
+    switch_away = client.post(f"/api/sessions/{session_id}/switch-target", json={"target": "face"})
+    assert switch_away.json()["restored"] is False
+
+    assert _clip_and_run(client, session_id, {"target": "face", "landmarks": landmarks_payload}) == "done"
+    assert client.get(f"/api/sessions/{session_id}/results").json()["craniometrics"] is None  # facial now active
+
+    switch_back = client.post(f"/api/sessions/{session_id}/switch-target", json={"target": "cranium"})
+    body = switch_back.json()
+    assert body["restored"] is True
+    assert body["pipeline_ran"] is True
+    assert body["align_succeeded"] is True
+
+    # register_and_clip_cranial was never called again to get here
+    assert call_count["n"] == 1
+    restored_results = client.get(f"/api/sessions/{session_id}/results").json()
+    assert restored_results["craniometrics"] == cranial_results["craniometrics"]
+
+    # the restored state is genuinely usable, not just present - exporting
+    # the (correctly restored) cranial data works immediately, no re-run
+    assert client.get(f"/api/sessions/{session_id}/bundle/analysis").status_code == 200
+
+
+def test_switch_target_while_job_running_returns_409(client, landmarks_payload):
+    from api.sessions import store
+
+    session_id = _upload(client)
+    store.get(session_id).job_status = "running"
+    response = client.post(f"/api/sessions/{session_id}/switch-target", json={"target": "face"})
+    assert response.status_code == 409
 
 
 def test_repair_only_runs_once_across_repeated_clips(client, landmarks_payload, monkeypatch):
@@ -613,7 +700,7 @@ def test_results_bundle_download(client, landmarks_payload):
     names = zf.namelist()
     assert any(n.endswith("_rg.ply") for n in names)
     assert any(n.endswith("_rg_C.ply") for n in names)
-    assert any(n.endswith("_report.json") for n in names)
+    assert any(n.endswith("_report_cranial.json") for n in names)
     assert any(n.endswith("_measurements.png") for n in names)
 
 
@@ -658,7 +745,7 @@ def test_save_results_to_source_folder(client, landmarks_payload, tmp_path):
     assert saved_to == tmp_path / "CP_1016510_20210730_edited_C_3_CoM"
     assert (saved_to / "1016510_20210730_edited_rg.ply").exists()
     assert (saved_to / "1016510_20210730_edited_rg_C.ply").exists()
-    assert (saved_to / "1016510_20210730_edited_report.json").exists()
+    assert (saved_to / "1016510_20210730_edited_report_cranial.json").exists()
 
 
 def test_save_results_dest_dir_override(client, landmarks_payload, tmp_path):
@@ -785,11 +872,11 @@ def test_analysis_export_records_nicp_settings_after_a_fit(client, landmarks_pay
     zf = zipfile.ZipFile(BytesIO(response.content))
     analysis_names = [n for n in zf.namelist() if "/analysis/" in n]
 
-    report_name = next(n for n in analysis_names if n.endswith("_report.json"))
+    report_name = next(n for n in analysis_names if n.endswith("_report_cranial.json"))
     report = json.loads(zf.read(report_name))
     assert report["settings"]["nicp"]["template"] == "clipped_template_xy"
 
-    xlsx_name = next(n for n in analysis_names if n.endswith("_summary.xlsx"))
+    xlsx_name = next(n for n in analysis_names if n.endswith("_summary_cranial.xlsx"))
     row = _read_xlsx_rows(zf.read(xlsx_name))[0]
     assert row["nicp_used"] == "yes"
     assert row["nicp_template"] == "clipped_template_xy"
@@ -832,8 +919,9 @@ def test_bundle_analysis_includes_summary_xlsx_and_pdf_report(client, landmarks_
         zf = zipfile.ZipFile(BytesIO(response.content))
         analysis_names = [n for n in zf.namelist() if "/analysis/" in n]
 
-        xlsx_name = next(n for n in analysis_names if n.endswith("_summary.xlsx"))
-        pdf_name = next(n for n in analysis_names if n.endswith("_report.pdf"))
+        target_suffix = "cranial" if target == "cranium" else "frontal"
+        xlsx_name = next(n for n in analysis_names if n.endswith(f"_summary_{target_suffix}.xlsx"))
+        pdf_name = next(n for n in analysis_names if n.endswith(f"_report_{target_suffix}.pdf"))
 
         rows = _read_xlsx_rows(zf.read(xlsx_name))
         assert len(rows) == 1
@@ -854,15 +942,91 @@ def test_bundle_analysis_includes_summary_xlsx_and_pdf_report(client, landmarks_
         if target == "cranium":
             assert float(row["depth_mm"]) == pytest.approx(results["craniometrics"]["depth_mm"], abs=0.05)
             assert row["mean_asymmetry_index"] == ""
+            # cranial asymmetry - same mirror-and-ICP method as facial's,
+            # now computed for cranial sessions too (see
+            # pipeline.measure_cranial) - its own column, not the shared
+            # "mean_asymmetry_index" one facial populates below.
+            assert float(row["cranial_asymmetry_index"]) == pytest.approx(
+                results["asymmetry"]["mean_asymmetry_index"], abs=0.05
+            )
         else:
             assert float(row["mean_asymmetry_index"]) == pytest.approx(
                 results["asymmetry"]["mean_asymmetry_index"], abs=0.05
             )
             assert row["depth_mm"] == ""
+            assert row["cranial_asymmetry_index"] == ""
 
         pdf_bytes = zf.read(pdf_name)
         assert pdf_bytes.startswith(b"%PDF")
         assert len(pdf_bytes) > 1000
+
+
+def test_bundle_analysis_export_selection_excludes_unchecked_sections(client, landmarks_payload):
+    # the "measurements"/"asymmetry"/"meshes" export checkboxes (see
+    # AnalysisPanel.jsx) - unticking one drops that section from the JSON
+    # report/PDF/xlsx entirely (not just hides it), or skips the mesh files.
+    session_id = _upload(client)
+    assert _clip_and_run(client, session_id, {"target": "cranium", "landmarks": landmarks_payload}, timeout=60) == "done"
+
+    response = client.get(
+        f"/api/sessions/{session_id}/bundle/analysis",
+        params={"include_measurements": "false"},
+    )
+    assert response.status_code == 200
+    zf = zipfile.ZipFile(BytesIO(response.content))
+    names = zf.namelist()
+    analysis_names = [n for n in names if "/analysis/" in n]
+    assert not any(n.endswith("_measurements.png") for n in analysis_names)
+
+    report_name = next(n for n in analysis_names if n.endswith("_report_cranial.json"))
+    report = json.loads(zf.read(report_name))
+    assert "craniometrics" not in report
+
+    xlsx_name = next(n for n in analysis_names if n.endswith("_summary_cranial.xlsx"))
+    rows = _read_xlsx_rows(zf.read(xlsx_name))
+    assert rows[0]["depth_mm"] == ""
+    # asymmetry (still ticked, default) is unaffected
+    assert rows[0]["cranial_asymmetry_index"] != ""
+
+    # meshes ticked (default) - still present
+    assert any(n.endswith("_rg.ply") for n in names)
+
+
+def test_bundle_analysis_export_selection_excludes_asymmetry_and_meshes(client, landmarks_payload):
+    session_id = _upload(client)
+    assert _clip_and_run(client, session_id, {"target": "cranium", "landmarks": landmarks_payload}, timeout=60) == "done"
+
+    response = client.get(
+        f"/api/sessions/{session_id}/bundle/analysis",
+        params={"include_asymmetry": "false", "include_meshes": "false"},
+    )
+    assert response.status_code == 200
+    zf = zipfile.ZipFile(BytesIO(response.content))
+    names = zf.namelist()
+    analysis_names = [n for n in names if "/analysis/" in n]
+
+    assert not any(n.endswith("_cranial_asymmetry.png") for n in analysis_names)
+    report_name = next(n for n in analysis_names if n.endswith("_report_cranial.json"))
+    report = json.loads(zf.read(report_name))
+    assert "asymmetry" not in report
+    assert "craniometrics" in report  # measurements still ticked (default)
+
+    # no mesh files anywhere in the zip - only the analysis/ subfolder
+    assert not any("/analysis/" not in n for n in names)
+
+
+def test_save_analysis_include_meshes_false_skips_mesh_files(client, landmarks_payload, tmp_path):
+    session_id = _upload(client)
+    assert _clip_and_run(client, session_id, {"target": "cranium", "landmarks": landmarks_payload}, timeout=60) == "done"
+
+    response = client.post(
+        f"/api/sessions/{session_id}/save/analysis",
+        json={"dest_dir": str(tmp_path), "include_meshes": False},
+    )
+    assert response.status_code == 200, response.text
+    results_dir = Path(response.json()["saved_to"]).parent
+    assert (results_dir / "analysis").is_dir()
+    assert not any(results_dir.glob("*.ply"))  # no mesh files written into a folder that never had any
 
 
 def test_save_analysis_cohort_xlsx_create_append_and_replace(client, landmarks_payload, tmp_path):

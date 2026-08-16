@@ -1,3 +1,5 @@
+import { useRef } from "react";
+
 // patient/visit fields for the summary spreadsheet/PDF export (see api/schemas.py's
 // PatientMetadata) - lives in the bottom half of the left nav pane (see
 // Shell.jsx), always visible once a mesh is loaded. file_name/file_path
@@ -11,6 +13,23 @@ const SEX_OPTIONS = [
   { value: "male", label: "male" },
 ];
 
+// diagnosis is a plain text field first and foremost (so anyone using this
+// for something other than craniosynostosis can just type directly into
+// it - see below), with this dropdown as an optional quick-fill on top.
+// picking an option here overwrites the text field with that value rather
+// than binding to it, so the field stays freely editable afterward (e.g.
+// typing the actual syndrome name in after picking "Syndromic").
+const DIAGNOSIS_QUICK_PICKS = [
+  "Sagittal synostosis",
+  "Unicoronal synostosis",
+  "Bicoronal synostosis",
+  "Metopic synostosis",
+  "Lambdoid synostosis",
+  "Multisuture / complex synostosis",
+  "Syndromic - ",
+  "Unknown",
+];
+
 export default function PatientMetadataForm({
   metadata,
   onFieldChange,
@@ -19,6 +38,22 @@ export default function PatientMetadataForm({
   cohortPath,
   onCohortModeChange,
 }) {
+  const diagnosisInputRef = useRef(null);
+
+  function handleDiagnosisQuickPick(value) {
+    if (!value) return;
+    onFieldChange("diagnosis", value);
+    // "Syndromic - " needs the actual syndrome name typed right after it -
+    // land the cursor there instead of just filling the field and leaving
+    // the user to find it themselves.
+    requestAnimationFrame(() => {
+      const el = diagnosisInputRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(value.length, value.length);
+    });
+  }
+
   return (
     <div className="metadata-form">
       <h3 className="metadata-form-title">Patient / visit</h3>
@@ -34,6 +69,24 @@ export default function PatientMetadataForm({
       <label>
         patient ID
         <input type="text" value={metadata.patient_id} onChange={(e) => onFieldChange("patient_id", e.target.value)} />
+      </label>
+      <label>
+        diagnosis
+        <input
+          ref={diagnosisInputRef}
+          type="text"
+          placeholder="craniosynostosis subtype, syndrome, or type your own"
+          value={metadata.diagnosis}
+          onChange={(e) => onFieldChange("diagnosis", e.target.value)}
+        />
+        <select value="" onChange={(e) => handleDiagnosisQuickPick(e.target.value)}>
+          <option value="">quick pick...</option>
+          {DIAGNOSIS_QUICK_PICKS.map((value) => (
+            <option key={value} value={value}>
+              {value}
+            </option>
+          ))}
+        </select>
       </label>
       <label>
         sex

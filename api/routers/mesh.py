@@ -51,6 +51,8 @@ from api.schemas import (
     SaveRequest,
     SaveResultsResponse,
     StatusResponse,
+    SwitchTargetRequest,
+    SwitchTargetResponse,
     TemplateInfo,
     UploadResponse,
 )
@@ -316,6 +318,7 @@ def start_align(session_id: str, request: AlignRequest) -> StatusResponse:
         # gets saved as _rg.ply, so it has to survive that overwrite.
         session.aligned_mesh = session.registered_mesh
 
+        session.active_target = request.target
         session.report_progress("done", "")
         return None
 
@@ -459,6 +462,7 @@ def start_clip(session_id: str, request: ClipRequest) -> StatusResponse:
             session.clipped_mesh = clipped
 
         session.last_clip_config = request
+        session.active_target = request.target
         session.report_progress("done", "")
         return None
 
@@ -482,6 +486,30 @@ def undo_clip(session_id: str) -> ClipUndoResponse:
     had_clip = session.clipped_mesh is not None
     session.clear_clip_result()
     return ClipUndoResponse(reverted=had_clip)
+
+
+@router.post("/{session_id}/switch-target", response_model=SwitchTargetResponse)
+def switch_target(session_id: str, request: SwitchTargetRequest) -> SwitchTargetResponse:
+    """swaps which target (cranium/face) the session's align/clip/run fields
+    currently describe - snapshotting whatever the OLD target's fields held
+    first, then either restoring a snapshot already taken for `target`
+    earlier this session or resetting to blank ("never run") state, either
+    way with zero recomputation. see Session.switch_active_target.
+
+    the frontend calls this every time the target radio changes, so
+    returning to cranial after visiting facial shows exactly the clip/
+    template/result scene left behind instead of the raw upload."""
+    session = _get_session(session_id)
+    if session.job_status == "running":
+        raise HTTPException(status_code=409, detail="a job is already running for this session")
+    restored = session.switch_active_target(request.target)
+    return SwitchTargetResponse(
+        restored=restored,
+        align_succeeded=session.registered_mesh is not None,
+        pipeline_ran=session.result_mesh is not None,
+        has_nicp_result=session.nicp_result_mesh is not None,
+        used_alt_frontal=session.used_alt_frontal,
+    )
 
 
 @router.post("/{session_id}/run", response_model=StatusResponse)
@@ -574,7 +602,8 @@ def start_run(session_id: str, request: RunRequest) -> StatusResponse:
             return {
                 "landmarks": result.display_landmarks,
                 "craniometrics": result.craniometrics,
-                "asymmetry": None,
+                "asymmetry": result.asymmetry,
+                "display_asymmetry": result.display_asymmetry,
                 "metopic": None,
                 "frontal_bossing": result.frontal_bossing,
                 "display_frontal_bossing": result.display_frontal_bossing,
@@ -609,9 +638,16 @@ def start_run(session_id: str, request: RunRequest) -> StatusResponse:
         # same measurement as the cranial branch, just against this
         # target's own registered frame - sellion sits at the origin here
         # (see pipeline.register()'s target="face" branch), so this is
-        # always frontal_bossing(result_mesh, [0, 0, 0]) in practice, but
-        # reads straight from the actual landmark rather than assuming that.
-        bossing = frontal_bossing(result_mesh, session.registered_landmarks[0])
+        # always frontal_bossing(result_mesh, [0, 0, 0], ...) in practice,
+        # but reads straight from the actual landmark rather than assuming
+        # that. anchored to the same HC-equivalent slice height metopic
+        # uses just above - None (unavailable, same legacy-session case
+        # metopic guards against) skips it rather than guessing a height.
+        bossing = (
+            frontal_bossing(result_mesh, session.registered_landmarks[0], session.hc_slice_height)
+            if session.hc_slice_height is not None
+            else None
+        )
         session.report_progress("done", "")
 
         return {
@@ -681,10 +717,16 @@ def get_results(session_id: str) -> ResultsResponse:
         )
 
     asymmetry = None
-    if r["asymmetry"] is not None:
+    # cranial sessions set both keys - display_asymmetry is the one
+    # positioned for whichever frame result_mesh is currently in (see
+    # pipeline.measure_cranial), same reasoning as display_frontal_bossing
+    # above. facial sessions never set it (only one frame ever exists
+    # there), so this falls back to the plain "asymmetry" key for them.
+    asym = r["display_asymmetry"] if "display_asymmetry" in r else r.get("asymmetry")
+    if asym is not None:
         asymmetry = AsymmetryResponse(
-            mean_asymmetry_index=r["asymmetry"].mean_asymmetry_index,
-            heatmap=r["asymmetry"].heatmap.tolist(),
+            mean_asymmetry_index=asym.mean_asymmetry_index,
+            heatmap=asym.heatmap.tolist(),
         )
 
     metopic = None
@@ -817,10 +859,51 @@ def _config_with_nicp(config: dict, session: Session) -> dict:
     return config
 
 
+def _apply_export_selection(
+    craniometrics, asymmetry, metopic, frontal_bossing,
+    *, include_measurements: bool, include_asymmetry: bool,
+):
+    """None-outs whichever groups the "export analysis" checkboxes (see
+    App.jsx's AnalysisPanel - "measurements"/"asymmetry"/"meshes", default
+    all ticked) left unticked. _build_analysis_files/_report_pdf/
+    _metrics_row already treat a None group as "doesn't apply to this
+    session" and skip it everywhere (that's how a cranial session already
+    omits metopic, a session with no NICP fit omits that, etc) - this is
+    the only place that needs to know about the checkboxes at all, by
+    reusing that exact same mechanism. "measurements" covers craniometrics,
+    metopic, and frontal_bossing together - the panel doesn't expose those
+    as 3 separate checkboxes, just one "measurements" bucket alongside the
+    separate "asymmetry" one. "meshes" isn't handled here since it's not a
+    result group at all - see include_meshes on write_analysis_to_folder/
+    build_analysis_bundle instead."""
+    if not include_measurements:
+        craniometrics, metopic, frontal_bossing = None, None, None
+    if not include_asymmetry:
+        asymmetry = None
+    return craniometrics, asymmetry, metopic, frontal_bossing
+
+
+def _export_selection_query_params(
+    include_measurements: bool = Query(default=True),
+    include_asymmetry: bool = Query(default=True),
+    include_meshes: bool = Query(default=True),
+) -> dict[str, bool]:
+    """the SaveRequest include_measurements/include_asymmetry/include_meshes
+    fields as GET query params - same reasoning as _metadata_query_params
+    just above, for the same reason (bundle/analysis is a GET, can't carry
+    a JSON body)."""
+    return {
+        "include_measurements": include_measurements,
+        "include_asymmetry": include_asymmetry,
+        "include_meshes": include_meshes,
+    }
+
+
 def _metadata_query_params(
     file_name: str = Query(default=""),
     file_path: str = Query(default=""),
     patient_id: str = Query(default=""),
+    diagnosis: str = Query(default=""),
     sex: str = Query(default=""),
     date_imaging: str = Query(default=""),
     age_imaging: str = Query(default=""),
@@ -837,6 +920,7 @@ def _metadata_query_params(
         "file_name": file_name,
         "file_path": file_path,
         "patient_id": patient_id,
+        "diagnosis": diagnosis,
         "sex": sex,
         "date_imaging": date_imaging,
         "age_imaging": age_imaging,
@@ -995,7 +1079,11 @@ def save_meshes_to_source_folder(session_id: str, save_request: SaveRequest = Sa
 
 
 @router.get("/{session_id}/bundle/analysis")
-def download_analysis_bundle(session_id: str, metadata: dict[str, str] = Depends(_metadata_query_params)):
+def download_analysis_bundle(
+    session_id: str,
+    metadata: dict[str, str] = Depends(_metadata_query_params),
+    export_selection: dict[str, bool] = Depends(_export_selection_query_params),
+):
     session = _get_session(session_id)
     if session.job_status != "done" or session.result is None or session.aligned_mesh is None:
         raise HTTPException(status_code=409, detail=f"no completed analysis yet (status: {session.job_status})")
@@ -1004,6 +1092,11 @@ def download_analysis_bundle(session_id: str, metadata: dict[str, str] = Depends
     request: AnalyzeRequest = r["request"]
     config = _config_with_nicp(request.model_dump(), session)
     folder_name = results_folder_name(session.original_filename, request.target, config)
+    craniometrics, asymmetry, metopic, frontal_bossing = _apply_export_selection(
+        r["craniometrics"], r["asymmetry"], r.get("metopic"), r.get("frontal_bossing"),
+        include_measurements=export_selection["include_measurements"],
+        include_asymmetry=export_selection["include_asymmetry"],
+    )
 
     zip_bytes = build_analysis_bundle(
         original_filename=session.original_filename,
@@ -1011,15 +1104,16 @@ def download_analysis_bundle(session_id: str, metadata: dict[str, str] = Depends
         final_mesh=session.result_mesh,
         landmarks=r["landmarks"],
         target=request.target,
-        craniometrics=r["craniometrics"],
-        asymmetry=r["asymmetry"],
+        craniometrics=craniometrics,
+        asymmetry=asymmetry,
         config=config,
         sellion_mesh=session.sellion_result_mesh,
         sellion_landmarks=r["sellion_landmarks"],
         nicp_mesh=session.nicp_result_mesh,
-        metopic=r.get("metopic"),
-        frontal_bossing=r.get("frontal_bossing"),
+        metopic=metopic,
+        frontal_bossing=frontal_bossing,
         metadata=metadata,
+        include_meshes=export_selection["include_meshes"],
     )
     return Response(
         content=zip_bytes,
@@ -1045,6 +1139,11 @@ def save_analysis_to_source_folder(session_id: str, save_request: SaveRequest = 
 
     r = session.result
     request: AnalyzeRequest = r["request"]
+    craniometrics, asymmetry, metopic, frontal_bossing = _apply_export_selection(
+        r["craniometrics"], r["asymmetry"], r.get("metopic"), r.get("frontal_bossing"),
+        include_measurements=save_request.include_measurements,
+        include_asymmetry=save_request.include_asymmetry,
+    )
 
     analysis_dir = write_analysis_to_folder(
         dest_dir=dest_dir,
@@ -1053,15 +1152,16 @@ def save_analysis_to_source_folder(session_id: str, save_request: SaveRequest = 
         final_mesh=session.result_mesh,
         landmarks=r["landmarks"],
         target=request.target,
-        craniometrics=r["craniometrics"],
-        asymmetry=r["asymmetry"],
+        craniometrics=craniometrics,
+        asymmetry=asymmetry,
         config=_config_with_nicp(request.model_dump(), session),
         sellion_mesh=session.sellion_result_mesh,
         sellion_landmarks=r["sellion_landmarks"],
         nicp_mesh=session.nicp_result_mesh,
-        metopic=r.get("metopic"),
-        frontal_bossing=r.get("frontal_bossing"),
+        metopic=metopic,
+        frontal_bossing=frontal_bossing,
         metadata=save_request.metadata.model_dump(),
         cohort_xlsx_path=Path(save_request.cohort_xlsx_path) if save_request.cohort_xlsx_path else None,
+        include_meshes=save_request.include_meshes,
     )
     return SaveResultsResponse(saved_to=str(analysis_dir))

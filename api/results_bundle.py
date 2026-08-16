@@ -32,11 +32,12 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
+from shapely import concave_hull
+from shapely.geometry import MultiPoint
 
 from craniumpy_core.craniometrics import CranioMeasurements, FrontalBossingResult, hc_slice_polygon
 from craniumpy_core.asymmetry import AsymmetryResult
 from craniumpy_core.metopic import MetopicResult
-from craniumpy_core.remesh import _boundary_loops
 
 
 def shorten_stem(stem: str) -> str:
@@ -132,7 +133,7 @@ def _draw_measurements(fig: Figure, rect, mesh: trimesh.Trimesh, measurements: C
     rl, rb, rw, rh = rect
     fig.legend(
         handles, labels, loc="lower center",
-        bbox_to_anchor=(rl + 0.5 * rw, rb + 0.10 * rh), bbox_transform=fig.transFigure,
+        bbox_to_anchor=(rl + 0.5 * rw, rb + 0.05 * rh), bbox_transform=fig.transFigure,
         ncol=3, fontsize=8, frameon=False,
     )
     _rect_text(
@@ -152,43 +153,95 @@ def _measurement_figure(mesh: trimesh.Trimesh, measurements: CranioMeasurements)
     return buf.getvalue()
 
 
-def _draw_asymmetry(fig: Figure, rect, mesh: trimesh.Trimesh, asymmetry: AsymmetryResult) -> None:
-    """frontal view (x horizontal, y vertical - see registration.rigid, the
-    face-target frame puts x as left/right and y as up/down) of the
-    asymmetry heatmap, same blue(dent)/white/red(protruded) diverging scale
-    as the live viewer, with an mm colorbar."""
+def _silhouette_polygon(points_2d: np.ndarray, ratio: float = 0.3) -> np.ndarray:
+    """the outer 2D silhouette of a point cloud - a concave hull, not the
+    convex hull (a plain convex hull would erase real concave features like
+    the notch behind an ear). used to draw a head/face outline that traces
+    the shape's true projected boundary, unlike a mesh's own clip-boundary
+    loop (the open edge left behind by clipping), which only incidentally
+    resembles an outline and can cut across the interior depending on where
+    the clip plane happens to sit. ratio trades tightness for smoothness -
+    0.3 hugs real bumps without turning ordinary vertex-density jitter into
+    a jagged line; falls back to the plain convex hull on the rare point set
+    concave_hull can't return a single polygon for."""
+    hull = concave_hull(MultiPoint(points_2d), ratio=ratio)
+    if hull.geom_type != "Polygon":
+        hull = hull.convex_hull
+    return np.asarray(hull.exterior.coords)
+
+
+# (horizontal_idx, vertical_idx, horizontal_label, vertical_label, show_silhouette)
+# per _draw_asymmetry view - see that function's docstring for what each one
+# actually shows.
+_ASYMMETRY_VIEWS: dict[str, tuple[int, int, str, str, bool]] = {
+    "frontal": (0, 1, "x (mm)", "y (mm)", True),
+    "top": (0, 2, "x (mm)", "z (mm)", True),
+    "sagittal": (2, 1, "z (mm, depth)", "y (mm, height)", False),
+}
+
+
+def _draw_asymmetry(
+    fig: Figure, rect, mesh: trimesh.Trimesh, asymmetry: AsymmetryResult, *, label: str, view: str = "frontal"
+) -> None:
+    """the asymmetry heatmap, same blue(dent)/white/red(protruded) diverging
+    scale as the live viewer, with an mm colorbar. label is the title prefix
+    ("cranial"/"facial"); view picks which two axes stand in for the plot's
+    horizontal/vertical and whether a silhouette outline gets drawn (see
+    _ASYMMETRY_VIEWS):
+      "frontal"  - x horizontal, y vertical (facial's usual view - see
+                   registration.rigid, the face-target frame puts x as
+                   left/right and y as up/down).
+      "top"      - x horizontal, z vertical, looking straight down
+                   (cranial's usual view - a frontal view would just show
+                   the back of the scalp foreshortened into almost nothing).
+      "sagittal" - z (depth) horizontal, y (height) vertical, side-on - same
+                   convention _draw_frontal_bossing's profile view uses.
+                   restricted to the half of the mesh that actually carries
+                   the heatmap (see craniumpy_core.asymmetry's module
+                   docstring - the other half is always zeroed): collapsing
+                   left/right into a side view makes both halves' surfaces
+                   overlap in the same (z, y) footprint, which without this
+                   restriction renders as noise rather than a clean profile.
+                   no silhouette either, for the same reason - a silhouette
+                   of the WHOLE head/face wouldn't match a plot that only
+                   ever draws one half of it.
+    """
     vertices = np.asarray(mesh.vertices)
     faces = np.asarray(mesh.faces)
     heatmap = asymmetry.heatmap
     max_abs = max(float(np.abs(heatmap).max()), 1e-6)
+    horizontal_idx, vertical_idx, horizontal_label, vertical_label, show_silhouette = _ASYMMETRY_VIEWS[view]
+
+    if view == "sagittal":
+        # heatmap is zeroed on x < 0 (see calculate_asymmetry) - keep only
+        # faces entirely on the x >= 0 side so the triangulation doesn't
+        # also carry the empty (all-zero, all-white) mirror half into the
+        # same 2D footprint.
+        data_half = vertices[:, 0] >= 0
+        faces = faces[data_half[faces].all(axis=1)]
 
     ax = fig.add_axes(_sub(rect, 0.10, 0.09, 0.72, 0.84))
     cax = fig.add_axes(_sub(rect, 0.86, 0.14, 0.035, 0.74))
 
-    triangulation = Triangulation(vertices[:, 0], vertices[:, 1], faces)
+    triangulation = Triangulation(vertices[:, horizontal_idx], vertices[:, vertical_idx], faces)
     mesh_plot = ax.tripcolor(triangulation, heatmap, cmap="bwr", vmin=-max_abs, vmax=max_abs, shading="gouraud")
 
-    # the heatmap is only ever non-zero on one half (see module docstring) -
-    # 0.0 on this diverging colormap renders as pure white, indistinguishable
-    # from the plot background, so the other half reads as simply missing.
-    # the mesh's own clip-boundary loop is already roughly face-shaped (facial
-    # clipping crops around the face), so trace it as a light silhouette to
-    # keep the whole face visible regardless of which half has data.
-    for loop in _boundary_loops(mesh):
-        loop_xy = vertices[np.append(loop, loop[0])][:, :2]
-        ax.plot(loop_xy[:, 0], loop_xy[:, 1], color="#999999", linewidth=0.8, zorder=3)
+    if show_silhouette:
+        silhouette = _silhouette_polygon(vertices[:, [horizontal_idx, vertical_idx]])
+        ax.plot(silhouette[:, 0], silhouette[:, 1], color="#999999", linewidth=0.8, zorder=3)
 
     ax.set_aspect("equal")
-    ax.set_xlabel("x (mm)")
-    ax.set_ylabel("y (mm)")
-    ax.set_title(f"facial asymmetry - mean asymmetry index {asymmetry.mean_asymmetry_index:.2f}")
+    ax.set_xlabel(horizontal_label)
+    ax.set_ylabel(vertical_label)
+    title_suffix = " (sagittal)" if view == "sagittal" else ""
+    ax.set_title(f"{label} asymmetry{title_suffix} - mean asymmetry index {asymmetry.mean_asymmetry_index:.2f}")
     fig.colorbar(mesh_plot, cax=cax, label="deviation from mirrored half (mm)")
 
 
-def _asymmetry_figure(mesh: trimesh.Trimesh, asymmetry: AsymmetryResult) -> bytes:
+def _asymmetry_figure(mesh: trimesh.Trimesh, asymmetry: AsymmetryResult, *, label: str, view: str = "frontal") -> bytes:
     fig = Figure(figsize=(6.6, 6), dpi=FIGURE_PNG_DPI)
     canvas = FigureCanvasAgg(fig)
-    _draw_asymmetry(fig, (0, 0, 1, 1), mesh, asymmetry)
+    _draw_asymmetry(fig, (0, 0, 1, 1), mesh, asymmetry, label=label, view=view)
     buf = io.BytesIO()
     canvas.print_png(buf)
     return buf.getvalue()
@@ -209,10 +262,17 @@ def _draw_metopic(fig: Figure, rect, metopic: MetopicResult) -> None:
     # explicit rects instead of a gridspec: the same layout has to work
     # inside an arbitrary sub-rectangle of a PDF page as well as on a figure
     # of its own, and add_gridspec always divides the whole figure.
+    # the 3 side panels are shorter (0.177 vs an even 3-way split's 0.21)
+    # and further apart (0.095 gap vs 0.045) than an even split of the same
+    # vertical span would give them - a plain even split left each panel's
+    # title sitting on top of the tick labels of the panel above it, since
+    # those are sized by real font metrics rather than this fixed fraction
+    # (see tests/test_reporting.py's metopic overlap test, tuned against
+    # this exact spacing).
     ax_main = fig.add_axes(_sub(rect, 0.06, 0.20, 0.50, 0.72))
-    ax_phi = fig.add_axes(_sub(rect, 0.68, 0.71, 0.29, 0.21))
-    ax_kappa = fig.add_axes(_sub(rect, 0.68, 0.455, 0.29, 0.21))
-    ax_dev = fig.add_axes(_sub(rect, 0.68, 0.20, 0.29, 0.21))
+    ax_phi = fig.add_axes(_sub(rect, 0.68, 0.744, 0.29, 0.177))
+    ax_kappa = fig.add_axes(_sub(rect, 0.68, 0.472, 0.29, 0.177))
+    ax_dev = fig.add_axes(_sub(rect, 0.68, 0.20, 0.29, 0.177))
 
     central = (u >= metopic.central_window[0]) & (u <= metopic.central_window[1])
     left_t = (u >= metopic.left_temporal_window[0]) & (u <= metopic.left_temporal_window[1])
@@ -222,7 +282,7 @@ def _draw_metopic(fig: Figure, rect, metopic: MetopicResult) -> None:
     z_fit = metopic.parabola_a * x_fit**2 + metopic.parabola_c
 
     ax_main.plot(x, z, color="#3a3a3a", linewidth=1.5, label="forehead contour")
-    ax_main.plot(x_fit, z_fit, color="#2563eb", linewidth=1.5, linestyle="--", label="ideal parabola")
+    ax_main.plot(x_fit, z_fit, color="#2563eb", linewidth=1.5, linestyle="--", label="ideal (parabola)")
     ax_main.axvline(0, color="#999999", linewidth=1, linestyle=":", label="midline")
 
     if central.any():
@@ -253,18 +313,49 @@ def _draw_metopic(fig: Figure, rect, metopic: MetopicResult) -> None:
     ax_main.set_title(f"metopic/frontal shape - MCC {metopic.midline_curvature_concentration:.2f}  PDI {metopic.parabolic_deviation_index:.2f}mm")
     ax_main.grid(alpha=0.2)
 
+    # the same fitted parabola drawn as "ideal parabola" in the main panel,
+    # restated as phi/kappa/d_P so each small profile has something to be
+    # read against instead of just its own raw shape - a patient line that
+    # tracks the dashed one closely is close to a parabolic forehead at
+    # that point along the contour; a patient line that pulls away from it
+    # is exactly where the shape deviates, which is the plain-numbers-only
+    # version of what these three panels previously showed. computed
+    # directly from x rather than u/s: parametrizing the ideal parabola by
+    # x (dx/dx=1, dz/dx=2ax, d2z/dx2=2a) gives a tangent ANGLE and
+    # curvature that are already parametrization-invariant - same formulas
+    # _gradient_and_curvature uses, just with the parabola's own exact
+    # derivatives standing in for the numerically-differentiated contour
+    # ones, and the same sign flip on curvature so it reads on the same
+    # axis as curvature_profile.
+    slope = 2 * metopic.parabola_a * x
+    phi_ideal = np.arctan2(slope, 1.0)
+    kappa_ideal = -2 * metopic.parabola_a / np.power(1.0 + slope**2, 1.5)
+
+    # unlabeled - solid vs. dashed is self-evident within each small panel,
+    # and a "patient" legend entry would push the shared legend below to a
+    # third row, tall enough to collide with ax_dev's own xlabel (see the
+    # PDF-page-scale overlap tests in tests/test_reporting.py this is
+    # tuned against). "ideal (parabola)" alone, deduped against ax_main's
+    # own identically-labeled line below, adds no extra row.
     ax_phi.plot(u, metopic.gradient_profile, color="#2563eb", linewidth=1.2)
+    ax_phi.plot(u, phi_ideal, color="#2563eb", linewidth=1.2, linestyle="--", alpha=0.6, label="ideal (parabola)")
     ax_phi.set_ylabel("phi (rad)")
     ax_phi.set_title("gradient / tangent angle", fontsize=9)
     ax_phi.grid(alpha=0.2)
 
     ax_kappa.plot(u, metopic.curvature_profile, color="#16a34a", linewidth=1.2)
+    ax_kappa.plot(u, kappa_ideal, color="#2563eb", linewidth=1.2, linestyle="--", alpha=0.6)
     ax_kappa.set_ylabel("kappa (1/mm)")
     ax_kappa.set_title("signed curvature", fontsize=9)
     ax_kappa.grid(alpha=0.2)
 
     ax_dev.plot(u, metopic.deviation_profile, color="#d1453d", linewidth=1.2)
-    ax_dev.axhline(0, color="#999999", linewidth=1)
+    # the fitted parabola is what deviation_profile is measured against in
+    # the first place, so its own "ideal" line is always exactly zero -
+    # drawn the same dashed style as the other two panels' ideal line
+    # rather than the plain gray it used to be, so all three panels read
+    # the same way: solid = patient, dashed blue = ideal parabola.
+    ax_dev.axhline(0, color="#2563eb", linewidth=1.2, linestyle="--", alpha=0.6)
     ax_dev.set_ylabel("d_P (mm)")
     ax_dev.set_xlabel("normalized arc length u")
     ax_dev.set_title("deviation from parabola", fontsize=9)
@@ -272,13 +363,24 @@ def _draw_metopic(fig: Figure, rect, metopic: MetopicResult) -> None:
 
     # legend below the plots rather than floating inside ax_main, where it
     # tends to sit on top of the contour/parabola themselves - handles/
-    # labels are gathered from ax_main only, the 3 profile panels don't
-    # add their own.
-    handles, labels = ax_main.get_legend_handles_labels()
+    # labels are gathered from ax_main plus one profile panel ("patient"
+    # and "ideal (parabola)" are the same two lines, styled identically,
+    # on all three profile panels - only one copy is worth showing, so
+    # ax_phi stands in for all three) rather than all three, which would
+    # just repeat the same two entries three times over. deduped by label
+    # (keeping the first occurrence) since ax_main's own "ideal (parabola)"
+    # line - the dashed parabola drawn over the contour itself - uses the
+    # exact same label as the profile panels' reference line, on purpose:
+    # it's the same fit, just restated in three different ways.
+    all_handles, all_labels = ax_main.get_legend_handles_labels()
+    profile_handles, profile_labels = ax_phi.get_legend_handles_labels()
+    all_handles, all_labels = all_handles + profile_handles, all_labels + profile_labels
+    by_label = dict(zip(all_labels, all_handles))
+    handles, labels = list(by_label.values()), list(by_label.keys())
     rl, rb, rw, rh = rect
     fig.legend(
         handles, labels, loc="lower center",
-        bbox_to_anchor=(rl + 0.5 * rw, rb + 0.055 * rh), bbox_transform=fig.transFigure,
+        bbox_to_anchor=(rl + 0.5 * rw, rb + 0.04 * rh), bbox_transform=fig.transFigure,
         ncol=3, fontsize=7, frameon=False,
     )
     _rect_text(
@@ -317,6 +419,10 @@ def _draw_frontal_bossing(fig: Figure, rect, result: FrontalBossingResult) -> No
     ax = fig.add_axes(_sub(rect, 0.14, 0.19, 0.80, 0.74))
 
     ax.plot(z, y, color="#3a3a3a", linewidth=1.5, label="sagittal profile")
+    ax.axhline(
+        result.slice_height, color="#9ca3af", linewidth=1, linestyle=":",
+        label=f"HC slice height ({result.slice_height:.1f} mm)",
+    )
     horizontal = np.asarray(result.horizontal, dtype=np.float64)
     ref_length = 1.15 * float(np.linalg.norm(frontal - sellion))
     ref_end = sellion + horizontal * ref_length
@@ -336,8 +442,8 @@ def _draw_frontal_bossing(fig: Figure, rect, result: FrontalBossingResult) -> No
     rl, rb, rw, rh = rect
     fig.legend(
         handles, labels, loc="lower center",
-        bbox_to_anchor=(rl + 0.5 * rw, rb + 0.065 * rh), bbox_transform=fig.transFigure,
-        ncol=2, fontsize=7, frameon=False,
+        bbox_to_anchor=(rl + 0.5 * rw, rb + 0.035 * rh), bbox_transform=fig.transFigure,
+        ncol=3, fontsize=7, frameon=False,
     )
     _rect_text(
         fig, rect, 0.5, 0.015,
@@ -387,7 +493,7 @@ _METOPIC_ROW_KEYS = (
 # (a patient_id like "0042" must keep its leading zero, not become 42).
 _NUMERIC_ROW_KEYS = (
     "depth_mm", "breadth_mm", "cephalic_index", "circumference_cm", "mesh_volume_cc",
-    "mean_asymmetry_index", "frontal_bossing_angle_deg",
+    "cranial_asymmetry_index", "mean_asymmetry_index", "frontal_bossing_angle_deg",
 ) + tuple(f"metopic_{key}" for key in _METOPIC_ROW_KEYS)
 
 
@@ -432,6 +538,7 @@ def _metrics_row(
         "file_name": metadata.get("file_name", ""),
         "file_path": metadata.get("file_path", ""),
         "patient_id": metadata.get("patient_id", ""),
+        "diagnosis": metadata.get("diagnosis", ""),
         "sex": metadata.get("sex", ""),
         "date_imaging": metadata.get("date_imaging", ""),
         "age_imaging": metadata.get("age_imaging", ""),
@@ -447,7 +554,13 @@ def _metrics_row(
         "cephalic_index": _fmt(craniometrics.cephalic_index if craniometrics else None),
         "circumference_cm": _fmt(craniometrics.circumference_cm if craniometrics else None),
         "mesh_volume_cc": _fmt(float(craniometrics.mesh_volume_cc) if craniometrics else None),
-        "mean_asymmetry_index": _fmt(asymmetry.mean_asymmetry_index if asymmetry else None),
+        # separate columns rather than one shared "asymmetry index" - now
+        # that both targets compute one (see _draw_asymmetry's view
+        # param), a shared column would leave a mixed cohort file unable
+        # to tell a cranial-cap asymmetry number from a facial one without
+        # cross-referencing the target column for every row.
+        "cranial_asymmetry_index": _fmt(asymmetry.mean_asymmetry_index if asymmetry and target == "cranium" else None),
+        "mean_asymmetry_index": _fmt(asymmetry.mean_asymmetry_index if asymmetry and target == "face" else None),
         "frontal_bossing_angle_deg": _fmt(frontal_bossing.angle_deg if frontal_bossing else None),
     }
     for key in _METOPIC_ROW_KEYS:
@@ -645,6 +758,7 @@ METRIC_EXPLAINERS: dict[str, str] = {
     "circumference_cm": "Head circumference, measured around the widest part.",
     "mesh_volume_cc": "Estimated mesh volume.",
     "mean_asymmetry_index": "Average left-right difference across the face. Lower means more symmetric.",
+    "cranial_asymmetry_index": "Average left-right difference across the head. Lower means more symmetric.",
     "frontal_bossing_angle_deg": (
         "How much the forehead curves forward. A smaller angle means a more prominent forehead; "
         "a larger angle means flatter or more receding."
@@ -668,6 +782,10 @@ METRIC_EXPLAINERS: dict[str, str] = {
 # (row_key, display label, unit) per metric group, in display order - the
 # curated subset METRIC_EXPLAINERS has text for. group keys match the PNG
 # filenames _build_analysis_files produces (see figure_names in _report_pdf).
+# the two asymmetry groups (and their sagittal companions, which don't add
+# any new metric - same numbers as their primary group, just a second
+# figure) are last on purpose, so the report always ends on the asymmetry
+# section regardless of target.
 _PDF_METRIC_FIELDS: dict[str, list[tuple[str, str, str]]] = {
     "craniometrics": [
         ("depth_mm", "Head length (OFD)", "mm"),
@@ -675,9 +793,6 @@ _PDF_METRIC_FIELDS: dict[str, list[tuple[str, str, str]]] = {
         ("cephalic_index", "Cephalic index", ""),
         ("circumference_cm", "Head circumference", "cm"),
         ("mesh_volume_cc", "Estimated mesh volume", "cc"),
-    ],
-    "asymmetry": [
-        ("mean_asymmetry_index", "Facial asymmetry index", "mm"),
     ],
     "frontal_bossing": [
         ("frontal_bossing_angle_deg", "Frontal bossing angle", "deg"),
@@ -691,6 +806,14 @@ _PDF_METRIC_FIELDS: dict[str, list[tuple[str, str, str]]] = {
         ("metopic_midline_curvature_concentration", "Midline curvature concentration", ""),
         ("metopic_parabolic_deviation_index", "Overall shape deviation index", "mm"),
     ],
+    "cranial_asymmetry": [
+        ("cranial_asymmetry_index", "Cranial asymmetry index", "mm"),
+    ],
+    "cranial_asymmetry_sagittal": [],
+    "asymmetry": [
+        ("mean_asymmetry_index", "Facial asymmetry index", "mm"),
+    ],
+    "asymmetry_sagittal": [],
 }
 
 
@@ -780,6 +903,7 @@ def _report_pdf(
         info_lines = [
             ("File", metadata.get("file_name", "") or original_filename),
             ("Patient ID", metadata.get("patient_id", "")),
+            ("Diagnosis", metadata.get("diagnosis", "")),
             ("Imaging date", metadata.get("date_imaging", "")),
             ("Age at imaging (months)", metadata.get("age_imaging", "")),
             ("Sex", metadata.get("sex", "")),
@@ -898,6 +1022,12 @@ def _build_analysis_files(
     api/schemas.py's PatientMetadata) - None (the default) is treated the
     same as an empty dict, so every field just comes through blank."""
     stem = stem_from_filename(original_filename)
+    # "_cranial"/"_frontal" rather than reusing results_folder_name's
+    # "C"/"F" - these files often end up standing alone (attached
+    # somewhere, dropped into a shared cohort folder) away from the
+    # CP_..._C_.../CP_..._F_... folder name that would otherwise be the
+    # only thing saying which target a given _report/_summary came from.
+    target_suffix = "cranial" if target == "cranium" else "frontal"
     figure_mesh = sellion_mesh if sellion_mesh is not None else final_mesh
     report_landmarks = sellion_landmarks if sellion_landmarks is not None else landmarks
     metadata = metadata or {}
@@ -950,11 +1080,32 @@ def _build_analysis_files(
     if frontal_bossing is not None:
         report["frontal_bossing"] = {"angle_deg": frontal_bossing.angle_deg}
 
-    files = {f"{stem}_report.json": json.dumps(report, indent=2).encode("utf-8")}
+    # cranial asymmetry uses figure_mesh (always the sellion-frame mesh,
+    # same as craniometrics/frontal_bossing's own figures) since asymmetry
+    # was computed against that exact mesh's vertices (see
+    # pipeline.measure_cranial) - final_mesh could be a different frame
+    # entirely (the alt-frontal display mesh), which wouldn't line up with
+    # the heatmap array at all. facial has no such split - sellion_mesh is
+    # always None there, so figure_mesh already equals final_mesh.
+    is_cranial_asymmetry = asymmetry is not None and target == "cranium"
+    asymmetry_view = "top" if is_cranial_asymmetry else "frontal"
+    asymmetry_label = "cranial" if is_cranial_asymmetry else "facial"
+    asymmetry_mesh = figure_mesh if is_cranial_asymmetry else final_mesh
+    asymmetry_group = "cranial_asymmetry" if is_cranial_asymmetry else "asymmetry"
+    asymmetry_sagittal_group = "cranial_asymmetry_sagittal" if is_cranial_asymmetry else "asymmetry_sagittal"
+    asymmetry_png_name = f"{stem}_cranial_asymmetry.png" if is_cranial_asymmetry else f"{stem}_asymmetry.png"
+    asymmetry_sagittal_png_name = (
+        f"{stem}_cranial_asymmetry_sagittal.png" if is_cranial_asymmetry else f"{stem}_asymmetry_sagittal.png"
+    )
+
+    files = {f"{stem}_report_{target_suffix}.json": json.dumps(report, indent=2).encode("utf-8")}
     if craniometrics is not None:
         files[f"{stem}_measurements.png"] = _measurement_figure(figure_mesh, craniometrics)
     if asymmetry is not None:
-        files[f"{stem}_asymmetry.png"] = _asymmetry_figure(final_mesh, asymmetry)
+        files[asymmetry_png_name] = _asymmetry_figure(asymmetry_mesh, asymmetry, label=asymmetry_label, view=asymmetry_view)
+        files[asymmetry_sagittal_png_name] = _asymmetry_figure(
+            asymmetry_mesh, asymmetry, label=asymmetry_label, view="sagittal"
+        )
     if metopic is not None:
         files[f"{stem}_metopic.png"] = _metopic_figure(metopic)
     if frontal_bossing is not None:
@@ -967,15 +1118,20 @@ def _build_analysis_files(
     if craniometrics is not None:
         draw_figure["craniometrics"] = lambda fig, rect: _draw_measurements(fig, rect, figure_mesh, craniometrics)
     if asymmetry is not None:
-        draw_figure["asymmetry"] = lambda fig, rect: _draw_asymmetry(fig, rect, final_mesh, asymmetry)
+        draw_figure[asymmetry_group] = lambda fig, rect: _draw_asymmetry(
+            fig, rect, asymmetry_mesh, asymmetry, label=asymmetry_label, view=asymmetry_view
+        )
+        draw_figure[asymmetry_sagittal_group] = lambda fig, rect: _draw_asymmetry(
+            fig, rect, asymmetry_mesh, asymmetry, label=asymmetry_label, view="sagittal"
+        )
     if metopic is not None:
         draw_figure["metopic"] = lambda fig, rect: _draw_metopic(fig, rect, metopic)
     if frontal_bossing is not None:
         draw_figure["frontal_bossing"] = lambda fig, rect: _draw_frontal_bossing(fig, rect, frontal_bossing)
 
     row = _metrics_row(target, metadata, config, craniometrics, asymmetry, metopic, frontal_bossing)
-    files[f"{stem}_summary.xlsx"] = _summary_xlsx(row)
-    files[f"{stem}_report.pdf"] = _report_pdf(original_filename, target, metadata, row, draw_figure)
+    files[f"{stem}_summary_{target_suffix}.xlsx"] = _summary_xlsx(row)
+    files[f"{stem}_report_{target_suffix}.pdf"] = _report_pdf(original_filename, target, metadata, row, draw_figure)
     return files
 
 
@@ -1041,6 +1197,7 @@ def build_analysis_bundle(
     metopic: MetopicResult | None = None,
     frontal_bossing: FrontalBossingResult | None = None,
     metadata: dict[str, str] | None = None,
+    include_meshes: bool = True,
 ) -> bytes:
     """zip bytes for the mesh files (two, or three - see _build_mesh_files)
     plus a nested analysis/ subfolder - the browser-download side of
@@ -1048,13 +1205,28 @@ def build_analysis_bundle(
     meshes) since there's no persistent folder to add an analysis/
     subfolder onto across separate browser downloads, unlike
     write_analysis_to_folder below. no cohort_xlsx_path here for the same
-    reason - see _upsert_cohort_xlsx, desktop-only."""
-    folder, mesh_files = _build_mesh_files(original_filename, registered_mesh, final_mesh, target, config, nicp_mesh)
+    reason - see _upsert_cohort_xlsx, desktop-only.
+
+    include_meshes=False (the "meshes" export checkbox unticked - see
+    App.jsx's AnalysisPanel) skips the mesh files entirely, for a
+    report-only zip. craniometrics/asymmetry being None already skips
+    their own sections wherever they're used (see _build_analysis_files) -
+    that's how the "measurements"/"asymmetry" checkboxes work, no separate
+    flag needed here; the router just passes None for whichever's unticked."""
+    folder = results_folder_name(original_filename, target, config)
+    mesh_files = (
+        _build_mesh_files(original_filename, registered_mesh, final_mesh, target, config, nicp_mesh)[1]
+        if include_meshes
+        else {}
+    )
     analysis_files = _build_analysis_files(
         original_filename, final_mesh, landmarks, target, craniometrics, asymmetry, config, sellion_mesh, sellion_landmarks,
         metopic, frontal_bossing, metadata,
     )
-    return _zip_files({folder: mesh_files, f"{folder}/analysis": analysis_files})
+    files_by_prefix = {f"{folder}/analysis": analysis_files}
+    if mesh_files:
+        files_by_prefix[folder] = mesh_files
+    return _zip_files(files_by_prefix)
 
 
 def write_analysis_to_folder(
@@ -1074,18 +1246,22 @@ def write_analysis_to_folder(
     frontal_bossing: FrontalBossingResult | None = None,
     metadata: dict[str, str] | None = None,
     cohort_xlsx_path: Path | None = None,
+    include_meshes: bool = True,
 ) -> Path:
     """writes the report/figures into dest_dir/{folder}/analysis/ - the
     desktop side of "export analysis" (part 10). if the mesh folder doesn't
-    exist yet (meshes were never separately saved), writes those first -
-    see write_meshes_to_folder. when cohort_xlsx_path is given, also
-    upserts this session's row into that external file (see
+    exist yet (meshes were never separately saved) AND include_meshes is
+    True (the "meshes" export checkbox - see App.jsx's AnalysisPanel),
+    writes those first - see write_meshes_to_folder; with it unticked, only
+    the analysis/ subfolder gets written, even into a dest_dir that has
+    never had meshes saved into it at all. when cohort_xlsx_path is given,
+    also upserts this session's row into that external file (see
     _upsert_cohort_xlsx) - browser mode has no equivalent, there's no
     persistent file across separate zip downloads to append to. returns
     the analysis folder written."""
     folder_name = results_folder_name(original_filename, target, config)
     results_dir = dest_dir / folder_name
-    if not results_dir.exists():
+    if include_meshes and not results_dir.exists():
         write_meshes_to_folder(dest_dir, original_filename, registered_mesh, final_mesh, target, config, nicp_mesh)
 
     analysis_dir = results_dir / "analysis"

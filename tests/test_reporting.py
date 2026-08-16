@@ -14,9 +14,27 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import trimesh
 from openpyxl import Workbook, load_workbook
 
-from api.results_bundle import _id_mapping_path, _metrics_row, _summary_xlsx, _upsert_cohort_xlsx
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.figure import Figure
+from shapely.geometry import MultiPoint, Polygon
+
+from api.results_bundle import (
+    PAGE_H_IN,
+    PAGE_W_IN,
+    _PDF_METRIC_FIELDS,
+    _draw_asymmetry,
+    _draw_frontal_bossing,
+    _draw_measurements,
+    _draw_metopic,
+    _id_mapping_path,
+    _metrics_row,
+    _silhouette_polygon,
+    _summary_xlsx,
+    _upsert_cohort_xlsx,
+)
 from craniumpy_core.asymmetry import AsymmetryResult
 from craniumpy_core.craniometrics import CranioMeasurements, FrontalBossingResult
 from craniumpy_core.metopic import MetopicResult
@@ -85,7 +103,7 @@ def _metopic() -> MetopicResult:
 
 
 _METADATA_KEYS = (
-    "file_name", "file_path", "patient_id", "sex", "date_imaging", "age_imaging",
+    "file_name", "file_path", "patient_id", "diagnosis", "sex", "date_imaging", "age_imaging",
     "treatment", "age_surgery_months", "free_variable",
 )
 _SETTINGS_KEYS = ("com_correction", "nicp_used", "nicp_template")
@@ -339,3 +357,203 @@ def test_upsert_cohort_xlsx_unions_columns_from_an_older_narrower_schema(tmp_pat
     assert new_row_out["an_old_removed_column"] == ""  # old column, blank on the new row
     assert new_row_out["depth_mm"] == "59.12"
     assert new_row_out["cohort_id"] == "C00001"
+
+
+# --- PDF figure layout ---------------------------------------------------
+#
+# regression tests for text overlapping between a plot's own x-axis label
+# (matplotlib-placed, using real font metrics - not something these
+# functions control directly the way the fixed line-advance PDF text
+# elsewhere in this module is) and the fig.legend/caption text manually
+# positioned below it. rendered at actual PDF page scale (the report page
+# rect, not a standalone-PNG-sized one) since that's the scale the
+# overlap only showed up at - see _draw_measurements/_draw_frontal_bossing.
+
+
+def _text_block_extents(fig: Figure) -> tuple[float, float, float, float, float, float]:
+    """(xlabel_bottom, legend_top, legend_bottom, caption_top), all as a
+    fraction of the whole figure's height (0 = figure bottom), plus the
+    two gaps between them - overlap means the gap is negative. assumes
+    exactly one axes, one legend, and the caption is whichever fig.text is
+    lowest (both figures under test have just the one)."""
+    canvas = FigureCanvasAgg(fig)
+    canvas.draw()
+    renderer = canvas.get_renderer()
+    fig_h = fig.bbox.height
+
+    xlabel_bottom = fig.axes[0].xaxis.label.get_window_extent(renderer).y0 / fig_h
+    legend_bb = fig.legends[0].get_window_extent(renderer)
+    legend_top, legend_bottom = legend_bb.y1 / fig_h, legend_bb.y0 / fig_h
+    caption = min(fig.texts, key=lambda t: t.get_window_extent(renderer).y0)
+    caption_top = caption.get_window_extent(renderer).y1 / fig_h
+
+    return (
+        xlabel_bottom, legend_top, legend_bottom, caption_top,
+        xlabel_bottom - legend_top, legend_bottom - caption_top,
+    )
+
+
+def test_measurements_figure_xlabel_legend_caption_dont_overlap():
+    mesh = trimesh.creation.icosphere(subdivisions=3, radius=1.0)
+    mesh.vertices = np.asarray(mesh.vertices) * np.array([70.0, 90.0, 60.0])
+    measurements = _craniometrics()
+
+    page = Figure(figsize=(PAGE_W_IN, PAGE_H_IN))
+    _draw_measurements(page, (0.04, 0.46, 0.92, 0.50), mesh, measurements)
+
+    _, _, _, _, xlabel_legend_gap, legend_caption_gap = _text_block_extents(page)
+    assert xlabel_legend_gap >= 0
+    assert legend_caption_gap >= 0
+
+
+def test_frontal_bossing_figure_xlabel_legend_caption_dont_overlap():
+    y = np.linspace(0.0, 100.0, 300)
+    z = -0.005 * (y - 40.0) ** 2 + 20.0
+    profile = np.column_stack([np.zeros_like(y), y, z])
+    bossing = FrontalBossingResult(
+        angle_deg=68.3, sellion=np.array([0.0, 0.0, 20.0]), frontal_point=np.array([0.0, 40.0, 20.0]),
+        profile=profile, horizontal=np.array([0.0, 0.0, 1.0]), slice_height=40.0,
+    )
+
+    page = Figure(figsize=(PAGE_W_IN, PAGE_H_IN))
+    _draw_frontal_bossing(page, (0.04, 0.46, 0.92, 0.50), bossing)
+
+    _, _, _, _, xlabel_legend_gap, legend_caption_gap = _text_block_extents(page)
+    assert xlabel_legend_gap >= 0
+    assert legend_caption_gap >= 0
+
+
+def test_metopic_figure_xlabel_legend_caption_dont_overlap():
+    # 4 axes (main + 3 profile panels), not just the 1 the helper above
+    # assumes - checked directly rather than through _text_block_extents.
+    # ax_dev is the one that actually collides in practice: its own xlabel
+    # sits much closer to the legend than ax_main's, whose aspect="equal"
+    # shrinks its plotted area (and pushes its xlabel well clear) in a way
+    # ax_dev's plain axes doesn't share.
+    u = np.linspace(0.0, 1.0, 100)
+    metopic = MetopicResult(
+        contour=np.column_stack([np.linspace(-40, 40, 100), np.full(100, 20.0)]),
+        arc_length=u * 100.0,
+        normalized_arc_length=u,
+        midline_u=0.5, parabola_a=-0.01, parabola_c=30.0,
+        deviation_profile=np.sin(u * 6.0),
+        gradient_profile=np.cos(u * 6.0),
+        curvature_profile=np.sin(u * 3.0) * 0.01,
+        frontal_angle_deg=125.0,
+        frontal_angle_points=(np.array([0.0, 30.0]), np.array([-30.0, 20.0]), np.array([30.0, 20.0])),
+        forehead_width_mm=90.0, midline_curvature_concentration=0.25, midline_max_curvature=0.02,
+        midline_max_curvature_position=0.5, ridge_protrusion_mm=2.0, ridge_protrusion_position=0.5,
+        ridge_area_mm2=50.0, ridge_area_normalized=0.02, left_temporal_hollowing=0.1, right_temporal_hollowing=0.08,
+        mean_temporal_hollowing=0.09, left_max_temporal_depth_mm=5.0, right_max_temporal_depth_mm=4.0,
+        parabolic_deviation_index=3.0, central_window=(0.4, 0.6), left_temporal_window=(0.1, 0.3),
+        right_temporal_window=(0.7, 0.9),
+    )
+
+    page = Figure(figsize=(PAGE_W_IN, PAGE_H_IN))
+    _draw_metopic(page, (0.04, 0.46, 0.92, 0.50), metopic)
+
+    canvas = FigureCanvasAgg(page)
+    canvas.draw()
+    renderer = canvas.get_renderer()
+    fig_h = page.bbox.height
+
+    ax_main, ax_phi, ax_kappa, ax_dev = page.axes
+    legend_bb = page.legends[0].get_window_extent(renderer)
+    legend_top, legend_bottom = legend_bb.y1 / fig_h, legend_bb.y0 / fig_h
+    caption = min(page.texts, key=lambda t: t.get_window_extent(renderer).y0)
+    caption_top = caption.get_window_extent(renderer).y1 / fig_h
+
+    for ax in (ax_main, ax_dev):
+        xlabel_bottom = ax.xaxis.label.get_window_extent(renderer).y0 / fig_h
+        assert xlabel_bottom >= legend_top
+    assert legend_bottom >= caption_top
+
+    # the 3 stacked side panels (ax_phi above ax_kappa above ax_dev) - each
+    # one's title must clear the tick labels of the panel directly above it.
+    for upper, lower in ((ax_phi, ax_kappa), (ax_kappa, ax_dev)):
+        tick_bottom = min(
+            t.get_window_extent(renderer).y0 for t in upper.get_xticklabels() if t.get_text()
+        ) / fig_h
+        title_top = lower.title.get_window_extent(renderer).y1 / fig_h
+        assert tick_bottom >= title_top
+
+
+# --- asymmetry figure (silhouette + sagittal view) ------------------------
+
+
+def test_silhouette_polygon_follows_concavities_not_just_convex_hull():
+    # a horseshoe ("C") band of points, open on one side and hollow in the
+    # middle - strongly concave, so an outline that actually traces the
+    # band should enclose noticeably less area than the convex hull would,
+    # which fills in both the open mouth and the hollow center.
+    theta = np.linspace(np.deg2rad(20), np.deg2rad(340), 150)
+    outer = np.column_stack([np.cos(theta), np.sin(theta)]) * 50.0
+    inner = np.column_stack([np.cos(theta), np.sin(theta)]) * 25.0
+    end_radii = np.linspace(25.0, 50.0, 10)[:, None]
+    end_a = np.array([np.cos(theta[0]), np.sin(theta[0])]) * end_radii
+    end_b = np.array([np.cos(theta[-1]), np.sin(theta[-1])]) * end_radii
+    points = np.vstack([outer, inner, end_a, end_b])
+
+    silhouette = _silhouette_polygon(points, ratio=0.3)
+    assert tuple(silhouette[0]) == pytest.approx(tuple(silhouette[-1]))  # closed ring
+
+    concave_area = Polygon(silhouette).area
+    convex_area = MultiPoint(points).convex_hull.area
+    assert concave_area < convex_area * 0.8
+
+
+def _asymmetry_mesh_and_heatmap():
+    # icosphere stretched into a head-ish blob, with a heatmap zeroed on
+    # x < 0 - the same convention craniumpy_core.asymmetry.calculate_asymmetry
+    # actually produces, which is what view="sagittal" relies on to know
+    # which half of the mesh to keep.
+    mesh = trimesh.creation.icosphere(subdivisions=3, radius=1.0)
+    mesh.vertices = np.asarray(mesh.vertices) * np.array([70.0, 90.0, 60.0])
+    vertices = np.asarray(mesh.vertices)
+    radius = np.linalg.norm(vertices, axis=1)
+    heatmap = radius - radius.mean()
+    heatmap[vertices[:, 0] < 0] = 0.0
+    asymmetry = AsymmetryResult(heatmap=heatmap, mean_asymmetry_index=float(np.abs(heatmap).mean()))
+    return mesh, asymmetry
+
+
+def test_draw_asymmetry_top_and_frontal_views_draw_a_silhouette():
+    mesh, asymmetry = _asymmetry_mesh_and_heatmap()
+    for view in ("top", "frontal"):
+        page = Figure(figsize=(6, 6))
+        _draw_asymmetry(page, (0, 0, 1, 1), mesh, asymmetry, label="cranial", view=view)
+        ax = page.axes[0]
+        assert len(ax.lines) == 1  # the silhouette outline, and nothing else
+
+
+def test_draw_asymmetry_sagittal_view_has_no_silhouette_and_only_the_data_half():
+    mesh, asymmetry = _asymmetry_mesh_and_heatmap()
+    vertices = np.asarray(mesh.vertices)
+
+    page = Figure(figsize=(6, 6))
+    _draw_asymmetry(page, (0, 0, 1, 1), mesh, asymmetry, label="cranial", view="sagittal")
+    ax = page.axes[0]
+    assert len(ax.lines) == 0  # no silhouette for the sagittal view
+
+    # the triangulation actually plotted should only reference vertices on
+    # the x >= 0 (data-carrying) half - collapsing left/right without this
+    # would overlay the empty mirror half's faces into the same footprint.
+    triangulation = ax.collections[0]._triangulation
+    used_vertex_indices = np.unique(triangulation.triangles)
+    assert np.all(vertices[used_vertex_indices, 0] >= 0)
+
+
+def test_pdf_metric_fields_orders_asymmetry_sections_last():
+    # both the primary and sagittal group for each target's asymmetry
+    # section must be among the last entries, so a session that computes
+    # any of them always ends its PDF report there regardless of which
+    # other groups (craniometrics, frontal_bossing, metopic) also ran.
+    keys = list(_PDF_METRIC_FIELDS.keys())
+    asymmetry_keys = {"cranial_asymmetry", "cranial_asymmetry_sagittal", "asymmetry", "asymmetry_sagittal"}
+    other_keys = [k for k in keys if k not in asymmetry_keys]
+    last_other_index = max(keys.index(k) for k in other_keys)
+    first_asymmetry_index = min(keys.index(k) for k in asymmetry_keys)
+    assert first_asymmetry_index > last_other_index
+    # sagittal always comes right after its own target's primary section
+    assert keys.index("cranial_asymmetry_sagittal") == keys.index("cranial_asymmetry") + 1
+    assert keys.index("asymmetry_sagittal") == keys.index("asymmetry") + 1

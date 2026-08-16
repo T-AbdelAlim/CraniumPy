@@ -277,7 +277,7 @@ def extract_measurements(
 class FrontalBossingResult:
     angle_deg: float
     sellion: np.ndarray  # (3,)
-    frontal_point: np.ndarray  # (3,) - the most anterior point of the forehead, above sellion
+    frontal_point: np.ndarray  # (3,) - the forehead point at the HC slice height, above sellion
     profile: np.ndarray  # (N, 3) the sagittal (midline) contour, for drawing
     # unit vector for "horizontal" - the direction angle_deg was actually
     # measured against. always +z in the frame the angle was computed in
@@ -288,6 +288,14 @@ class FrontalBossingResult:
     # pipeline.measure_cranial). kept here rather than recomputed by each
     # consumer so the drawn reference line can't disagree with the number.
     horizontal: np.ndarray = None  # type: ignore[assignment]
+    # the y (height) frontal_point was anchored to - the same height the
+    # head-circumference/OFD/BPD slice uses (see extract_measurements),
+    # threaded through purely so a consumer (the exported figure) can draw
+    # it as an explicit reference without recomputing anything. carried
+    # along, not re-derived, for the same reason horizontal is: nothing
+    # should be able to draw a value that disagrees with what angle_deg was
+    # actually measured against.
+    slice_height: float = 0.0
 
     def __post_init__(self) -> None:
         if self.horizontal is None:
@@ -311,23 +319,93 @@ def _ordered_sagittal_profile(section) -> np.ndarray:
     return max(pieces, key=len)
 
 
-def frontal_bossing(mesh: trimesh.Trimesh, sellion: np.ndarray) -> FrontalBossingResult | None:
+def _forehead_point_at_slice_height(arc: np.ndarray, slice_height: float) -> np.ndarray:
+    """where the forehead arc (the "above sellion" run of the sagittal
+    profile, already ordered walking away from sellion) crosses
+    y = slice_height, by linear interpolation between the two straddling
+    points. falls back to the arc's own most anterior (max z) point if
+    slice_height sits outside the arc's y range at all (an unusually
+    short/tall scan where the HC height doesn't actually land on this
+    person's forehead) - same fallback the old argmax-only version always
+    used, so this only ever degrades to the previous behavior rather than
+    raising."""
+    y = arc[:, 1]
+    if y[0] > y[-1]:
+        arc = arc[::-1]
+        y = y[::-1]
+    if slice_height <= y[0] or slice_height >= y.max():
+        return arc[np.argmax(arc[:, 2])]
+    idx = int(np.argmax(y >= slice_height))  # first index at/above slice_height
+    p0, p1 = arc[idx - 1], arc[idx]
+    t = (slice_height - p0[1]) / (p1[1] - p0[1])
+    return p0 + t * (p1 - p0)
+
+
+def _select_forehead_half(arc: np.ndarray, sellion: np.ndarray) -> np.ndarray:
+    """picks the actual forehead-to-vertex piece out of the full
+    above-sellion sagittal arc, which on a real (closed-cap) cranial/facial
+    mesh doesn't stop at the vertex - it keeps going in one unbroken sweep
+    down the OTHER side too, so both the forehead's base near sellion AND
+    the occiput's base near the back of the head end up "above sellion" and
+    get walked as a single contiguous run (see frontal_bossing's own
+    above_mask/arc selection above this).
+
+    _forehead_point_at_slice_height used to just trust whichever end of
+    that combined arc came first in mesh.section()'s own traversal order
+    (flipped only by comparing the two ends' y - both of which sit near
+    sellion's height, so which one happens to be a hair higher is
+    essentially arbitrary jitter from resampling/decimation, not a real
+    front/back signal) - meaning it could silently walk from the occiput
+    end and report an occipital point as the "forehead" one. reported as:
+    the same landmarks giving a correct frontal-bossing angle on one run
+    and a clearly-wrong one (pointing at the back of the head) on another,
+    depending on nothing the user changed.
+
+    splits the arc at its own highest point (the vertex/crown - the one
+    unambiguous landmark on it) into its two monotonic halves, then keeps
+    whichever half's low-y (near-sellion-height) endpoint sits closer to
+    sellion in z. that's a real anatomical signal instead of arbitrary
+    ordering: the forehead's base is right next to sellion, while the
+    occiput's base is clear across the head. returns the kept half ordered
+    ascending in y (low endpoint first, vertex last) - already exactly what
+    _forehead_point_at_slice_height's own walk expects, so its own
+    y[0] > y[-1] flip is a no-op on this input, just a harmless safety net.
+    """
+    crown_idx = int(np.argmax(arc[:, 1]))
+    front_half = arc[: crown_idx + 1]
+    back_half = arc[crown_idx:][::-1]
+    front_dz = abs(front_half[0, 2] - sellion[2])
+    back_dz = abs(back_half[0, 2] - sellion[2])
+    return front_half if front_dz <= back_dz else back_half
+
+
+def frontal_bossing(mesh: trimesh.Trimesh, sellion: np.ndarray, slice_height: float) -> FrontalBossingResult | None:
     """how much the forehead bulges forward, measured in the sagittal
     (midline) plane through sellion: slices the mesh at x = sellion.x,
-    finds the most anterior (max z) point ABOVE sellion (y > sellion.y -
-    restricted to the forehead, not the nose/lips/chin below sellion,
-    which would otherwise win this search on a facial-target mesh that
-    still has a nose on it), and reports the angle between horizontal (the
-    z-axis, through sellion) and the sellion -> that point vector.
+    then reports the angle between horizontal (the z-axis, through
+    sellion) and the vector from sellion to wherever that sagittal profile
+    crosses y = slice_height on the forehead side (y > sellion.y,
+    restricted to the forehead rather than the nose/lips/chin below
+    sellion, which would otherwise be picked up on a facial-target mesh
+    that still has a nose on it).
+
+    slice_height is the same height extract_measurements chose for the
+    head-circumference/OFD/BPD slice (see CranioMeasurements.slice_height)
+    - anchoring the bossing angle's second point to that shared reference
+    plane, rather than to an independently found local maximum, is what
+    keeps it comparable to those measurements and reproducible: the old
+    "most anterior point above sellion" approach could land on whatever
+    local bump happened to stick out furthest (a brow ridge, a stray
+    scanning artifact), not necessarily anything anatomically tied to the
+    rest of the report.
 
     a forehead that bulges mostly straight out before curving up reads as
     a small angle (close to 0, near-horizontal - a prominent/bossed
     forehead); one that goes mostly straight up with little forward
     bulge reads as a large angle (close to 90, near-vertical - a flatter
     or receding forehead). works the same in either registered frame
-    (cranial or facial) - it's defined purely relative to sellion's own
-    position, not any shared plane/height the way the metopic HC-slice
-    analysis needs. None if the plane misses the mesh, or nothing on it
+    (cranial or facial), since it's defined purely relative to sellion's
+    own position. None if the plane misses the mesh, or nothing on it
     sits above sellion at all.
 
     the given sellion is snapped onto this mesh's own surface before
@@ -351,18 +429,26 @@ def frontal_bossing(mesh: trimesh.Trimesh, sellion: np.ndarray) -> FrontalBossin
         return None
 
     pts = np.asarray(section.vertices)
-    above = pts[:, 1] > sellion[1]
-    if not above.any():
+    ordered = _ordered_sagittal_profile(section)
+    profile = ordered if len(ordered) else pts
+
+    above_mask = profile[:, 1] > sellion[1]
+    if not above_mask.any():
         return None
 
-    candidates = pts[above]
-    frontal_point = candidates[np.argmax(candidates[:, 2])]
+    # the largest contiguous run of "above sellion" indices along the
+    # ordered walk - the actual forehead-to-vertex arc, in case the above-
+    # sellion mask also catches an unrelated sliver elsewhere on the
+    # profile (e.g. the far side of the head, on a full facial mesh).
+    indices = np.where(above_mask)[0]
+    splits = np.where(np.diff(indices) > 1)[0] + 1
+    arc = profile[max(np.split(indices, splits), key=len)]
+    arc = _select_forehead_half(arc, sellion)
+
+    frontal_point = _forehead_point_at_slice_height(arc, slice_height)
     dy = frontal_point[1] - sellion[1]
     dz = frontal_point[2] - sellion[2]
     angle_deg = float(np.degrees(np.arctan2(dy, dz)))
-
-    ordered = _ordered_sagittal_profile(section)
-    profile = ordered if len(ordered) else pts
 
     return FrontalBossingResult(
         angle_deg=angle_deg,
@@ -370,6 +456,7 @@ def frontal_bossing(mesh: trimesh.Trimesh, sellion: np.ndarray) -> FrontalBossin
         frontal_point=frontal_point,
         profile=profile,
         horizontal=np.array([0.0, 0.0, 1.0]),
+        slice_height=float(slice_height),
     )
 
 
