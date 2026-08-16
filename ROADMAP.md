@@ -1,15 +1,20 @@
 # Roadmap
 
 ## Implemented
-* Rigid, landmark-based registration (3 landmarks, plus an optional 4th secondary frontal landmark for the displayed/saved mesh)
+* Rigid, landmark-based registration (3 landmarks, plus an optional 4th secondary frontal landmark for the displayed/saved mesh) - picking/clearing the 4th landmark auto-selects the matching shipped template
 * Staged align / adjust-picks / run-pipeline workflow, with re-registration on landmark adjustment
 * Mesh repair (PyMeshFix) and resampling to a target vertex count
 * Center-of-mass correction (validated, optional)
+* Non-rigid template registration (NICP), as an optional post-processing step - live fit preview, adjustable stiffness schedule, gives every processed patient the shipped template's own topology for downstream shape analysis
 * Automated cephalometrics: OFD, BPD, cephalic index, occipitofrontal circumference, mesh volume - validated for pediatric heads
+* Forehead morphology and frontal bossing: a frontal bossing angle (frame-consistent, carried across a secondary-landmark display frame rather than re-derived), a parabola-fitted forehead contour analysis (frontal angle, midline ridge protrusion/area, per-side temporal hollowing/depth, parabolic deviation index) - see [Known issues](README.md#known-issues) for validation status
 * Mean facial asymmetry (MFA) scoring with a per-vertex heatmap
 * Template overlay comparison (preinstalled templates + custom option) with center-of-gravity offset
-* In-viewer visualization: metrics overlay (HC/BPD/OFD lines + numeric panel), asymmetry heatmap with colour scale, template alignment view
-* Results saving: local folder (desktop app) or zip download (web app), with a JSON report and a 2D measurement/asymmetry figure
+* In-viewer visualization: metrics overlay (HC/BPD/OFD + frontal bossing construction), asymmetry heatmap and forehead-morphology overlay with colour scale, template alignment view
+* Patient/visit metadata form (patient ID, sex, imaging date, ages, treatment, free variable)
+* Reporting: a JSON report (every measurement plus a settings block - target, landmark count, center-of-mass correction, NICP template), a vector PDF report pairing each measurement with a plain-language explanation, and a per-patient Excel summary (real numeric cells, formatted as an Excel table)
+* Cohort export (desktop-only): accumulates rows across sessions into a shared Excel file, keyed on source file so a re-export updates rather than duplicates; each distinct file gets a sequential cohort ID, with the patient ID <-> cohort ID mapping kept in a separate, local-only file - a first step on "de-identification helper" below
+* Results saving: local folder (desktop app) or zip download (web app), with a JSON report and 2D measurement/asymmetry/forehead-morphology figures
 * Textured mesh support (.obj + .mtl + texture), with wireframe/texture toggles
 * Cross-platform: web app + standalone desktop app (Windows .exe, macOS .app)
 
@@ -26,26 +31,22 @@
 * Stratified group comparisons - by treatment type, age bracket, sex, syndrome, etc., with standard group-comparison stats (t-test/ANOVA, effect sizes) based on predefined excelsheet
 * Normative/percentile reference curves - age/sex-matched percentile or z-score comparison, similar to pediatric growth charts
 * Automated QC flags - surface failed/suspect pipeline runs (bad repair, outlier asymmetry likely from a mis-pick) for manual review instead of checking every file by hand
-* Bulk export to CSV/Excel for downstream analysis
-* De-identification helper - strip patient identifiers from filenames/metadata before sharing a batch dataset
+* De-identification helper, beyond cohort export's own patient ID/cohort ID split above - e.g. stripping identifiers out of filenames/free-text fields too before a batch dataset is shared
 
 ### Registration & landmarks
 * Automated facial landmark detection for anthropometrics
-* Non-rigid registration implementation (NICP)
 
 ### Subtype-specific metrics (literature-established, per craniosynostosis subtype)
-* Frontal bossing index (scaphocephaly)
 * Fronto-orbital angle (trigonocephaly)
 * Cranial vault asymmetry index (CVAI) + oblique diagonal difference (plagiocephaly)
 * Cranial index of symmetry (CIS)
 * Vertical/height index (turricephaly)
 * Per-measurement repeatability estimate
 * Single-patient percentile/z-score vs. normative data
+* Clinical validation of the forehead-morphology metrics above against a graded severity score
 
 ### Visualization & reporting
 * Side-by-side comparison view
-* Heatmap
-* PDF report export
 
 ### Data & workflow
 * Local analysis history

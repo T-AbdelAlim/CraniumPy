@@ -49,15 +49,15 @@ jobs:
       - name: Zip .app
         # regular zip mangles app bundle metadata (resource forks, symlinks) -
         # ditto is the macOS-native way to zip one up intact.
-        run: ditto -c -k --sequesterRsrc --keepParent dist/CraniumPy.app "CraniumPy-macos-${{ matrix.arch }}.zip"
+        run: ditto -c -k --sequesterRsrc --keepParent dist/CranioSuite.app "CranioSuite-macos-${{ matrix.arch }}.zip"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: CraniumPy-macos-${{ matrix.arch }}
-          path: CraniumPy-macos-${{ matrix.arch }}.zip
+          name: CranioSuite-macos-${{ matrix.arch }}
+          path: CranioSuite-macos-${{ matrix.arch }}.zip
 
       - name: Attach to release
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
-          files: CraniumPy-macos-${{ matrix.arch }}.zip
+          files: CranioSuite-macos-${{ matrix.arch }}.zip
