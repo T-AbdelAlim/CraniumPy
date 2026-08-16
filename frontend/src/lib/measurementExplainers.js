@@ -27,15 +27,17 @@ export const MEASUREMENT_EXPLAINERS = {
     "How much of the forehead's total outward curvature is concentrated right at the centerline (ridge " +
     "window) versus spread out evenly across the whole forehead. Higher means a sharper, more localized ridge.",
   ridgeProtrusion:
-    "How far the central forehead ridge sticks out in front of the ideal parabola (see the note above the " +
+    "How far the central forehead ridge is located behind or in front of the ideal parabola (see the note above the " +
     "graphs) at that same point.",
   ridgeArea:
-    "The area between the forehead contour and the ideal parabola, summed across the central ridge window - " +
-    "how much material protrudes there, not just at a single point. The number in parentheses is the same " +
-    "area normalized by forehead width, so it's comparable across different-sized heads.",
+    "Net area between the forehead contour and the ideal parabola, across the central ridge window: " +
+    "positive means the center sticks out on net, negative means it falls short on net (flatter/recessed " +
+    "relative to what the sides predict). Near zero doesn't mean 'normal' - see the note above the graphs. " +
+    "The number in parentheses is the same area normalized by forehead width, so it's comparable across " +
+    "different-sized heads.",
   temporalHollowing:
     "How sunken in the temple is compared to the ideal parabola, summed across that side's temporal window - " +
-    "an area, not a single depth.",
+    "(an area).",
   maxTemporalDepth: "The single deepest point within that side's temporal window, compared to the ideal parabola.",
   parabolicDeviationIndex:
     "An overall score (root-mean-square) for how much the whole forehead contour differs from the ideal " +
@@ -57,12 +59,14 @@ export const GRAPH_EXPLAINERS = {
   deviation:
     "The straight-line gap between the contour and the ideal parabola at each point, in mm (positive = " +
     "contour sticks out further than the parabola). The dashed line at zero is what a perfectly parabolic " +
-    "forehead would show - the parabolic deviation index is this graph's overall spread, boiled down to one number.",
+    "forehead would show - the parabolic deviation index is this graph's overall spread.",
 };
 
 // the "ideal parabola" every measurement/graph above compares against - one
 // persistent note near the top of the section rather than only a hover
 // tooltip, since it's the one piece of context everything else depends on.
 export const IDEAL_PARABOLA_EXPLAINER =
-  "\"Ideal (parabola)\": z = a·x² + c, fitted fresh to this patient's own forehead contour - an arbitrary " +
-  "smooth reference shape, not a population norm.";
+  "\"Ideal (parabola)\": z = a·x² + c, fit only to the sides of this same forehead (not the center, not a " +
+  "healthy-head template). It's self-referential: if this forehead's own sides are already affected too, " +
+  "the parabola inherits that, and deviation from it reads as \"more localized to the center than the rest " +
+  "of this forehead\" rather than \"abnormal\".";

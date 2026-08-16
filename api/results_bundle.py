@@ -764,11 +764,19 @@ METRIC_EXPLAINERS: dict[str, str] = {
         "a larger angle means flatter or more receding."
     ),
     "metopic_frontal_angle_deg": (
-        "The angle across the forehead at its most central point - a sharper (smaller) angle can suggest "
-        "a more pointed/ridged forehead shape."
+        "The angle at the forehead's central ridge point, between two points 30% of this forehead's own "
+        "contour length to either side of the midline - a sharper (smaller) angle can suggest a more "
+        "pointed/ridged forehead shape."
     ),
-    "metopic_ridge_protrusion_mm": "How far the central forehead ridge sticks out compared to the surrounding shape.",
-    "metopic_ridge_area_mm2": "The size of the area around the central ridge that protrudes more than expected.",
+    "metopic_ridge_protrusion_mm": (
+        "How far the center sticks out (positive) or falls short (negative) of the ideal parabola - a "
+        "self-referential baseline fit to this same forehead's own sides, not a healthy-head template."
+    ),
+    "metopic_ridge_area_mm2": (
+        "Net area between the contour and the ideal parabola across the central window: positive means the "
+        "center sticks out on net, negative means it falls short on net (flatter/recessed relative to what "
+        "the sides predict). Near zero doesn't mean 'normal' - a real forehead was never exactly a parabola."
+    ),
     "metopic_left_temporal_hollowing": "How sunken in the left temple is compared to the surrounding forehead shape.",
     "metopic_right_temporal_hollowing": "How sunken in the right temple is compared to the surrounding forehead shape.",
     "metopic_midline_curvature_concentration": (

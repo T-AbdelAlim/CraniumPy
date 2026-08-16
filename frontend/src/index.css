@@ -376,7 +376,8 @@ label.checkbox.target-option {
 
 .toggle-row {
   display: flex;
-  gap: 1rem;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
   margin: 0.5rem 0;
 }
 
