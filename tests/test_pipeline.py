@@ -20,6 +20,7 @@ from craniumpy_core.craniometrics import slice_center_of_mass
 from craniumpy_core.io import load_mesh
 from craniumpy_core.pipeline import (
     NicpTemplateConfig,
+    _recenter_com_z,
     analyze,
     analyze_cranial,
     harmonize,
@@ -190,6 +191,93 @@ def test_harmonize_com_translation_corrects_z_only_not_x():
     assert abs(com[0]) > 3.0
 
 
+def test_recenter_com_z_shifts_landmarks_by_the_same_offset_without_mutating_the_input():
+    # regression: _recenter_com_z shifted the mesh in Z but left the
+    # landmarks the caller passed in completely untouched - measure_cranial
+    # then fed those now-stale (pre-shift) landmarks into frontal_bossing
+    # against the ALREADY-shifted sellion_mesh, so the sellion marker would
+    # visibly drift off the mesh's own sagittal profile by exactly the CoM
+    # offset whenever com_translation was on (the cranial run only - the
+    # facial run has no such recenter step, which is why the bug only
+    # showed up on one of the two). the fix returns landmarks shifted by
+    # the same offset the mesh got, and leaves the original array alone -
+    # measure_cranial can be re-run (a fresh /run without a fresh /clip)
+    # against the same stored clip_result, so mutating that shared array in
+    # place would double-apply the offset on a second call.
+    mesh, landmarks = _ellipsoid_with_landmarks(asymmetric=True)
+    original_landmarks = landmarks.copy()
+    original_vertices = np.asarray(mesh.vertices).copy()
+
+    shifted_landmarks, offset = _recenter_com_z(mesh, landmarks)
+
+    offset_z = np.asarray(mesh.vertices)[:, 2] - original_vertices[:, 2]
+    assert np.allclose(offset_z, offset_z[0])  # every vertex moved by the same amount (Z-only, uniform)
+    assert abs(offset_z[0]) > 1.0  # the asymmetric lobe guarantees a real, non-trivial offset
+
+    expected_landmarks = original_landmarks.copy()
+    expected_landmarks[:, 2] += offset_z[0]
+    np.testing.assert_allclose(shifted_landmarks, expected_landmarks)
+    # the returned offset is what actually got subtracted off the mesh (and
+    # added to the landmarks) - measure_cranial needs it standalone to map
+    # points between two independently-recentered frames (see there)
+    np.testing.assert_allclose(offset, np.array([0.0, 0.0, -offset_z[0]]))
+
+    # the caller's own array is untouched
+    np.testing.assert_array_equal(landmarks, original_landmarks)
+
+
+def test_measure_cranial_threads_recenter_com_z_return_value_into_frontal_bossing(monkeypatch):
+    # whitebox regression test for the wiring itself, not dependent on this
+    # fixture's geometry producing a real CoM drift at this exact stage
+    # (register_and_clip_cranial's own earlier com_translation may already
+    # leave little or nothing left for measure_cranial's post-resample
+    # recenter to correct) - monkeypatches a deliberate offset so the
+    # assertion doesn't depend on incidental geometry, only on
+    # measure_cranial actually using _recenter_com_z's return value for
+    # craniometrics/frontal_bossing instead of the original clip_result
+    # landmarks.
+    #
+    # frontal_bossing.sellion is snapped onto the mesh's own surface (see
+    # its docstring) rather than being the given landmark verbatim, so it
+    # can't be checked against raw_sellion_z - offset_z directly - on this
+    # synthetic ellipsoid the landmark isn't necessarily close to the
+    # surface at all, snapped or not. instead, run measure_cranial twice -
+    # once unshifted, once with the deliberate offset - and check the
+    # snapped sellion moves by exactly that offset between the two: a
+    # uniform Z shift applied identically to the mesh and the landmark
+    # shifts the snapped result by that same exact amount too, since the
+    # section is cut along X and both the "above sellion" comparison and
+    # the resulting dy/dz angle only ever look at RELATIVE z - so this is
+    # still an exact check that measure_cranial fed the recentered (not the
+    # original clip_result) landmarks into frontal_bossing, decoupled from
+    # whatever the baseline snap distance happens to be on this fixture.
+    import craniumpy_core.pipeline as pipeline_module
+
+    def _fake_recenter(offset_z):
+        def fake_recenter(mesh, landmarks):
+            offset = np.array([0.0, 0.0, offset_z])
+            mesh.vertices = np.asarray(mesh.vertices) - offset
+            return (landmarks - offset if landmarks is not None else None), offset
+
+        return fake_recenter
+
+    mesh, landmarks = _ellipsoid_with_landmarks(asymmetric=True)
+    clip_result = register_and_clip_cranial(mesh, landmarks, com_translation=True)
+    raw_sellion_z = clip_result.sellion_registered_landmarks[0][2]
+
+    monkeypatch.setattr(pipeline_module, "_recenter_com_z", _fake_recenter(0.0))
+    baseline = measure_cranial(clip_result, com_translation=True, n_vertices=3000)
+
+    offset_z = 37.5
+    monkeypatch.setattr(pipeline_module, "_recenter_com_z", _fake_recenter(offset_z))
+    shifted = measure_cranial(clip_result, com_translation=True, n_vertices=3000)
+
+    assert shifted.sellion_landmarks[0][2] == pytest.approx(raw_sellion_z - offset_z, abs=1e-6)
+    assert shifted.frontal_bossing.sellion[2] == pytest.approx(
+        baseline.frontal_bossing.sellion[2] - offset_z, abs=1e-6
+    )
+
+
 def test_harmonize_cranium_on_reference_template():
     # template_xy_com.ply is already in the frame the clip constants
     # assume, so no need to run register() first just to test harmonize()
@@ -292,6 +380,52 @@ def test_analyze_cranial_with_alt_frontal_uses_alt_mesh_as_display():
     assert with_alt.craniometrics.depth_mm == pytest.approx(without_alt.craniometrics.depth_mm)
     assert with_alt.craniometrics.breadth_mm == pytest.approx(without_alt.craniometrics.breadth_mm)
     assert with_alt.craniometrics.circumference_cm == pytest.approx(without_alt.craniometrics.circumference_cm)
+
+
+def test_analyze_cranial_display_frontal_bossing_transforms_with_alt_frontal():
+    # frontal_bossing's angle is measured against "horizontal" (the
+    # frame's own z-axis), which is a genuinely different axis in the
+    # display frame than the sellion one whenever a different frontal
+    # landmark rotates the display frame relative to it - unlike
+    # craniometrics' scalar numbers, this one is supposed to change with
+    # the display frame, not just move position. sellion_frontal_bossing
+    # (the sellion-pass one, used for the saved report/figure) must stay
+    # exactly what it always was; display_frontal_bossing (live viewer/
+    # panel) is the one that reflects the display frame.
+    mesh, landmarks = _ellipsoid_with_landmarks()
+    alt_frontal = landmarks[0] + np.array([0.0, -15.0, -5.0])
+
+    without_alt = analyze_cranial(mesh, landmarks, n_vertices=3000)
+    with_alt = analyze_cranial(mesh, landmarks, alt_frontal_landmark=alt_frontal, n_vertices=3000)
+
+    assert without_alt.frontal_bossing is not None
+    assert without_alt.display_frontal_bossing is without_alt.frontal_bossing  # no alt frontal - same object
+
+    assert with_alt.frontal_bossing is not None
+    assert with_alt.display_frontal_bossing is not None
+    # the sellion-pass value is untouched by the alt-frontal landmark
+    assert with_alt.frontal_bossing.angle_deg == pytest.approx(without_alt.frontal_bossing.angle_deg)
+    np.testing.assert_allclose(with_alt.frontal_bossing.sellion, without_alt.frontal_bossing.sellion, atol=1e-6)
+    # the display-frame value is positioned in the display frame, not the
+    # sellion one - genuinely different coordinates, but the SAME angle,
+    # carried across rather than re-derived from the transformed points
+    assert not np.allclose(with_alt.display_frontal_bossing.sellion, with_alt.frontal_bossing.sellion)
+    assert not np.allclose(
+        with_alt.display_frontal_bossing.frontal_point, with_alt.frontal_bossing.frontal_point
+    )
+    assert with_alt.display_frontal_bossing.angle_deg == pytest.approx(with_alt.frontal_bossing.angle_deg)
+    # "horizontal" is carried across as a rotated direction, not the display
+    # frame's own +z - it has to differ from the sellion one whenever the
+    # alt frontal landmark actually rotates the display frame, otherwise the
+    # dashed reference line drawn from it wouldn't match the reported angle
+    assert not np.allclose(with_alt.display_frontal_bossing.horizontal, with_alt.frontal_bossing.horizontal)
+    np.testing.assert_allclose(np.linalg.norm(with_alt.display_frontal_bossing.horizontal), 1.0, atol=1e-6)
+    # sanity: the transformed sellion sits right on the display mesh's own
+    # surface (it was snapped there), not floating off it
+    _, distances, _ = trimesh.proximity.closest_point(
+        with_alt.display_mesh, with_alt.display_frontal_bossing.sellion[np.newaxis, :]
+    )
+    assert distances[0] < 1e-6
 
 
 def test_analyze_cranial_com_correction_sellion_pass_unaffected_by_alt_frontal():

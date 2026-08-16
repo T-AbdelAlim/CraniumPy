@@ -13,7 +13,16 @@ import ResizablePane from "./ResizablePane.jsx";
 // state) rather than fixed grid columns - "auto 1fr auto" below just lets
 // each pane's own inline-styled width drive its track directly, so Shell
 // itself carries no width state.
-export default function Shell({ contextLabel, workspaces, activeWorkspace, onWorkspaceChange, workspace, inspectorTitle, inspector }) {
+export default function Shell({
+  contextLabel,
+  workspaces,
+  activeWorkspace,
+  onWorkspaceChange,
+  workspace,
+  inspectorTitle,
+  inspector,
+  metadataForm,
+}) {
   return (
     <div className="shell">
       <header className="shell-topbar">
@@ -21,9 +30,12 @@ export default function Shell({ contextLabel, workspaces, activeWorkspace, onWor
         {contextLabel && <span className="shell-context">{contextLabel}</span>}
       </header>
 
-      <ResizablePane side="left" defaultWidth={200} storageKey="nav">
+      <ResizablePane side="left" defaultWidth={230} storageKey="nav">
         <nav className="shell-nav">
-          <div className="shell-nav-item active">Patients</div>
+          <div className="shell-nav-top">
+            <div className="shell-nav-item active">Patients</div>
+          </div>
+          {metadataForm && <div className="shell-nav-bottom">{metadataForm}</div>}
         </nav>
       </ResizablePane>
 

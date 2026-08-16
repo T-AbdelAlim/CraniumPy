@@ -145,14 +145,44 @@ class OpenFromPathsRequest(BaseModel):
     paths: list[str] = Field(min_length=1)
 
 
+class PatientMetadata(BaseModel):
+    """patient/visit fields the user fills in (or leaves blank) in the
+    sidebar form before exporting - see api/results_bundle.py's
+    _metrics_row. plain optional strings, no numeric/date coercion, so
+    "still included but empty when unfilled" is trivial everywhere (form,
+    wire format, CSV cell) with no null-handling branches. age_imaging is
+    entered in months, same unit as age_surgery_months - this app's
+    cephalometrics are validated for pediatric heads."""
+
+    file_name: str = ""
+    file_path: str = ""
+    patient_id: str = ""
+    sex: str = ""
+    date_imaging: str = ""
+    age_imaging: str = ""
+    treatment: str = ""
+    age_surgery_months: str = ""
+    free_variable: str = ""
+
+
 class SaveRequest(BaseModel):
     """body for /save, /save/meshes, /save/analysis. dest_dir, when given,
     overrides the default destination (next to the original mesh file,
     session.source_dir) - the desktop app's "change save folder..." control
     (a native folder-picker dialog) is the only thing that ever sets this;
-    left out (None), the save goes wherever it always has."""
+    left out (None), the save goes wherever it always has.
+
+    metadata rides along on /save and /save/analysis so the summary
+    spreadsheet/PDF the export produces has the patient/visit fields baked
+    in - see api/results_bundle.py's _build_analysis_files.
+    cohort_xlsx_path, when given, additionally upserts this session's row
+    into that external spreadsheet (desktop-only - see
+    write_analysis_to_folder's cohort_xlsx_path param; a browser zip
+    download has no persistent file to append to)."""
 
     dest_dir: str | None = None
+    metadata: PatientMetadata = PatientMetadata()
+    cohort_xlsx_path: str | None = None
 
 
 class SaveResultsResponse(BaseModel):
@@ -202,11 +232,93 @@ class AsymmetryResponse(BaseModel):
     heatmap: list[float]
 
 
+class Point2D(BaseModel):
+    """a point in the metopic module's own 2D forehead-contour plane - x is
+    left-right, z is depth (same convention as craniumpy_core.metopic's
+    module docstring). paired with MetopicResponse.slice_height, the
+    viewer can place one of these back into 3D as (x, slice_height, z)."""
+
+    x: float
+    z: float
+
+
+class MetopicResponse(BaseModel):
+    """the whole craniumpy_core.metopic.MetopicResult, facial-target only -
+    see that module for what each field means and craniumpy_core.pipeline.
+    hc_slice_height_facial_frame for why slice_height here is always the
+    same plane a cranial run on this same patient would use."""
+
+    slice_height: float
+    contour: list[Point2D]
+    arc_length: list[float]
+    normalized_arc_length: list[float]
+    midline_u: float
+    parabola_a: float
+    parabola_c: float
+    deviation_profile: list[float]
+    gradient_profile: list[float]
+    curvature_profile: list[float]
+
+    frontal_angle_deg: float
+    frontal_angle_points: list[Point2D]  # [M, L, R]
+    forehead_width_mm: float
+
+    midline_curvature_concentration: float
+    midline_max_curvature: float
+    midline_max_curvature_position: float
+
+    ridge_protrusion_mm: float
+    ridge_protrusion_position: float
+    ridge_area_mm2: float
+    ridge_area_normalized: float
+
+    left_temporal_hollowing: float
+    right_temporal_hollowing: float
+    mean_temporal_hollowing: float
+    left_max_temporal_depth_mm: float
+    right_max_temporal_depth_mm: float
+
+    parabolic_deviation_index: float
+
+    # (u_start, u_end) along normalized_arc_length, for drawing the region
+    # shading the same way the exported figure does - see
+    # craniumpy_core.metopic's CENTRAL_WINDOW_HALF_WIDTH_U etc.
+    central_window: tuple[float, float]
+    left_temporal_window: tuple[float, float]
+    right_temporal_window: tuple[float, float]
+
+
+class FrontalBossingResponse(BaseModel):
+    """how much the forehead bulges forward, measured in the sagittal
+    (midline) plane through sellion - see
+    craniumpy_core.craniometrics.frontal_bossing for the actual geometry
+    and sign convention. computed the same way for cranial and facial
+    targets alike, since it's defined purely relative to sellion's own
+    position rather than any shared plane/height."""
+
+    angle_deg: float
+    sellion: LandmarkPoint
+    frontal_point: LandmarkPoint
+    # the sagittal contour, so the viewer can draw the same profile line
+    # the exported figure shows.
+    profile: list[LandmarkPoint]
+    # unit direction the angle was measured against, for the viewer's dashed
+    # reference line. this is the sellion-tragus plane's own depth axis, NOT
+    # necessarily +z of the frame these points are in: with a secondary
+    # frontal landmark the displayed frame is rotated relative to the frame
+    # the angle was measured in, so drawing the reference along +z there
+    # would show an angle that doesn't match angle_deg (see
+    # craniumpy_core.pipeline.measure_cranial).
+    horizontal: LandmarkPoint
+
+
 class ResultsResponse(BaseModel):
     landmarks: list[LandmarkPoint]
     vertex_count: int
     craniometrics: CraniometricsResponse | None = None
     asymmetry: AsymmetryResponse | None = None
+    metopic: MetopicResponse | None = None
+    frontal_bossing: FrontalBossingResponse | None = None
     # True when an alt_frontal_landmark was given and the shown/saved mesh
     # is in that frame instead of the sellion one - see AnalyzeRequest
     used_alt_frontal: bool = False

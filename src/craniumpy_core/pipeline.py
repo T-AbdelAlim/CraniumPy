@@ -31,7 +31,15 @@ import trimesh
 
 from .asymmetry import AsymmetryResult, calculate_asymmetry
 from .clipping import clip_plane, cranial_clip, facial_clip, landmark_plane
-from .craniometrics import CranioMeasurements, extract_measurements, hc_slice_polygon, slice_center_of_mass
+from .craniometrics import (
+    CranioMeasurements,
+    FrontalBossingResult,
+    extract_measurements,
+    find_hc_slice_height,
+    frontal_bossing,
+    hc_slice_polygon,
+    slice_center_of_mass,
+)
 from .registration.nicp import register_template
 from .registration.rigid import RigidTransform, landmark_align, procrustes_fit
 from .remesh import RepairMethod, ResampleMethod, clean_boundary, keep_largest_component, repair_mesh, resample_mesh
@@ -47,14 +55,29 @@ def _report(on_progress: ProgressCallback | None, stage: str, detail: str = "") 
         on_progress(stage, detail)
 
 
-def _recenter_com_z(mesh: trimesh.Trimesh, landmarks: np.ndarray) -> None:
-    """z-only recenter using the landmark-aware CoM slice, in place - the
-    same correction harmonize() applies after resampling. factored out so
-    measure_cranial can apply it at the same point in the pipeline (post-
-    resample) even though clipping and resampling now happen in separate
-    calls instead of one harmonize()."""
+def _recenter_com_z(mesh: trimesh.Trimesh, landmarks: np.ndarray | None) -> tuple[np.ndarray | None, np.ndarray]:
+    """z-only recenter using the landmark-aware CoM slice - shifts
+    mesh.vertices in place (same as before), and returns landmarks shifted
+    by that same offset (None straight through if there's no landmarks
+    array at all - harmonize()'s manual-clip-mode caller doesn't require
+    one), since a landmark array is documented to always be "in the same
+    frame as" whichever mesh it's paired with (see CranialAnalysisResult's
+    own field docs) - without this, sellion (and everything derived from
+    it, like frontal_bossing) stays at its pre-recenter position while the
+    mesh itself has moved, so the two silently drift apart in Z whenever
+    com_translation is on. doesn't mutate the given landmarks array
+    itself: measure_cranial can be re-run (a fresh /run without a fresh
+    /clip - changing resample settings, fitting a template) against the
+    same stored clip_result, so mutating that shared array in place would
+    double-apply the offset on a second call.
+
+    also returns the offset itself: measure_cranial has to map points from
+    one post-recenter frame into another (see there), which needs both
+    frames' own offsets, not just their shifted landmarks."""
     com = slice_center_of_mass(mesh, landmarks=landmarks)
-    mesh.vertices = mesh.vertices - np.array([0.0, 0.0, com[2]])
+    offset = np.array([0.0, 0.0, com[2]])
+    mesh.vertices = mesh.vertices - offset
+    return (landmarks - offset if landmarks is not None else None), offset
 
 
 @dataclass
@@ -62,6 +85,12 @@ class RegistrationResult:
     mesh: trimesh.Trimesh
     landmarks: np.ndarray  # (3, 3) [sellion, left_tragus, right_tragus], post-rigid-alignment
     transform: RigidTransform
+    # only set for target="face" - the exact vector that branch subtracts to
+    # put the sellion at the origin (see register() below), captured before
+    # the subtraction. this is what lets metopic.hc_slice_height_facial_frame
+    # reconstruct the target="cranium"-equivalent frame from a facial
+    # registration without a second register() call - see that function.
+    sellion_offset: np.ndarray | None = None
 
 
 def register(
@@ -106,12 +135,39 @@ def register(
         registered_mesh.vertices = registered_mesh.vertices - z_offset
         new_landmarks = new_landmarks - z_offset
 
+    sellion_offset = None
     if target == "face":
         sellion_offset = new_landmarks[0].copy()
         registered_mesh.vertices = registered_mesh.vertices - sellion_offset
         new_landmarks = new_landmarks - sellion_offset
 
-    return RegistrationResult(mesh=registered_mesh, landmarks=new_landmarks, transform=transform)
+    return RegistrationResult(mesh=registered_mesh, landmarks=new_landmarks, transform=transform, sellion_offset=sellion_offset)
+
+
+def hc_slice_height_facial_frame(reg: RegistrationResult) -> float:
+    """the head-circumference slice height, in a target="face" registration's
+    own frame - the same height a target="cranium" run on this same patient
+    would have found, not an independently-estimated one (see
+    craniumpy_core.metopic's module docstring for why that matters).
+
+    reg.sellion_offset (only set for target="face", see register()) is the
+    exact vector that branch subtracted to put the sellion at the origin -
+    adding it back reconstructs the target="cranium"-equivalent mesh/
+    landmarks without a second register() call (rotation and the CoM nudge
+    are already identical between the two branches up to that point, see
+    register()'s docstring), then find_hc_slice_height runs the same search
+    extract_measurements uses for a real cranial run, and the result gets
+    shifted back into reg's own frame by subtracting the same offset's Y
+    component. cheap either way - this is one vertex-array addition and one
+    slice search, not a repair/clip/CoM-proxy-resample redo."""
+    if reg.sellion_offset is None:
+        raise ValueError("hc_slice_height_facial_frame needs a target=\"face\" registration (reg.sellion_offset is None)")
+    cranial_mesh = trimesh.Trimesh(
+        vertices=np.asarray(reg.mesh.vertices) + reg.sellion_offset, faces=reg.mesh.faces, process=False
+    )
+    cranial_landmarks = reg.landmarks + reg.sellion_offset
+    cranial_slice_height = find_hc_slice_height(cranial_mesh, cranial_landmarks)
+    return cranial_slice_height - reg.sellion_offset[1]
 
 
 def rough_bounding_clip(
@@ -359,6 +415,15 @@ class CranialAnalysisResult:
     display_hc_polygon: np.ndarray | None  # HC ring, carried into the display frame - see analyze_cranial
     display_bpd_ofd_points: np.ndarray  # (front_opt, occ_opt, lh_opt, rh_opt), carried into the display frame same as display_hc_polygon
     craniometrics: CranioMeasurements  # always computed from the sellion pass
+    frontal_bossing: FrontalBossingResult | None  # always computed from the sellion pass too - see frontal_bossing()
+    # frontal_bossing carried into the display frame, same treatment as
+    # display_hc_polygon/display_bpd_ofd_points above - the angle itself is
+    # frame-relative (measured against "horizontal", i.e. the frame's own
+    # z-axis), so unlike craniometrics' scalar numbers this one genuinely
+    # is a different value depending on which frame is showing, not just a
+    # different position for the same number. == frontal_bossing when
+    # there's no alt frontal landmark (single frame, nothing to carry).
+    display_frontal_bossing: FrontalBossingResult | None
     sellion_mesh: trimesh.Trimesh  # post-harmonize, sellion frame - always this, for the saved 2D figure
     sellion_landmarks: np.ndarray
     sellion_hc_polygon: np.ndarray | None
@@ -548,18 +613,31 @@ def measure_cranial(
         return mesh
 
     sellion_mesh = _finish(clip_result.sellion_clipped_mesh)
+    sellion_landmarks = clip_result.sellion_registered_landmarks
+    sellion_recenter = np.zeros(3)
     if com_translation:
-        _recenter_com_z(sellion_mesh, clip_result.sellion_registered_landmarks)
+        # _recenter_com_z shifts sellion_mesh in place and hands back the
+        # landmarks shifted by that same offset - sellion_landmarks (and
+        # everything derived from it, like frontal_bossing below) has to
+        # stay in the mesh's own frame, not clip_result's original one.
+        sellion_landmarks, sellion_recenter = _recenter_com_z(sellion_mesh, sellion_landmarks)
 
+    display_recenter = np.zeros(3)
     if clip_result.used_alt_frontal:
         display_mesh = _finish(clip_result.display_clipped_mesh)
+        display_landmarks = clip_result.display_registered_landmarks
         if com_translation:
-            _recenter_com_z(display_mesh, clip_result.display_registered_landmarks)
+            display_landmarks, display_recenter = _recenter_com_z(display_mesh, display_landmarks)
     else:
         display_mesh = sellion_mesh
+        display_landmarks = sellion_landmarks
 
     _report(on_progress, "analyze", "computing measurements")
-    craniometrics = extract_measurements(sellion_mesh, landmarks=clip_result.sellion_registered_landmarks)
+    craniometrics = extract_measurements(sellion_mesh, landmarks=sellion_landmarks)
+    # always the sellion pass, same reasoning as craniometrics itself -
+    # "how much does the forehead bulge relative to sellion" shouldn't
+    # depend on which frontal point got clicked for the display frame.
+    bossing = frontal_bossing(sellion_mesh, sellion_landmarks[0])
     sellion_hc_polygon = hc_slice_polygon(sellion_mesh, craniometrics.slice_height)
     sellion_bpd_ofd_points = np.array(
         [craniometrics.front_opt, craniometrics.occ_opt, craniometrics.lh_opt, craniometrics.rh_opt]
@@ -570,31 +648,50 @@ def measure_cranial(
         return CranialAnalysisResult(
             display_registered_mesh=clip_result.display_registered_mesh,
             display_mesh=display_mesh,
-            display_landmarks=clip_result.display_registered_landmarks,
+            display_landmarks=display_landmarks,
             display_hc_polygon=sellion_hc_polygon,
             display_bpd_ofd_points=sellion_bpd_ofd_points,
             craniometrics=craniometrics,
+            frontal_bossing=bossing,
+            display_frontal_bossing=bossing,
             sellion_mesh=sellion_mesh,
-            sellion_landmarks=clip_result.sellion_registered_landmarks,
+            sellion_landmarks=sellion_landmarks,
             sellion_hc_polygon=sellion_hc_polygon,
             used_alt_frontal=False,
         )
 
-    transform = procrustes_fit(
+    # the rigid transform between the two registrations, fitted on the
+    # pre-clip meshes (identical vertex sets in two different frames, so
+    # this is exact rather than a fit in any meaningful sense).
+    registered_transform = procrustes_fit(
         np.asarray(clip_result.sellion_registered_mesh.vertices), np.asarray(clip_result.display_registered_mesh.vertices)
     )
+
+    def to_display(points: np.ndarray) -> np.ndarray:
+        """sellion-frame points -> display-frame points.
+
+        registered_transform maps the PRE-recenter frames onto each other,
+        but both meshes have since been recentered along their own depth
+        axis by their own independent amounts (see _recenter_com_z above) -
+        so a point has to be lifted back out of the sellion recenter,
+        rotated across, then dropped into the display recenter. skipping
+        that composition offsets everything carried across by the two
+        offsets combined, which is tens of millimetres on a real head:
+        enough to put the whole bossing construction visibly off the mesh.
+        """
+        return registered_transform.apply(np.atleast_2d(points) + sellion_recenter) - display_recenter
+
     # HC polygon and the 4 BPD/OFD optima both need the same treatment: the
-    # transform is exact for the pre-clip registered meshes, but
-    # sellion_mesh and display_mesh each go through their own independent
-    # clip/resample after that, which doesn't preserve vertex
-    # correspondence - so the transformed points can end up a couple mm off
-    # the display mesh's actual surface. snapping onto display_mesh's
-    # surface here guarantees the drawn lines always sit exactly on the
-    # mesh being shown. batched into one closest_point call rather than two.
+    # transform is exact, but sellion_mesh and display_mesh each go through
+    # their own independent clip/resample, which doesn't preserve vertex
+    # correspondence - so the mapped points can still end up a fraction of
+    # a millimetre off the display mesh's actual surface. snapping onto
+    # display_mesh's surface guarantees the drawn lines always sit exactly
+    # on the mesh being shown. batched into one closest_point call.
     to_transform = (
         np.vstack([sellion_hc_polygon, sellion_bpd_ofd_points]) if sellion_hc_polygon is not None else sellion_bpd_ofd_points
     )
-    transformed, _, _ = trimesh.proximity.closest_point(display_mesh, transform.apply(to_transform))
+    transformed, _, _ = trimesh.proximity.closest_point(display_mesh, to_display(to_transform))
     if sellion_hc_polygon is not None:
         display_hc_polygon = transformed[: len(sellion_hc_polygon)]
         display_bpd_ofd_points = transformed[len(sellion_hc_polygon) :]
@@ -602,16 +699,44 @@ def measure_cranial(
         display_hc_polygon = None
         display_bpd_ofd_points = transformed
 
+    # frontal bossing is measured once, in the sellion frame, at the same
+    # stage and on the same mesh as the head circumference - that value is
+    # the reported one for either frame, exactly like every craniometric
+    # scalar. what changes for the display frame is only where the
+    # construction gets DRAWN: the same rigid mapping as above carries
+    # sellion/frontal_point/profile across, and the "horizontal" the angle
+    # was measured against comes across as a rotated direction rather than
+    # the display frame's own +z (those are two different axes whenever the
+    # frontal landmark differs, which is the whole point of the alt frame).
+    # so the drawn reference line still lies in the sellion-tragus plane,
+    # pointing out from sellion, and the drawn angle still visibly equals
+    # the reported one.
+    if bossing is not None:
+        bossing_points = np.vstack([bossing.sellion[np.newaxis, :], bossing.frontal_point[np.newaxis, :], bossing.profile])
+        transformed_bossing, _, _ = trimesh.proximity.closest_point(display_mesh, to_display(bossing_points))
+        display_bossing = FrontalBossingResult(
+            angle_deg=bossing.angle_deg,
+            sellion=transformed_bossing[0],
+            frontal_point=transformed_bossing[1],
+            profile=transformed_bossing[2:],
+            # rotation only - a direction has no position to translate
+            horizontal=registered_transform.rotation @ bossing.horizontal,
+        )
+    else:
+        display_bossing = None
+
     _report(on_progress, "done", "")
     return CranialAnalysisResult(
         display_registered_mesh=clip_result.display_registered_mesh,
         display_mesh=display_mesh,
-        display_landmarks=clip_result.display_registered_landmarks,
+        display_landmarks=display_landmarks,
         display_hc_polygon=display_hc_polygon,
         display_bpd_ofd_points=display_bpd_ofd_points,
         craniometrics=craniometrics,
+        frontal_bossing=bossing,
+        display_frontal_bossing=display_bossing,
         sellion_mesh=sellion_mesh,
-        sellion_landmarks=clip_result.sellion_registered_landmarks,
+        sellion_landmarks=sellion_landmarks,
         sellion_hc_polygon=sellion_hc_polygon,
         used_alt_frontal=True,
     )

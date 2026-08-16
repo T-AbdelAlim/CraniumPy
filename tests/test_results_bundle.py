@@ -73,6 +73,8 @@ def test_write_results_to_folder_uses_shortened_stem(tmp_path, sample_result):
     assert (results_dir / "1016510_20210730_edited_rg_C.ply").exists()
     assert (results_dir / "1016510_20210730_edited_report.json").exists()
     assert (results_dir / "1016510_20210730_edited_measurements.png").exists()
+    assert (results_dir / "1016510_20210730_edited_summary.xlsx").exists()
+    assert (results_dir / "1016510_20210730_edited_report.pdf").exists()
 
 
 def test_build_results_bundle_uses_shortened_stem_too(sample_result):
@@ -125,7 +127,12 @@ def test_write_analysis_to_folder_creates_mesh_folder_if_missing(tmp_path, sampl
     mesh_dir = tmp_path / "CP_scan_C_3"
     assert analysis_dir == mesh_dir / "analysis"
     assert sorted(p.name for p in mesh_dir.iterdir()) == ["analysis", "scan_rg.ply", "scan_rg_C.ply"]
-    assert sorted(p.name for p in analysis_dir.iterdir()) == ["scan_measurements.png", "scan_report.json"]
+    assert sorted(p.name for p in analysis_dir.iterdir()) == [
+        "scan_measurements.png",
+        "scan_report.json",
+        "scan_report.pdf",
+        "scan_summary.xlsx",
+    ]
 
 
 def test_write_analysis_to_folder_does_not_rewrite_existing_meshes(tmp_path, sample_result):
@@ -183,6 +190,8 @@ def test_build_analysis_bundle_nests_analysis_under_mesh_folder(sample_result):
         "CP_scan_C_3/scan_rg_C.ply",
         "CP_scan_C_3/analysis/scan_report.json",
         "CP_scan_C_3/analysis/scan_measurements.png",
+        "CP_scan_C_3/analysis/scan_summary.xlsx",
+        "CP_scan_C_3/analysis/scan_report.pdf",
     }
 
 

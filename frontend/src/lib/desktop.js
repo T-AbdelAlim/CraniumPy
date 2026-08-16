@@ -30,3 +30,19 @@ export async function pickFolderNative(onError) {
     return null;
   }
 }
+
+// same deal, for the native Excel file dialog (desktop/app.py's
+// pick_excel_file) - backs the "create new cohort file..."/"add to
+// existing cohort file..." controls on the metadata form. save=true opens
+// a native Save dialog (create-new), save=false opens an Open dialog
+// (append-existing) - the backend treats both the same either way (see
+// api/results_bundle.py's _upsert_cohort_xlsx), this only changes which
+// dialog the user sees.
+export async function pickExcelFileNative(save, onError) {
+  try {
+    return await window.pywebview.api.pick_excel_file(save);
+  } catch (err) {
+    onError?.(err && err.message ? err.message : String(err));
+    return null;
+  }
+}

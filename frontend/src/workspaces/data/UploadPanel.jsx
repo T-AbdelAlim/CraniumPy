@@ -21,10 +21,14 @@ export default function UploadPanel({ onUploaded }) {
     }
     const paths = await pickFileNative(true, (msg) => setStatus(`Couldn't open the file picker: ${msg}`));
     if (!paths || paths.length === 0) return;
-    await openMesh(
-      paths.map((p) => p.split(/[\\/]/).pop()),
-      () => openFromPaths(paths),
-    );
+    const names = paths.map((p) => p.split(/[\\/]/).pop());
+    // the primary mesh's own full native path - lets the metadata form
+    // pre-fill file_path (see App.jsx's handleUploaded) - only meaningful
+    // here since paths came from a native dialog; browser uploads never
+    // have one (see handleFilesSelected below).
+    const primaryName = primaryMeshFile(names);
+    const filePath = primaryName ? paths[names.indexOf(primaryName)] : "";
+    await openMesh(names, () => openFromPaths(paths), filePath);
   }
 
   async function handleFilesSelected(event) {
@@ -34,13 +38,15 @@ export default function UploadPanel({ onUploaded }) {
     await openMesh(
       files.map((f) => f.name),
       () => uploadSession(files),
+      "", // browser File objects never expose a real filesystem path
     );
   }
 
   // shared tail of both open paths above - names is just the file
   // basenames (from a File[] or from native paths), doOpen is whichever
-  // API call actually creates the session.
-  async function openMesh(names, doOpen) {
+  // API call actually creates the session, filePath is the primary mesh's
+  // full native path when known (desktop only, "" otherwise).
+  async function openMesh(names, doOpen, filePath) {
     if (!hasMeshFile(names)) {
       setStatus("No .ply/.obj/.stl found in the files you picked");
       return;
@@ -52,7 +58,7 @@ export default function UploadPanel({ onUploaded }) {
     try {
       const { sessionId, vertexCount, faceCount } = await doOpen();
       setStatus(`${vertexCount} vertices, ${faceCount} faces`);
-      onUploaded({ sessionId, meshLabel, selectionHasTexture: hasTextureFile(names) });
+      onUploaded({ sessionId, meshLabel, filePath, selectionHasTexture: hasTextureFile(names) });
     } catch (err) {
       setStatus(`Upload failed: ${err.message}`);
     }

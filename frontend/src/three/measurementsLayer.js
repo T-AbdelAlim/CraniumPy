@@ -1,27 +1,22 @@
 import * as THREE from "three";
 
-// blue (dented, negative) - white (0) - red (protruded, positive)
-// diverging scale, matching results_bundle.py's _asymmetry_figure ("bwr"
-// colormap) so the live viewer and the saved figure read the same way.
+// blue (dented, negative) - white (0) - red (protruded, positive) diverging
+// scale, matching results_bundle.py's _asymmetry_figure ("bwr" colormap) so
+// the live viewer and the saved figure read the same way. gamma <1 on the
+// normalized magnitude pushes moderate deviations toward full saturation
+// sooner - pure blue/red at the extremes are already maxed out, it's the
+// middle of the range that reads as washed-out near-white without this.
+// ported from frontend_legacy/app.js's heatmapColor (the old app's own
+// version), which this used to be a plain linear blend of and looked
+// noticeably paler than.
 function divergingColor(t) {
-  const clamped = Math.max(-1, Math.min(1, t));
+  let clamped = Math.max(-1, Math.min(1, t));
+  clamped = Math.sign(clamped) * Math.abs(clamped) ** 0.6;
   const color = new THREE.Color();
   if (clamped < 0) color.setRGB(1 + clamped, 1 + clamped, 1);
   else color.setRGB(1, 1 - clamped, 1 - clamped);
   return color;
 }
-
-// same beige plainMaterial() (three/meshDisplay.js) uses for an ordinary,
-// not-yet-colored mesh - used below for vertices the asymmetry calculation
-// zeroed out rather than actually measured (see calculate_asymmetry's own
-// docstring: the mirrored half is always set to exactly 0.0, by design, not
-// a real "zero asymmetry" reading). coloring those through the diverging
-// scale like any other value renders that whole half a flat, stark white,
-// which reads as a broken/missing render rather than "not evaluated here" -
-// matching the plain-mesh color instead makes that half look like normal,
-// untouched geometry, and reserves the diverging colors for the half that
-// actually carries data.
-const NEUTRAL_COLOR = new THREE.Color(0xe8d9c0);
 
 // the largest |deviation| in the heatmap - the diverging scale's range is
 // always [-maxAbs, +maxAbs]. exported so the scalar-bar legend's min/max
@@ -31,49 +26,62 @@ export function heatmapMaxAbs(heatmap) {
   return Math.max(...heatmap.map(Math.abs), 1e-6);
 }
 
-// colors vertices by the per-vertex asymmetry heatmap and swaps in a
-// vertex-colored material, returning a handle to pass to removeHeatmap.
-// heatmap is per-vertex signed distance (mm), same order as the mesh's own
-// vertices (see craniumpy_core.asymmetry.calculate_asymmetry) - assumes a
-// single-mesh GLB (mesh_to_glb always produces one), so no per-child index
-// offsetting is needed.
+// colors vertices by the per-vertex asymmetry heatmap, tinting whichever
+// material(s) the mesh is already showing (textured, plain skin-toned,
+// vertex-colored) rather than swapping in a separate flat/unlit material -
+// ported from frontend_legacy/app.js's applyAsymmetryHeatmap, which did the
+// same multiplicative tint. divergingColor(0) is pure white, the
+// multiplicative identity, so the half the asymmetry calculation zeroed out
+// by design (see calculate_asymmetry's own docstring - the mirrored half is
+// always set to exactly 0.0, not a real "zero asymmetry" reading) passes
+// straight through unchanged, still showing the mesh's own normal lit
+// shading - no separate "neutral color" placeholder needed the way the
+// previous unlit-material version required, and real surface detail
+// (creases, folds) stays visible under the tinted half too instead of going
+// flat. heatmap is per-vertex signed distance (mm), same order as the
+// mesh's own vertices (see craniumpy_core.asymmetry.calculate_asymmetry) -
+// assumes a single-mesh GLB (mesh_to_glb always produces one), so no
+// per-child index offsetting is needed.
 export function applyHeatmap(meshObject, heatmap) {
   const maxAbs = heatmapMaxAbs(heatmap);
-  const handle = { originals: [] };
 
   meshObject.traverse((child) => {
     if (!child.isMesh) return;
     const count = child.geometry.attributes.position.count;
     const colors = new Float32Array(count * 3);
     for (let i = 0; i < count; i++) {
-      const value = heatmap[i] ?? 0;
-      const c = value === 0 ? NEUTRAL_COLOR : divergingColor(value / maxAbs);
+      const c = divergingColor((heatmap[i] ?? 0) / maxAbs);
       colors[i * 3] = c.r;
       colors[i * 3 + 1] = c.g;
       colors[i * 3 + 2] = c.b;
     }
     child.geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-    handle.originals.push({ child, material: child.material });
-    child.material = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
+    for (const mat of [child.material, child.userData.texturedMaterial, child.userData.plainMaterial]) {
+      if (!mat) continue;
+      mat.vertexColors = true;
+      mat.needsUpdate = true;
+    }
   });
-
-  return handle;
 }
 
-export function removeHeatmap(handle) {
-  if (!handle) return;
-  for (const { child, material } of handle.originals) {
-    child.material.dispose();
-    child.material = material;
+export function removeHeatmap(meshObject) {
+  if (!meshObject) return;
+  meshObject.traverse((child) => {
+    if (!child.isMesh) return;
+    for (const mat of [child.material, child.userData.texturedMaterial, child.userData.plainMaterial]) {
+      if (!mat) continue;
+      mat.vertexColors = false;
+      mat.needsUpdate = true;
+    }
     child.geometry.deleteAttribute("color");
-  }
+  });
 }
 
 function addSpan(group, a, b, color, markerRadius) {
   const pa = new THREE.Vector3(a.x, a.y, a.z);
   const pb = new THREE.Vector3(b.x, b.y, b.z);
   const geo = new THREE.BufferGeometry().setFromPoints([pa, pb]);
-  const line = new THREE.Line(geo, new THREE.LineDashedMaterial({ color, dashSize: 3, gapSize: 2 }));
+  const line = new THREE.Line(geo, new THREE.LineDashedMaterial({ color, dashSize: 3, gapSize: 2, linewidth: 2 }));
   line.computeLineDistances();
   group.add(line);
   for (const p of [pa, pb]) {
@@ -96,7 +104,7 @@ export function addMeasurementsOverlay({ sceneBag, hcPolygon, frontOpt, occOpt, 
     const points = hcPolygon.map((p) => new THREE.Vector3(p.x, p.y, p.z));
     points.push(points[0].clone());
     const geo = new THREE.BufferGeometry().setFromPoints(points);
-    group.add(new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xd1453d })));
+    group.add(new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xd1453d, linewidth: 2 })));
   }
 
   addSpan(group, lhOpt, rhOpt, 0x2563eb, markerRadius); // BPD (breadth)

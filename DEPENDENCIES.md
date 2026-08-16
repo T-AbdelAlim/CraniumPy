@@ -20,6 +20,7 @@ update this whenever something gets added, removed, or swapped out.
 | `pillow` | trimesh needs this to decode a texture image referenced from an OBJ's MTL | n/a - found out the hard way, uploading a textured .obj failed with "no module named PIL" until I added this |
 | `pymeshfix` | real hole-filling/repair, no pyvista needed for this part | (this used to be considered "needs VTK, skip it" - turns out that's wrong, see below) |
 | `matplotlib` | the measurements figure (red HC line etc) in the results bundle | old app used pyvista for this kind of plot |
+| `openpyxl` | the per-session/cohort export spreadsheet (`_summary.xlsx`) - real columns, not raw CSV text, so it opens correctly regardless of the user's Excel locale (comma vs semicolon list separator - a plain CSV opened by double-click would otherwise land as one big unsplit column for a lot of people) | plain `csv` module, which is what this actually was until someone hit exactly that "everything in one cell" problem |
 | `fastapi` | web API, shared by both the web version and the desktop app | nothing, old app had no service layer at all |
 | `uvicorn` | ASGI server | nothing |
 | `python-multipart` | file upload handling in fastapi | `tkinter.filedialog` |
