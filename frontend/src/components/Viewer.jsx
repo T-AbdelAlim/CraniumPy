@@ -343,8 +343,9 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
       measurementsOverlayRef.current = null;
       applyOpacityState(meshStateRef, 1.0);
     },
-    // per-vertex asymmetry heatmap on the currently-shown (facial) result
-    // mesh - the Analysis workspace's facial visualization. applyHeatmap
+    // per-vertex asymmetry heatmap on the currently-shown result mesh - the
+    // Analysis workspace's asymmetry visualization, cranial or facial
+    // alike (see craniumpy_core.asymmetry.calculate_asymmetry). applyHeatmap
     // tints whichever material(s) are already assigned in place (see its
     // own docstring) rather than swapping in new ones, so
     // meshStateRef.current.materials already points at the right objects -

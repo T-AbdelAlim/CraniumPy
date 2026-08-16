@@ -28,6 +28,39 @@ JobStatus = Literal["idle", "running", "done", "error"]
 
 _executor = ThreadPoolExecutor(max_workers=2)
 
+# every Session field whose value describes "the align/clip/run pipeline for
+# THIS target", as opposed to the raw uploaded mesh itself - swapped out
+# wholesale by Session.snapshot_target/restore_target whenever the frontend
+# switches between cranial and facial, so returning to a target already
+# processed this session shows exactly the scene left behind (no re-running
+# align/clip/run against it). keyed by field name -> the value a target that
+# was never visited resets to. progress's dict is never mutated in place
+# (report_progress always reassigns a fresh one - see below), so sharing this
+# one default object across resets is safe.
+_TARGET_SCOPED_DEFAULTS: dict[str, Any] = {
+    "repaired_mesh": None,
+    "repaired_mesh_cache_key": None,
+    "sellion_registered_mesh": None,
+    "sellion_registered_landmarks": None,
+    "registered_mesh": None,
+    "registered_landmarks": None,
+    "registered_transform": None,
+    "aligned_mesh": None,
+    "sellion_clipped_mesh": None,
+    "clipped_mesh": None,
+    "used_alt_frontal": False,
+    "last_clip_config": None,
+    "result_mesh": None,
+    "sellion_result_mesh": None,
+    "nicp_result_mesh": None,
+    "last_nicp_config": None,
+    "hc_slice_height": None,
+    "job_status": "idle",
+    "job_error": None,
+    "progress": {"stage": "idle", "detail": ""},
+    "result": None,
+}
+
 
 @dataclass
 class Session:
@@ -130,6 +163,17 @@ class Session:
     # sessions (extract_measurements finds its own slice height inline, as
     # it always has) or before /clip has run.
     hc_slice_height: float | None = None
+    # which target (cranium/face) the fields above currently describe - set
+    # by /align and /clip's own _run closures, and by switch_active_target
+    # below. None only before the first /align or /clip of a fresh session.
+    active_target: str | None = None
+    # one frozen copy of every _TARGET_SCOPED_DEFAULTS field per target
+    # that's been switched away from, populated by snapshot_target and
+    # applied by restore_target - see switch_active_target, the single
+    # entry point both api/routers/mesh.py's /switch-target endpoint and
+    # /align and /clip go through so this never gets out of sync with
+    # active_target.
+    target_snapshots: dict[str, dict[str, Any]] = field(default_factory=dict)
     job_status: JobStatus = "idle"
     job_error: str | None = None
     progress: dict[str, Any] = field(default_factory=lambda: {"stage": "idle", "detail": ""})
@@ -158,6 +202,41 @@ class Session:
 
     def report_progress(self, stage: str, detail: str = "", current: int | None = None, total: int | None = None) -> None:
         self.progress = {"stage": stage, "detail": detail, "current": current, "total": total}
+
+    def snapshot_target(self, target: str) -> None:
+        """freezes every _TARGET_SCOPED_DEFAULTS field's current value under
+        `target`, so restore_target can bring back the exact same align/clip/
+        run state later with zero recomputation."""
+        self.target_snapshots[target] = {name: getattr(self, name) for name in _TARGET_SCOPED_DEFAULTS}
+
+    def restore_target(self, target: str) -> bool:
+        """loads `target`'s previously snapshotted fields back into place, or
+        resets them to blank ("never run") defaults if this target has no
+        snapshot yet - either way, nothing gets recomputed here. returns
+        whether a snapshot actually existed."""
+        snapshot = self.target_snapshots.get(target)
+        if snapshot is not None:
+            for name, value in snapshot.items():
+                setattr(self, name, value)
+        else:
+            for name, default in _TARGET_SCOPED_DEFAULTS.items():
+                setattr(self, name, default)
+        self.nicp_preview_mesh = None
+        return snapshot is not None
+
+    def switch_active_target(self, new_target: str) -> bool:
+        """the one place a target switch actually happens: snapshots
+        whatever's currently active (if it differs from new_target) before
+        restoring/resetting new_target's own state. safe to call redundantly
+        (new_target == active_target already) - just a no-op that reports
+        the target as already active."""
+        if self.active_target == new_target:
+            return True
+        if self.active_target is not None:
+            self.snapshot_target(self.active_target)
+        restored = self.restore_target(new_target)
+        self.active_target = new_target
+        return restored
 
 
 class SessionStore:

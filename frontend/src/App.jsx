@@ -24,6 +24,7 @@ import {
   getResults,
   saveAnalysis,
   analysisBundleUrl,
+  switchTarget,
 } from "./api/sessions.js";
 import { LANDMARK_NAMES, ALT_FRONTAL_NAME, LANDMARK_COLORS, nextUnpickedLandmark } from "./lib/landmarks.js";
 import { heatmapMaxAbs } from "./three/measurementsLayer.js";
@@ -60,6 +61,18 @@ function describeStage(stage, detail) {
   return detail ? `${stage} - ${detail}` : stage;
 }
 
+// just the filename off a full path, Windows (backslash) or POSIX (forward
+// slash) - cohortPath comes from a native file dialog, so it's always a
+// real OS path, never a URL.
+function baseName(path) {
+  return path.split(/[\\/]/).pop();
+}
+
+// see displayedMeshKeyRef.
+function meshDisplayKey(sid, descriptor) {
+  return `${sid}:${descriptor}`;
+}
+
 const NICP_DEFAULTS = { alphaStart: 200, alphaEnd: 1, alphaSteps: 20, gamma: 1.0, distThreshold: 10.0, innerIters: 3 };
 
 // every patient/visit field, blank - file_name/file_path get filled in
@@ -69,6 +82,7 @@ const BLANK_PATIENT_METADATA = {
   file_name: "",
   file_path: "",
   patient_id: "",
+  diagnosis: "",
   sex: "",
   date_imaging: "",
   age_imaging: "",
@@ -79,6 +93,15 @@ const BLANK_PATIENT_METADATA = {
 
 function App() {
   const viewerRef = useRef(null);
+  // "{sessionId}:{descriptor}" for whatever's currently loaded in the
+  // viewer (descriptor is a /mesh/{stage} stage name, or "nicp-result") -
+  // updated by every displayMesh call via markMeshDisplayed below.
+  // handleTargetChange checks this before reloading anything: switching
+  // between two targets that are BOTH still in their blank "never run"
+  // state needs the original mesh on screen either way, so without this
+  // check it would re-fetch/re-parse/re-frame the exact same GLB on every
+  // toggle even though nothing visible actually changes.
+  const displayedMeshKeyRef = useRef(null);
   const [sessionId, setSessionId] = useState(null);
   const [meshLabel, setMeshLabel] = useState("");
   const [selectionHasTexture, setSelectionHasTexture] = useState(false);
@@ -90,6 +113,17 @@ function App() {
   const [target, setTarget] = useState("cranium");
   const [useAltFrontal, setUseAltFrontal] = useState(false);
   const [landmarks, setLandmarks] = useState({}); // always raw-mesh coordinates
+  // one captureTargetSnapshot() object per target that's been switched away
+  // from this session (see below), reapplied by handleTargetChange when
+  // switching back - so returning to a target already processed shows
+  // exactly the scene left behind (mesh stage, template compare, analysis
+  // results, all of it) instead of re-running align/clip/run against it.
+  // mirrors the backend's own per-target snapshot (see api/sessions.py's
+  // Session.switch_active_target) - the two are always written/read
+  // together, in handleTargetChange, so they can't drift apart. reset on a
+  // fresh upload/full reset, alongside everything else in
+  // resetPreprocessingState.
+  const [targetSnapshots, setTargetSnapshots] = useState({});
 
   // mirrors legacy's exact flag set (app.js:715-745) - see the plan for why
   // this isn't simplified down to a couple of booleans.
@@ -172,6 +206,18 @@ function App() {
   const [showingNicpResult, setShowingNicpResult] = useState(false);
   const [exportingAnalysis, setExportingAnalysis] = useState(false);
   const [exportAnalysisStatus, setExportAnalysisStatus] = useState("");
+  // separate from exportAnalysisStatus above so the two lines can't get
+  // concatenated/overwrite each other - only set on a successful desktop
+  // save that actually targeted a cohort file (cohortMode !== "none"), see
+  // handleExportAnalysis. cleared alongside it everywhere else.
+  const [exportCohortStatus, setExportCohortStatus] = useState("");
+  // "export analysis" checkboxes (AnalysisPanel, above the export button) -
+  // a standing preference like saveDestDir/cohortMode below, not
+  // per-target/per-run state, so it deliberately isn't reset by
+  // resetPreprocessingState or the target-switch snapshot machinery.
+  const [exportMeasurements, setExportMeasurements] = useState(true);
+  const [exportAsymmetry, setExportAsymmetry] = useState(true);
+  const [exportMeshes, setExportMeshes] = useState(true);
 
   // patient/visit metadata form (sidebar) - see PatientMetadataForm.jsx and
   // api/schemas.py's PatientMetadata. cohortMode/cohortPath deliberately
@@ -201,6 +247,7 @@ function App() {
     const { hasTexture: loadedHasTexture } = await viewerRef.current.displayMesh(meshUrl(newSessionId), {
       selectionHasTexture: newSelectionHasTexture,
     });
+    displayedMeshKeyRef.current = meshDisplayKey(newSessionId, "original");
     setHasTexture(loadedHasTexture);
     setTextureEnabled(loadedHasTexture);
     setMeshRevision((n) => n + 1);
@@ -232,6 +279,7 @@ function App() {
 
   function resetPreprocessingState() {
     setLandmarks({});
+    setTargetSnapshots({});
     setAlignSucceeded(false);
     setAdjustingInAlignedFrame(false);
     setRegisteredTransform(null);
@@ -258,6 +306,7 @@ function App() {
     setAnalysisStatus("");
     setExportingAnalysis(false);
     setExportAnalysisStatus("");
+    setExportCohortStatus("");
   }
 
   // desktop-only: opens the native folder dialog and remembers the choice
@@ -446,35 +495,203 @@ function App() {
     setLandmarksChangedSinceAlign(true);
   }
 
-  function handleTargetChange(newTarget) {
-    setTarget(newTarget);
+  // everything about the CURRENT target's preprocessing/analysis scene that
+  // isn't already covered by another restore mechanism - selectedTemplate/
+  // customTemplatePath/templateOffset are deliberately left out, since the
+  // existing localStorage-backed effect (above) and the template-overlay
+  // effect (below) already re-derive those from target on their own any
+  // time it changes, snapshotting them here would just fight that. nicpParams
+  // is a standing preference, not per-scene, so it's left alone too.
+  //
+  // alignSucceeded/landmarksChangedSinceAlign/registeredTransform/
+  // adjustingInAlignedFrame/alignStatus are ALSO deliberately left out, for
+  // a similar but stronger reason: landmarks are shared across targets (see
+  // the landmarks state above), and register()'s core landmark-triangle fit
+  // - the part registeredTransform actually captures - doesn't depend on
+  // target at all (only an unrelated, purely-cosmetic recenter step
+  // downstream of it does, for facial specifically - see
+  // craniumpy_core.pipeline.register). so "aligned, landmarks unchanged" is
+  // just as true after switching target as it was before - forcing the
+  // user back through "align" again on every switch would be asking them
+  // to redo something that's still valid. handleTargetChange below quietly
+  // re-runs align (cheap - no repair/decimation, unlike clip/run) against
+  // the new target when this holds, purely to keep the registered-mesh
+  // preview accurate; align/adjust picks themselves stay exactly as they
+  // were throughout, never flipping back to "not yet aligned".
+  function captureTargetSnapshot() {
+    return {
+      meshStage: pipelineRan ? "result" : alignSucceeded ? "registered" : "original",
+      showingNicpResult,
+      pipelineRan,
+      runStarted,
+      runProgress,
+      runStatus,
+      runError,
+      comTranslation,
+      resampleMode,
+      vertexCount,
+      showTemplateOverlay,
+      fittingTemplate,
+      nicpFitStarted,
+      nicpProgress,
+      nicpStatus,
+      nicpError,
+      savingMeshes,
+      saveMeshesStatus,
+      analysisResults,
+      analysisStatus,
+      analysisViewMode,
+      exportingAnalysis,
+      exportAnalysisStatus,
+      exportCohortStatus,
+    };
+  }
+
+  function applyTargetSnapshot(snapshot) {
+    setPipelineRan(snapshot.pipelineRan);
+    setRunStarted(snapshot.runStarted);
+    setRunProgress(snapshot.runProgress);
+    setRunStatus(snapshot.runStatus);
+    setRunError(snapshot.runError);
+    setComTranslation(snapshot.comTranslation);
+    setResampleMode(snapshot.resampleMode);
+    setVertexCount(snapshot.vertexCount);
+    setShowTemplateOverlay(snapshot.showTemplateOverlay);
+    setFittingTemplate(snapshot.fittingTemplate);
+    setNicpFitStarted(snapshot.nicpFitStarted);
+    setNicpProgress(snapshot.nicpProgress);
+    setNicpStatus(snapshot.nicpStatus);
+    setNicpError(snapshot.nicpError);
+    setShowingNicpResult(snapshot.showingNicpResult);
+    setSavingMeshes(snapshot.savingMeshes);
+    setSaveMeshesStatus(snapshot.saveMeshesStatus);
+    setAnalysisResults(snapshot.analysisResults);
+    setAnalysisStatus(snapshot.analysisStatus);
+    setAnalysisViewMode(snapshot.analysisViewMode);
+    setExportingAnalysis(snapshot.exportingAnalysis);
+    setExportAnalysisStatus(snapshot.exportAnalysisStatus);
+    setExportCohortStatus(snapshot.exportCohortStatus);
+  }
+
+  // a target that's never been clipped/run this session - same "nothing
+  // done yet" state resetPreprocessingState puts a fresh upload in, minus
+  // the fields that aren't target-scoped (landmarks, the align state, saveDestDir, ...).
+  function applyBlankTargetState() {
+    setPipelineRan(false);
+    setRunStarted(false);
+    setRunProgress(0);
+    setRunStatus("");
+    setRunError(false);
+    setShowTemplateOverlay(false);
+    setFittingTemplate(false);
+    setNicpFitStarted(false);
+    setNicpProgress(0);
+    setNicpStatus("");
+    setNicpError(false);
+    setShowingNicpResult(false);
+    setSavingMeshes(false);
+    setSaveMeshesStatus("");
+    setAnalysisResults(null);
+    setAnalysisStatus("");
+    setAnalysisViewMode("metopic");
+    setExportingAnalysis(false);
+    setExportAnalysisStatus("");
+    setExportCohortStatus("");
+  }
+
+  // snapshots the OLD target's scene, then either restores NEW target's own
+  // snapshot (if both the frontend and the backend agree one exists) or
+  // resets its clip/run state to blank - either way with zero
+  // recomputation, no automatic re-running of clip/run. the backend's own
+  // restored flag (see api/sessions.py's Session.switch_active_target) is
+  // what actually decides which branch to take: the frontend snapshot
+  // always exists exactly when the backend one does, since
+  // handleTargetChange is the only place either gets written, but trusting
+  // the backend keeps the two from ever being able to drift - the backend
+  // fields are what save/export actually reads, so they're the ones that
+  // matter.
+  //
+  // align is deliberately handled separately from both of those branches -
+  // see captureTargetSnapshot's comment for why it isn't target-scoped at
+  // all. a target that's otherwise blank still gets a quiet, cheap re-align
+  // (no repair/decimation, unlike clip/run) when the landmarks that
+  // produced alignSucceeded are still unchanged, purely to keep the
+  // registered-mesh preview accurate for the new target - align/adjust
+  // picks themselves never flip back to "not yet aligned" over this.
+  async function handleTargetChange(newTarget) {
+    if (newTarget === target) return;
+    const oldTarget = target;
+    const outgoingSnapshot = captureTargetSnapshot();
+    setTargetSnapshots((prev) => ({ ...prev, [oldTarget]: outgoingSnapshot }));
+
     if (newTarget !== "cranium" && useAltFrontal) {
       setUseAltFrontal(false);
       setLandmarks((prev) => {
         const { [ALT_FRONTAL_NAME]: _drop, ...rest } = prev;
         return rest;
       });
+      // the active landmark set just changed (4 points -> 3) - same as
+      // handleUseAltFrontalChange dropping it directly, this makes the
+      // quiet re-align below correctly sit out until the user re-aligns
+      // themselves, instead of silently aligning a stale point set.
+      setLandmarksChangedSinceAlign(true);
     }
-    // pipelineRan gates the whole template/compare/fit-template/save-meshes
-    // section (see PreprocessingPanel) - a completed run described the OLD
-    // target's clip/measurements, so switching target has to hide that
-    // section again until "preprocess mesh" actually runs for the new one.
-    // landmarks/alignment deliberately survive this - /clip re-registers
-    // from scratch regardless of target, so there's no need to force a
-    // re-align, just a fresh preprocess-mesh run.
-    setPipelineRan(false);
-    setRunStarted(false);
-    setRunProgress(0);
-    setRunStatus("");
-    setRunError(false);
-    setFittingTemplate(false);
-    setNicpFitStarted(false);
-    setNicpProgress(0);
-    setNicpStatus("");
-    setNicpError(false);
-    setAnalysisResults(null);
-    setAnalysisStatus("");
-    setShowingNicpResult(false);
+    setTarget(newTarget);
+
+    let restored = false;
+    if (sessionId) {
+      try {
+        ({ restored } = await switchTarget(sessionId, newTarget));
+      } catch {
+        // no session yet, or the switch itself failed - fall through to the
+        // blank-state branch below, same as a target that was never run.
+      }
+    }
+
+    const incomingSnapshot = targetSnapshots[newTarget];
+    if (restored && incomingSnapshot) {
+      applyTargetSnapshot(incomingSnapshot);
+      if (sessionId) {
+        const descriptor = incomingSnapshot.showingNicpResult ? "nicp-result" : incomingSnapshot.meshStage;
+        const neededKey = meshDisplayKey(sessionId, descriptor);
+        // skip the fetch/GLTF-parse/camera-refit entirely when what's
+        // already on screen is already exactly this - e.g. toggling back
+        // and forth without touching anything else in between.
+        if (displayedMeshKeyRef.current !== neededKey) {
+          await viewerRef.current.displayMesh(
+            incomingSnapshot.showingNicpResult ? nicpResultMeshUrl(sessionId) : meshUrl(sessionId, incomingSnapshot.meshStage),
+            { selectionHasTexture: incomingSnapshot.showingNicpResult ? false : selectionHasTexture },
+          );
+          displayedMeshKeyRef.current = neededKey;
+        }
+        setMeshRevision((n) => n + 1);
+      }
+      return;
+    }
+
+    applyBlankTargetState();
+    if (!sessionId) return;
+
+    if (alignSucceeded && !landmarksChangedSinceAlign) {
+      // still-valid landmarks - re-register (fast) against the new target
+      // rather than forcing the user through "align" again. handleAlign
+      // itself handles the mesh reload/key-tracking and leaves
+      // alignSucceeded true throughout.
+      await handleAlign(newTarget);
+      return;
+    }
+
+    // never aligned at all yet (or landmarks changed) - genuinely blank,
+    // same plain original mesh a fresh upload starts on. if the target
+    // being LEFT was also still in that state (the common "just exploring
+    // the toggle" case before picking landmarks), this is a no-op: same
+    // mesh already showing.
+    const neededKey = meshDisplayKey(sessionId, "original");
+    if (displayedMeshKeyRef.current !== neededKey) {
+      await viewerRef.current.displayMesh(meshUrl(sessionId, "original"), { selectionHasTexture });
+      displayedMeshKeyRef.current = neededKey;
+    }
+    setMeshRevision((n) => n + 1);
   }
 
   function handleUseAltFrontalChange(enabled) {
@@ -499,15 +716,22 @@ function App() {
   async function handleReset() {
     resetPreprocessingState();
     await viewerRef.current.displayMesh(meshUrl(sessionId, "original"), { selectionHasTexture });
+    displayedMeshKeyRef.current = meshDisplayKey(sessionId, "original");
     setMeshRevision((n) => n + 1);
   }
 
-  async function handleAlign() {
+  // targetOverride lets handleTargetChange trigger a quiet re-align against
+  // the target it's switching TO before that target-change's own setTarget
+  // call has actually committed - reading the target state directly here
+  // would still see the OLD value (state setters don't update the current
+  // closure synchronously), sending the wrong target to the backend.
+  async function handleAlign(targetOverride) {
+    const alignTarget = targetOverride ?? target;
     setAligning(true);
     setAlignStatus("Preparing...");
     try {
       await startAlign(sessionId, {
-        target,
+        target: alignTarget,
         landmarks: LANDMARK_NAMES.map((n) => landmarks[n]),
         altFrontalLandmark: useAltFrontal ? landmarks[ALT_FRONTAL_NAME] : undefined,
       });
@@ -517,6 +741,7 @@ function App() {
       });
       if (result.status === "done") {
         await viewerRef.current.displayMesh(meshUrl(sessionId, "registered"), { selectionHasTexture });
+        displayedMeshKeyRef.current = meshDisplayKey(sessionId, "registered");
         setMeshRevision((n) => n + 1);
         const transform = await getRegisteredTransform(sessionId);
         setRegisteredTransform(transform);
@@ -588,6 +813,7 @@ function App() {
         // opt back out, not in, every time.
         setShowTemplateOverlay(true);
         await viewerRef.current.displayMesh(meshUrl(sessionId, "result"), { selectionHasTexture });
+        displayedMeshKeyRef.current = meshDisplayKey(sessionId, "result");
         setShowingNicpResult(false);
         setMeshRevision((n) => n + 1);
         setRunProgress(100);
@@ -678,6 +904,7 @@ function App() {
         // hideNicpPreview call below becomes a harmless no-op for the
         // success path, same as it always was for the failure path.
         await viewerRef.current.displayMesh(nicpResultMeshUrl(sessionId), { selectionHasTexture: false });
+        displayedMeshKeyRef.current = meshDisplayKey(sessionId, "nicp-result");
         setShowingNicpResult(true);
         // land on just the fitted mesh, not a template comparison drawn on
         // top of it - if "compare to template" was checked, switch it back
@@ -760,13 +987,29 @@ function App() {
       // wrong mesh entirely.
       if (showingNicpResult) {
         await viewerRef.current?.displayMesh(meshUrl(sessionId, "result"), { selectionHasTexture });
+        displayedMeshKeyRef.current = meshDisplayKey(sessionId, "result");
         setShowingNicpResult(false);
       }
       viewerRef.current?.hideMeasurementsOverlay();
       viewerRef.current?.hideHeatmap();
       viewerRef.current?.hideMetopicOverlay();
       viewerRef.current?.hideFrontalBossingOverlay();
-      if (analysisResults.craniometrics) {
+      // mirrors AnalysisPanel.jsx's own showMeasurements/showAsymmetry/
+      // showMetopic derivation exactly, so the live 3D overlay always
+      // matches whatever the panel's numbers/mode-toggle are currently
+      // showing. two different pairings can each need the toggle now -
+      // cranial's own craniometrics+asymmetry, or facial's metopic+
+      // asymmetry - see AnalysisPanel.jsx for why those are mutually
+      // exclusive. the non-asymmetry side is the default view (see the
+      // results-fetch effect above resetting to "metopic"), asymmetry only
+      // shows once explicitly selected.
+      const showModeToggle =
+        (analysisResults.craniometrics && analysisResults.asymmetry) ||
+        (analysisResults.metopic && analysisResults.asymmetry);
+      const showAsymmetry = analysisResults.asymmetry && (!showModeToggle || analysisViewMode === "asymmetry");
+      const showMeasurements = analysisResults.craniometrics && (!showModeToggle || analysisViewMode !== "asymmetry");
+      const showMetopic = analysisResults.metopic && (!showModeToggle || analysisViewMode !== "asymmetry");
+      if (showMeasurements) {
         viewerRef.current?.showMeasurementsOverlay({
           hcPolygon: analysisResults.craniometrics.hc_slice_polygon,
           frontOpt: analysisResults.craniometrics.front_opt,
@@ -775,15 +1018,6 @@ function App() {
           rhOpt: analysisResults.craniometrics.rh_opt,
         });
       }
-      // mirrors AnalysisPanel.jsx's own showAsymmetry/showMetopic
-      // derivation exactly, so the live 3D overlay always matches whatever
-      // the panel's numbers/mode-toggle are currently showing - Forehead
-      // Morphology is the default view (see the results-fetch effect
-      // above resetting to "metopic"), Facial Asymmetry only shows once
-      // explicitly selected.
-      const showModeToggle = analysisResults.asymmetry && analysisResults.metopic;
-      const showAsymmetry = analysisResults.asymmetry && (!showModeToggle || analysisViewMode === "asymmetry");
-      const showMetopic = analysisResults.metopic && (!showModeToggle || analysisViewMode !== "asymmetry");
       if (showMetopic) {
         viewerRef.current?.showMetopicOverlay(analysisResults.metopic);
       } else if (showAsymmetry) {
@@ -791,8 +1025,9 @@ function App() {
       }
       // not mutually exclusive with anything above except the asymmetry
       // heatmap specifically (see AnalysisPanel.jsx's showFrontalBossing) -
-      // computed for both targets, shows alongside craniometrics or the
-      // Forehead Morphology overlay, just not the plain asymmetry view.
+      // computed for both targets, shows alongside craniometrics/cranial
+      // measurements or facial's Forehead Morphology overlay, just not the
+      // plain asymmetry view.
       if (analysisResults.frontal_bossing && !showAsymmetry) {
         viewerRef.current?.showFrontalBossingOverlay(analysisResults.frontal_bossing);
       }
@@ -818,16 +1053,19 @@ function App() {
   // persistent to append a cohort row into.
   async function handleExportAnalysis() {
     setExportingAnalysis(true);
+    setExportCohortStatus("");
+    const exportSelection = { measurements: exportMeasurements, asymmetry: exportAsymmetry, meshes: exportMeshes };
     if (isDesktopApp()) {
       setExportAnalysisStatus("Exporting...");
+      const targetCohortPath = cohortMode !== "none" ? cohortPath : null;
       try {
         const { saved_to: savedTo } = await saveAnalysis(
-          sessionId,
-          saveDestDir,
-          patientMetadata,
-          cohortMode !== "none" ? cohortPath : null
+          sessionId, saveDestDir, patientMetadata, targetCohortPath, exportSelection,
         );
         setExportAnalysisStatus(`Saved to ${savedTo}`);
+        if (targetCohortPath) {
+          setExportCohortStatus(`added to cohort ${baseName(targetCohortPath)}: ${targetCohortPath}`);
+        }
         setExportingAnalysis(false);
         return;
       } catch (err) {
@@ -840,7 +1078,7 @@ function App() {
     }
     setExportAnalysisStatus("");
     setExportingAnalysis(false);
-    window.location.href = analysisBundleUrl(sessionId, patientMetadata);
+    window.location.href = analysisBundleUrl(sessionId, patientMetadata, exportSelection);
   }
 
   // what the viewer actually shows: raw picks on the raw mesh before
@@ -905,7 +1143,7 @@ function App() {
             aligning={aligning}
             pipelineRan={pipelineRan}
             alignStatus={alignStatus}
-            onAlign={handleAlign}
+            onAlign={() => handleAlign()}
             onAdjustPicks={handleAdjustPicks}
             onReset={handleReset}
             comTranslation={comTranslation}
@@ -959,6 +1197,13 @@ function App() {
             onExportAnalysis={handleExportAnalysis}
             exportingAnalysis={exportingAnalysis}
             exportAnalysisStatus={exportAnalysisStatus}
+            exportCohortStatus={exportCohortStatus}
+            exportMeasurements={exportMeasurements}
+            onExportMeasurementsChange={setExportMeasurements}
+            exportAsymmetry={exportAsymmetry}
+            onExportAsymmetryChange={setExportAsymmetry}
+            exportMeshes={exportMeshes}
+            onExportMeshesChange={setExportMeshes}
             isDesktop={isDesktopApp()}
             saveDestDir={saveDestDir}
             onChooseSaveFolder={handleChooseSaveFolder}

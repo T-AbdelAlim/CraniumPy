@@ -28,6 +28,22 @@ import numpy as np
 import trimesh
 
 from .registration.rigid import procrustes_icp
+from .remesh import resample_mesh
+
+# ICP's convergence check (see registration.rigid.procrustes_icp) is a tight
+# ABSOLUTE tolerance on a distance SUM, not a per-point average - so on a
+# real (non-perfectly-symmetric) head/face with many thousands of vertices,
+# that sum rarely settles by less than the tolerance between iterations, and
+# ICP ends up running all the way to its max_iterations safety cap every
+# time, each pass repeating a full nearest-neighbor query over every vertex.
+# fitting on a decimated proxy instead - the same "proxy so this stays fast
+# on a raw 100k+-vertex scan" pattern pipeline.register()'s CoM correction
+# already uses - fixes both sides of that: each pass is cheaper AND the
+# (now much smaller) sum crosses the same absolute tolerance in far fewer
+# iterations. only the RIGID TRANSFORM comes from the proxies; the actual
+# heatmap below still gets a real nearest-surface-point query per vertex of
+# the full mesh, so per-vertex output resolution is unaffected.
+_ICP_PROXY_VERTICES = 8_000
 
 
 @dataclass
@@ -56,7 +72,9 @@ def calculate_asymmetry(mesh: trimesh.Trimesh, half_face: str = "left") -> Asymm
     """
     mirrored = mirror_mesh(mesh)
 
-    transform, _ = procrustes_icp(np.asarray(mirrored.vertices), np.asarray(mesh.vertices))
+    mesh_proxy = resample_mesh(mesh, n_vertices=_ICP_PROXY_VERTICES)
+    mirrored_proxy = resample_mesh(mirrored, n_vertices=_ICP_PROXY_VERTICES)
+    transform, _ = procrustes_icp(np.asarray(mirrored_proxy.vertices), np.asarray(mesh_proxy.vertices))
     aligned_vertices = transform.apply(np.asarray(mirrored.vertices))
     aligned_mirror = trimesh.Trimesh(vertices=aligned_vertices, faces=mirrored.faces, process=False)
 

@@ -20,6 +20,7 @@ from craniumpy_core.craniometrics import slice_center_of_mass
 from craniumpy_core.io import load_mesh
 from craniumpy_core.pipeline import (
     NicpTemplateConfig,
+    _clip_frontal_ellipse,
     _recenter_com_z,
     analyze,
     analyze_cranial,
@@ -169,6 +170,40 @@ def test_rough_bounding_clip_returns_mesh_in_original_frame():
     assert len(clipped_vertices) < len(mesh.vertices)  # tight margins actually cropped something
     assert np.all(clipped_vertices >= bounds[0] - 1e-6)
     assert np.all(clipped_vertices <= bounds[1] + 1e-6)
+
+
+def test_clip_frontal_ellipse_rounds_off_corners_but_keeps_cardinal_reach():
+    # rough_bounding_clip's own front/side cuts collapse to an ellipse
+    # rather than a box (see its docstring) - this exercises that ellipse
+    # directly: a point out at the box's old diagonal CORNER (far to the
+    # side AND far forward at once) should now be dropped, while a point
+    # the same distance out along a single cardinal direction (straight to
+    # the side, or straight ahead) stays kept - the exact same reach the
+    # box always had there, just with the corners rounded off. a point
+    # behind the ellipse's own back edge is kept regardless of how far to
+    # the side it is, same "nothing bounds the back" property the box had.
+    x_center, z_center = 0.0, 0.0
+    x_semi_axis, z_semi_axis = 100.0, 60.0
+
+    def _point_mesh(point: np.ndarray) -> trimesh.Trimesh:
+        v = np.array([point, point + [1.0, 0.0, 0.0], point + [0.0, 1.0, 0.0]])
+        return trimesh.Trimesh(vertices=v, faces=[[0, 1, 2]], process=False)
+
+    corner = _point_mesh(np.array([x_semi_axis * 0.9, 0.0, z_semi_axis * 0.9]))
+    clipped = _clip_frontal_ellipse(corner, x_center, x_semi_axis, z_center, z_semi_axis)
+    assert len(clipped.vertices) == 0
+
+    straight_side = _point_mesh(np.array([x_semi_axis - 1.0, 0.0, z_center]))
+    clipped = _clip_frontal_ellipse(straight_side, x_center, x_semi_axis, z_center, z_semi_axis)
+    assert len(clipped.vertices) > 0
+
+    straight_ahead = _point_mesh(np.array([x_center, 0.0, z_center + z_semi_axis - 1.0]))
+    clipped = _clip_frontal_ellipse(straight_ahead, x_center, x_semi_axis, z_center, z_semi_axis)
+    assert len(clipped.vertices) > 0
+
+    behind = _point_mesh(np.array([x_semi_axis * 5.0, 0.0, z_center - z_semi_axis - 1.0]))
+    clipped = _clip_frontal_ellipse(behind, x_center, x_semi_axis, z_center, z_semi_axis)
+    assert len(clipped.vertices) > 0
 
 
 def test_harmonize_com_translation_corrects_z_only_not_x():
@@ -426,6 +461,38 @@ def test_analyze_cranial_display_frontal_bossing_transforms_with_alt_frontal():
         with_alt.display_mesh, with_alt.display_frontal_bossing.sellion[np.newaxis, :]
     )
     assert distances[0] < 1e-6
+
+
+def test_analyze_cranial_asymmetry_computed_and_carried_to_display_frame():
+    # same mirror-and-ICP method as facial asymmetry (see
+    # craniumpy_core.asymmetry.calculate_asymmetry), applied to the cranial
+    # cap - mean_asymmetry_index is a property of the sellion mesh's own
+    # shape, so it's identical with or without an alt frontal landmark and
+    # carried (not recomputed) into the display frame, same reasoning as
+    # frontal_bossing.angle_deg above. the heatmap can't be carried the same
+    # way (no vertex correspondence between the independently resampled
+    # sellion/display meshes) - each display_mesh vertex borrows its value
+    # from the nearest transformed sellion-mesh vertex instead, so it comes
+    # out the same LENGTH as display_mesh's own vertices, not sellion_mesh's.
+    mesh, landmarks = _ellipsoid_with_landmarks(asymmetric=True)
+    alt_frontal = landmarks[0] + np.array([0.0, -15.0, -5.0])
+
+    without_alt = analyze_cranial(mesh, landmarks, n_vertices=3000)
+    with_alt = analyze_cranial(mesh, landmarks, alt_frontal_landmark=alt_frontal, n_vertices=3000)
+
+    assert without_alt.asymmetry is not None
+    assert without_alt.display_asymmetry is without_alt.asymmetry  # no alt frontal - same object
+
+    assert with_alt.asymmetry is not None
+    assert with_alt.display_asymmetry is not None
+    # the sellion-pass value is unaffected by the alt-frontal landmark
+    assert with_alt.asymmetry.mean_asymmetry_index == pytest.approx(without_alt.asymmetry.mean_asymmetry_index)
+    # carried across, not recomputed against the display mesh
+    assert with_alt.display_asymmetry.mean_asymmetry_index == pytest.approx(with_alt.asymmetry.mean_asymmetry_index)
+    # heatmap is resampled onto display_mesh's own vertex count, not a copy
+    # of sellion_mesh's
+    assert len(with_alt.display_asymmetry.heatmap) == len(with_alt.display_mesh.vertices)
+    assert len(with_alt.asymmetry.heatmap) == len(with_alt.sellion_mesh.vertices)
 
 
 def test_analyze_cranial_com_correction_sellion_pass_unaffected_by_alt_frontal():

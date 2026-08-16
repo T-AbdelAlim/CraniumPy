@@ -70,6 +70,30 @@ export async function startAlign(sessionId, { target, landmarks, altFrontalLandm
   if (!response.ok) throw new Error(await response.text());
 }
 
+// swaps which target (cranium/face) the session's align/clip/run state
+// describes - see api/sessions.py's Session.switch_active_target. restored
+// tells the caller whether the backend actually had a snapshot for `target`
+// (i.e. whether to reapply the matching frontend UI snapshot, or reset to
+// blank) - the other three fields describe exactly what's now loaded on the
+// backend, for picking the right mesh stage/URL to display without a
+// separate /results round trip.
+export async function switchTarget(sessionId, target) {
+  const response = await fetch(`/api/sessions/${sessionId}/switch-target`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ target }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  const data = await response.json();
+  return {
+    restored: data.restored,
+    alignSucceeded: data.align_succeeded,
+    pipelineRan: data.pipeline_ran,
+    hasNicpResult: data.has_nicp_result,
+    usedAltFrontal: data.used_alt_frontal,
+  };
+}
+
 export async function getRegisteredTransform(sessionId) {
   const response = await fetch(`/api/sessions/${sessionId}/registered-transform`);
   if (!response.ok) throw new Error(await response.text());
@@ -157,7 +181,20 @@ export async function getResults(sessionId) {
 // upserts this session's row into that external cohort file (see
 // api/results_bundle._upsert_cohort_xlsx) - desktop-only, there's no
 // browser equivalent (see analysisBundleUrl below).
-export async function saveAnalysis(sessionId, destDir, metadata, cohortXlsxPath) {
+// exportSelection is the "measurements"/"asymmetry"/"meshes" export
+// checkboxes (see AnalysisPanel.jsx) - {measurements, asymmetry, meshes},
+// each defaulting true when omitted so existing callers that don't pass one
+// still get everything, same as before those checkboxes existed.
+function exportSelectionFields(exportSelection) {
+  const sel = exportSelection || {};
+  return {
+    include_measurements: sel.measurements ?? true,
+    include_asymmetry: sel.asymmetry ?? true,
+    include_meshes: sel.meshes ?? true,
+  };
+}
+
+export async function saveAnalysis(sessionId, destDir, metadata, cohortXlsxPath, exportSelection) {
   const response = await fetch(`/api/sessions/${sessionId}/save/analysis`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -165,6 +202,7 @@ export async function saveAnalysis(sessionId, destDir, metadata, cohortXlsxPath)
       dest_dir: destDir || null,
       metadata: metadata || {},
       cohort_xlsx_path: cohortXlsxPath || null,
+      ...exportSelectionFields(exportSelection),
     }),
   });
   if (!response.ok) {
@@ -180,10 +218,12 @@ export async function saveAnalysis(sessionId, destDir, metadata, cohortXlsxPath)
 // above) - metadata rides along as query params since a GET download
 // can't carry a JSON body. no cohort param here - a one-shot zip download
 // has no persistent file to append a cohort row into.
-export function analysisBundleUrl(sessionId, metadata) {
+export function analysisBundleUrl(sessionId, metadata, exportSelection) {
   const params = new URLSearchParams(metadata || {});
-  const query = params.toString();
-  return `/api/sessions/${sessionId}/bundle/analysis${query ? `?${query}` : ""}`;
+  for (const [key, value] of Object.entries(exportSelectionFields(exportSelection))) {
+    params.set(key, String(value));
+  }
+  return `/api/sessions/${sessionId}/bundle/analysis?${params.toString()}`;
 }
 
 // polls /status until the job is done or errored, returning the final

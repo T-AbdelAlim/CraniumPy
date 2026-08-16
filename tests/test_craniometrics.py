@@ -17,7 +17,13 @@ import numpy as np
 import pytest
 import trimesh
 
-from craniumpy_core.craniometrics import SliceProfile, _select_slice_index, extract_measurements, frontal_bossing
+from craniumpy_core.craniometrics import (
+    SliceProfile,
+    _select_forehead_half,
+    _select_slice_index,
+    extract_measurements,
+    frontal_bossing,
+)
 from craniumpy_core.io import load_mesh
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -136,39 +142,81 @@ def _sagittal_grid_mesh(y: np.ndarray, z: np.ndarray, xs: np.ndarray | None = No
 
 
 def test_frontal_bossing_bulging_forehead():
-    # a downward parabola above sellion (y=0), peaking at y=40, z=20 - the
-    # unique most-anterior point over the sampled range. sellion is given
-    # sitting right on the surface at y=0 - frontal_bossing snaps whatever
-    # it's given onto the mesh (see its docstring), so a sellion that isn't
-    # actually near the surface would have the snap itself move it and
-    # throw off the expected angle below.
+    # a downward parabola above sellion (y=0), peaking at y=40, z=20.
+    # slice_height=40 anchors the forehead point exactly at that peak, so
+    # this exercises the same "point of maximum forward bulge" case the
+    # old argmax-only version always found, just now reached by explicitly
+    # anchoring to a given slice height (see frontal_bossing's docstring)
+    # instead of independently searching for it. sellion is given sitting
+    # right on the surface at y=0 - frontal_bossing snaps whatever it's
+    # given onto the mesh, so a sellion that isn't actually near the
+    # surface would have the snap itself move it and throw off the
+    # expected angle below.
     y = np.linspace(0.0, 100.0, 300)
     z = -0.005 * (y - 40.0) ** 2 + 20.0
     mesh = _sagittal_grid_mesh(y, z)
     sellion = np.array([0.0, 0.0, z[0]])
 
-    result = frontal_bossing(mesh, sellion)
+    result = frontal_bossing(mesh, sellion, slice_height=40.0)
 
     assert result is not None
     assert result.frontal_point[1] == pytest.approx(40.0, abs=1.0)
     assert result.frontal_point[2] == pytest.approx(20.0, abs=0.5)
     expected_angle = np.degrees(np.arctan2(40.0, 20.0 - z[0]))
     assert result.angle_deg == pytest.approx(expected_angle, abs=2.0)
+    assert result.slice_height == pytest.approx(40.0)
+
+
+def test_frontal_bossing_interpolates_between_profile_points():
+    # a straight line, not a value directly sampled by the mesh grid below
+    # (y is stepped in exact multiples of 100/299) - forces the crossing
+    # to actually land between two profile points rather than exactly on
+    # one, exercising the interpolation itself rather than a coincidence.
+    y = np.linspace(0.0, 100.0, 300)
+    z = -0.005 * (y - 40.0) ** 2 + 20.0
+    mesh = _sagittal_grid_mesh(y, z)
+    sellion = np.array([0.0, 0.0, z[0]])
+    slice_height = 40.333
+
+    result = frontal_bossing(mesh, sellion, slice_height=slice_height)
+
+    assert result is not None
+    assert result.frontal_point[1] == pytest.approx(slice_height, abs=0.5)
+    expected_z = -0.005 * (slice_height - 40.0) ** 2 + 20.0
+    assert result.frontal_point[2] == pytest.approx(expected_z, abs=0.5)
+
+
+def test_frontal_bossing_slice_height_outside_forehead_range_falls_back_to_most_anterior():
+    # slice_height (200) sits well above the tallest point on this
+    # forehead (y maxes out at 100) - falls back to the most anterior (max
+    # z) point above sellion, same as the old unconditional-argmax
+    # behavior, rather than extrapolating or failing.
+    y = np.linspace(0.0, 100.0, 300)
+    z = -0.005 * (y - 40.0) ** 2 + 20.0
+    mesh = _sagittal_grid_mesh(y, z)
+    sellion = np.array([0.0, 0.0, z[0]])
+
+    result = frontal_bossing(mesh, sellion, slice_height=200.0)
+
+    assert result is not None
+    assert result.frontal_point[1] == pytest.approx(40.0, abs=1.0)
+    assert result.frontal_point[2] == pytest.approx(20.0, abs=0.5)
 
 
 def test_frontal_bossing_receding_forehead_reads_a_larger_angle_than_bulging():
-    # near-vertical rise, barely any forward bulge - most-anterior point is
-    # just the top of the range, giving a near-90deg (flatter/receding) angle
+    # near-vertical rise, barely any forward bulge - a large (flatter/
+    # receding) angle at any height comfortably on the forehead.
     y = np.linspace(0.0, 100.0, 300)
     z = 0.02 * y
     mesh = _sagittal_grid_mesh(y, z)
     sellion = np.array([0.0, 0.0, 0.0])
 
-    result = frontal_bossing(mesh, sellion)
+    result = frontal_bossing(mesh, sellion, slice_height=60.0)
 
     assert result is not None
-    assert result.frontal_point[1] == pytest.approx(100.0, abs=1.0)
-    expected_angle = np.degrees(np.arctan2(100.0, 2.0))
+    assert result.frontal_point[1] == pytest.approx(60.0, abs=1.0)
+    assert result.frontal_point[2] == pytest.approx(1.2, abs=0.5)
+    expected_angle = np.degrees(np.arctan2(60.0, 1.2))
     assert result.angle_deg == pytest.approx(expected_angle, abs=1.0)
     assert result.angle_deg > 80.0
 
@@ -176,13 +224,14 @@ def test_frontal_bossing_receding_forehead_reads_a_larger_angle_than_bulging():
 def test_frontal_bossing_excludes_points_below_sellion():
     # a much-more-anterior "nose" sits below sellion (y<0, z=50) - the
     # forehead's own bulge above sellion (max z=20, at y=40) is far less
-    # anterior, but must still win since the nose isn't part of the forehead
+    # anterior, but the above-sellion restriction must keep the nose out
+    # of the forehead arc entirely regardless of slice_height.
     y = np.linspace(-40.0, 100.0, 400)
     z = np.where(y < 0.0, 50.0, -0.005 * (y - 40.0) ** 2 + 20.0)
     mesh = _sagittal_grid_mesh(y, z)
     sellion = np.array([0.0, 0.0, 0.0])
 
-    result = frontal_bossing(mesh, sellion)
+    result = frontal_bossing(mesh, sellion, slice_height=40.0)
 
     assert result is not None
     assert result.frontal_point[1] > 0.0
@@ -195,7 +244,7 @@ def test_frontal_bossing_none_when_plane_misses_mesh():
     mesh = _sagittal_grid_mesh(y, z)
     sellion = np.array([500.0, 0.0, 0.0])  # far outside the mesh's x range
 
-    assert frontal_bossing(mesh, sellion) is None
+    assert frontal_bossing(mesh, sellion, slice_height=50.0) is None
 
 
 def test_frontal_bossing_none_when_nothing_above_sellion():
@@ -204,7 +253,7 @@ def test_frontal_bossing_none_when_nothing_above_sellion():
     mesh = _sagittal_grid_mesh(y, z)
     sellion = np.array([0.0, 1000.0, 0.0])  # above every point on the mesh
 
-    assert frontal_bossing(mesh, sellion) is None
+    assert frontal_bossing(mesh, sellion, slice_height=50.0) is None
 
 
 def test_frontal_bossing_profile_is_non_empty():
@@ -213,7 +262,59 @@ def test_frontal_bossing_profile_is_non_empty():
     mesh = _sagittal_grid_mesh(y, z)
     sellion = np.array([0.0, 0.0, 0.0])
 
-    result = frontal_bossing(mesh, sellion)
+    result = frontal_bossing(mesh, sellion, slice_height=50.0)
 
     assert result is not None
     assert len(result.profile) > 0
+
+
+def test_select_forehead_half_picks_the_side_near_sellion_regardless_of_arc_order():
+    # the shape frontal_bossing's own above-sellion arc takes on a real
+    # closed-cap mesh: one unbroken run from the forehead, over the vertex
+    # (the y maximum), down to the occiput - both ends sit near sellion's
+    # own HEIGHT (y), but nowhere near each other in DEPTH (z). sellion
+    # sits right next to the forehead end (z=70.9), clear across the head
+    # from the occipital end (z=-82).
+    sellion = np.array([0.0, 0.0, 70.5])
+    front_to_back = np.array(
+        [
+            [0.0, 2.4, 70.9],
+            [0.0, 80.0, 90.0],
+            [0.0, 150.0, 40.0],  # crown/vertex - the y maximum
+            [0.0, 90.0, -30.0],
+            [0.0, 4.6, -82.0],
+        ]
+    )
+
+    forward = _select_forehead_half(front_to_back, sellion)
+    assert forward[-1, 1] == pytest.approx(150.0)  # ends at the crown
+    assert forward[0, 2] == pytest.approx(70.9)  # starts on the forehead side
+
+    # the exact same physical arc, walked from the other end first - this
+    # is the case that used to silently pick the occipital point instead
+    # (see frontal_bossing's docstring for why mesh.section()'s own
+    # traversal direction can't be trusted to always start at the front).
+    backward = _select_forehead_half(front_to_back[::-1], sellion)
+    assert backward[-1, 1] == pytest.approx(150.0)
+    assert backward[0, 2] == pytest.approx(70.9)
+
+
+def test_frontal_bossing_full_head_profile_finds_frontal_point_not_occipital():
+    # a full front-to-back sagittal sweep (a semicircle in the y-z plane) -
+    # the shape a real closed-cap cranial/facial mesh's section actually
+    # produces, unlike every other test above, which only ever hands
+    # frontal_bossing an isolated forehead arc with no occiput on it at all
+    # to possibly confuse it with.
+    theta = np.linspace(0.0, np.pi, 300)
+    y = 100.0 * np.sin(theta)
+    z = -100.0 * np.cos(theta)  # theta=0: occiput (y=0, z=-100); theta=pi: forehead base (y=0, z=100)
+    mesh = _sagittal_grid_mesh(y, z)
+    sellion = np.array([0.0, 0.0, 95.0])
+
+    result = frontal_bossing(mesh, sellion, slice_height=50.0)
+
+    assert result is not None
+    # the crown sits at z=0 (theta=pi/2) - a point correctly picked from
+    # the frontal half has z somewhere between sellion (95) and the crown
+    # (0), nowhere near the occiput's z=-100.
+    assert result.frontal_point[2] > 0.0

@@ -81,13 +81,20 @@ export default function PreprocessingPanel({
 
   return (
     <section>
-      <label className="checkbox">
+      <p className="target-picker-header">interested in:</p>
+      <label className="checkbox target-option">
         <input type="radio" name="target" checked={target === "cranium"} onChange={() => onTargetChange("cranium")} />
-        cranial (head measurements)
+        <span>
+          Cranial Vault
+          <small>cephalometrics, symmetry, forehead shape</small>
+        </span>
       </label>
-      <label className="checkbox">
+      <label className="checkbox target-option">
         <input type="radio" name="target" checked={target === "face"} onChange={() => onTargetChange("face")} />
-        facial (asymmetry)
+        <span>
+          Face &amp; Forehead
+          <small>facial symmetry, forehead shape</small>
+        </span>
       </label>
 
       <p className="hint">

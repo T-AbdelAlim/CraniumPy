@@ -71,10 +71,10 @@ def test_write_results_to_folder_uses_shortened_stem(tmp_path, sample_result):
     assert results_dir == tmp_path / "CP_1016510_20210730_edited_C_3"
     assert (results_dir / "1016510_20210730_edited_rg.ply").exists()
     assert (results_dir / "1016510_20210730_edited_rg_C.ply").exists()
-    assert (results_dir / "1016510_20210730_edited_report.json").exists()
+    assert (results_dir / "1016510_20210730_edited_report_cranial.json").exists()
     assert (results_dir / "1016510_20210730_edited_measurements.png").exists()
-    assert (results_dir / "1016510_20210730_edited_summary.xlsx").exists()
-    assert (results_dir / "1016510_20210730_edited_report.pdf").exists()
+    assert (results_dir / "1016510_20210730_edited_summary_cranial.xlsx").exists()
+    assert (results_dir / "1016510_20210730_edited_report_cranial.pdf").exists()
 
 
 def test_build_results_bundle_uses_shortened_stem_too(sample_result):
@@ -129,9 +129,9 @@ def test_write_analysis_to_folder_creates_mesh_folder_if_missing(tmp_path, sampl
     assert sorted(p.name for p in mesh_dir.iterdir()) == ["analysis", "scan_rg.ply", "scan_rg_C.ply"]
     assert sorted(p.name for p in analysis_dir.iterdir()) == [
         "scan_measurements.png",
-        "scan_report.json",
-        "scan_report.pdf",
-        "scan_summary.xlsx",
+        "scan_report_cranial.json",
+        "scan_report_cranial.pdf",
+        "scan_summary_cranial.xlsx",
     ]
 
 
@@ -188,10 +188,10 @@ def test_build_analysis_bundle_nests_analysis_under_mesh_folder(sample_result):
     assert names == {
         "CP_scan_C_3/scan_rg.ply",
         "CP_scan_C_3/scan_rg_C.ply",
-        "CP_scan_C_3/analysis/scan_report.json",
+        "CP_scan_C_3/analysis/scan_report_cranial.json",
         "CP_scan_C_3/analysis/scan_measurements.png",
-        "CP_scan_C_3/analysis/scan_summary.xlsx",
-        "CP_scan_C_3/analysis/scan_report.pdf",
+        "CP_scan_C_3/analysis/scan_summary_cranial.xlsx",
+        "CP_scan_C_3/analysis/scan_report_cranial.pdf",
     }
 
 

@@ -344,6 +344,36 @@ label.checkbox:has(input:disabled) {
   cursor: not-allowed;
 }
 
+/* --- target picker (Preprocessing workspace) --- */
+
+.target-picker-header {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin: 0.6rem 0 0.4rem;
+}
+
+label.checkbox.target-option {
+  align-items: flex-start;
+  margin-bottom: 0.5rem;
+}
+
+.target-option input {
+  margin-top: 0.2rem;
+}
+
+.target-option span {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.target-option small {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
 .toggle-row {
   display: flex;
   gap: 1rem;
@@ -364,6 +394,7 @@ label.checkbox:has(input:disabled) {
 .status-line {
   margin-top: 0.75rem;
   color: var(--text-primary);
+  overflow-wrap: anywhere;
 }
 
 #landmark-list {
@@ -521,6 +552,54 @@ button:disabled {
   font-size: 0.75rem;
   color: var(--text-muted);
   margin: 0 0 0.15rem;
+}
+
+.profile-chart-legend {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin: 0.15rem 0 0;
+}
+
+/* hover explainer icon - see components/InfoTooltip.jsx. sits inline right
+   after whatever label it explains (a table <th>, a chart title, ...), so
+   it reads as "this thing, explained" rather than a separate element. */
+.info-tooltip {
+  position: relative;
+  display: inline-block;
+  margin-left: 0.3rem;
+  color: var(--text-muted);
+  font-size: 0.85em;
+  cursor: help;
+}
+
+.info-tooltip:hover,
+.info-tooltip:focus-visible {
+  color: var(--text-secondary);
+}
+
+.info-tooltip:focus {
+  outline: none;
+}
+
+.info-tooltip-box {
+  position: fixed;
+  z-index: 1000;
+  padding: 0.55rem 0.65rem;
+  background: var(--bg-subtle);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  font-weight: 400;
+  text-align: left;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+  cursor: default;
+  pointer-events: none;
+}
+
+.metopic-parabola-note {
+  margin-bottom: 0.9rem;
 }
 
 input[type="file"] {
