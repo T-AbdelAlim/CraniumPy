@@ -30,6 +30,26 @@ from scipy.spatial import cKDTree
 DEFAULT_ALPHAS = np.linspace(200, 1, 20)
 
 
+def _boundary_vertex_indices(faces: np.ndarray) -> np.ndarray:
+    """indices of vertices touching an open-boundary edge (one used by only
+    a single face) - the rim of a clipped/cut mesh, as opposed to a real
+    closed surface.
+
+    used to keep NICP's correspondence search from treating a source mesh's
+    open rim like any other point: see nicp()'s own docstring for why a
+    plain whole-mesh nearest-point search pulls that rim somewhere it
+    shouldn't."""
+    if len(faces) == 0:
+        return np.empty(0, dtype=np.int64)
+    edges = faces[:, [0, 1, 1, 2, 2, 0]].reshape(-1, 2)
+    sorted_edges = np.sort(edges, axis=1)
+    unique_edges, counts = np.unique(sorted_edges, axis=0, return_counts=True)
+    boundary_edges = unique_edges[counts == 1]
+    if len(boundary_edges) == 0:
+        return np.empty(0, dtype=np.int64)
+    return np.unique(boundary_edges.reshape(-1))
+
+
 def _build_stiffness(faces: np.ndarray, n_verts: int, gamma: float) -> tuple[sparse.csr_matrix, int]:
     """edge incidence matrix M (m x n), kroneckered with diag(1,1,1,gamma) -
     the regularizer that penalizes neighboring vertices' affine transforms
@@ -86,6 +106,23 @@ def nicp(
     drag nearby source vertices toward a wrong match on the far side of
     the gap.
 
+    source's own open-boundary vertices (the rim of a clipped mesh, e.g.
+    cranial_clip's landmark-plane cut) search for their correspondence
+    against ONLY target's open-boundary vertices, not the whole target -
+    every other (interior) source vertex still searches the whole target,
+    unchanged. plain whole-mesh nearest-point search has no notion of
+    "boundary" at all, so a source rim vertex can easily find its closest
+    point sitting on the target's INTERIOR surface just past the rim
+    (real, since source and target only share the same cut plane
+    approximately - individual head shape still differs there) - close
+    enough to stay under dist_threshold, so nothing filters it out, and
+    the result is the rim visibly getting pulled up/in off the cut plane
+    instead of staying a clean matching cut. restricting boundary-to-
+    boundary search fixes that at the source, rather than trying to patch
+    it after the fact. falls back to the whole target mesh if either side
+    has no open boundary at all (a closed/watertight source or target -
+    nothing to restrict).
+
     on_progress/on_preview, when given, fire once per stiffness level (not
     per inner iteration - keeps the overhead reasonable) with the current
     (step, total_steps) and the current deformed vertex array respectively,
@@ -102,13 +139,35 @@ def nicp(
     # rotation/scale + a translation row - per vertex, stacked).
     X = np.tile(np.vstack([np.eye(3), [0, 0, 0]]), (n, 1)).astype(np.float64)
 
-    tree = cKDTree(target.vertices)
+    target_v = np.asarray(target.vertices, dtype=np.float64)
+    tree = cKDTree(target_v)
+
+    target_boundary_idx = _boundary_vertex_indices(target.faces)
+    source_boundary_idx = _boundary_vertex_indices(source.faces)
+    is_source_boundary = np.zeros(n, dtype=bool)
+    is_source_boundary[source_boundary_idx] = True
+    tree_boundary = cKDTree(target_v[target_boundary_idx]) if len(target_boundary_idx) else None
+    # nothing to restrict against - every source vertex just searches the
+    # whole target, exactly like before this function had any boundary
+    # handling at all.
+    if tree_boundary is None:
+        is_source_boundary[:] = False
 
     for step, alpha in enumerate(alphas):
         for _ in range(inner_iters):
             transformed = D @ X
-            dist, idx = tree.query(transformed)
-            matches = target.vertices[idx]
+
+            dist = np.empty(n)
+            idx = np.empty(n, dtype=np.int64)
+            if is_source_boundary.any():
+                d_b, i_b = tree_boundary.query(transformed[is_source_boundary])
+                dist[is_source_boundary] = d_b
+                idx[is_source_boundary] = target_boundary_idx[i_b]
+            if (~is_source_boundary).any():
+                d_i, i_i = tree.query(transformed[~is_source_boundary])
+                dist[~is_source_boundary] = d_i
+                idx[~is_source_boundary] = i_i
+            matches = target_v[idx]
 
             w = (dist <= dist_threshold).astype(np.float64)
             W = sparse.diags(w)

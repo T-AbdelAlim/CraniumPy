@@ -10,13 +10,30 @@ the target's shape, and it never changes the source's own topology).
 import numpy as np
 import trimesh
 
-from craniumpy_core.registration.nicp import nicp, register_template
+from craniumpy_core.registration.nicp import _boundary_vertex_indices, nicp, register_template
 
 FAST_ALPHAS = np.linspace(50, 1, 5)
 
 
 def _sphere(radius: float = 50.0, subdivisions: int = 2) -> trimesh.Trimesh:
     return trimesh.creation.icosphere(subdivisions=subdivisions, radius=radius)
+
+
+def _grid_mesh(n: int = 5, spacing: float = 10.0, z: float = 0.0) -> trimesh.Trimesh:
+    """a flat n x n triangulated grid, open on all four sides - like a
+    cranial/facial clip's own open boundary, just simple enough to reason
+    about exactly which vertices are on the rim and which aren't."""
+    xs = np.arange(n) * spacing
+    ys = np.arange(n) * spacing
+    xx, yy = np.meshgrid(xs, ys)
+    verts = np.column_stack([xx.ravel(), yy.ravel(), np.full(n * n, z)])
+    faces = []
+    for i in range(n - 1):
+        for j in range(n - 1):
+            a, b, c, d = i * n + j, i * n + j + 1, (i + 1) * n + j, (i + 1) * n + j + 1
+            faces.append([a, b, c])
+            faces.append([b, d, c])
+    return trimesh.Trimesh(vertices=verts, faces=np.array(faces), process=False)
 
 
 def test_nicp_converges_onto_a_scaled_target():
@@ -110,3 +127,45 @@ def test_register_template_passes_progress_and_preview_through():
     assert len(progress_calls) == len(FAST_ALPHAS)
     assert len(preview_calls) == len(FAST_ALPHAS)
     assert preview_calls[-1].shape == source.vertices.shape
+
+
+def test_boundary_vertex_indices_finds_exactly_the_grid_rim():
+    n = 5
+    mesh = _grid_mesh(n=n)
+    boundary = set(_boundary_vertex_indices(mesh.faces).tolist())
+
+    expected_interior = {(i * n + j) for i in range(1, n - 1) for j in range(1, n - 1)}
+    expected_boundary = set(range(n * n)) - expected_interior
+
+    assert boundary == expected_boundary
+
+
+def test_boundary_vertex_indices_empty_for_a_closed_mesh():
+    mesh = trimesh.creation.icosphere(subdivisions=1, radius=10.0)
+    assert len(_boundary_vertex_indices(mesh.faces)) == 0
+
+
+def test_nicp_boundary_vertices_match_only_target_boundary_not_a_closer_interior_point():
+    # a naive whole-mesh nearest-point search has no notion of "boundary" -
+    # a source rim vertex can match whatever target point is closest in 3D,
+    # interior or not. proves the fix by rigging the game as hard as
+    # possible: target's own (genuinely interior, still fully surrounded by
+    # faces on every side) center vertex gets relocated to sit exactly on
+    # top of source's corner - distance zero, the closest any point could
+    # ever be. a plain nearest-point search would grab it immediately and
+    # never let go; boundary-restricted search can't reach it at all, since
+    # relocating a vertex doesn't change its topology.
+    n = 5
+    source = _grid_mesh(n=n, spacing=10.0, z=0.0)
+    target = _grid_mesh(n=n, spacing=10.0, z=5.0)
+    center_idx = (n // 2) * n + (n // 2)
+    target.vertices[center_idx] = source.vertices[0].copy()
+
+    deformed = nicp(source, target, alphas=np.array([1.0]), inner_iters=3, dist_threshold=100.0)
+
+    true_corner = target.vertices[0]  # (0, 0, 5) - source corner's real counterpart
+    trap = target.vertices[center_idx]  # (0, 0, 0) - the relocated interior vertex
+
+    dist_to_truth = np.linalg.norm(deformed[0] - true_corner)
+    dist_to_trap = np.linalg.norm(deformed[0] - trap)
+    assert dist_to_truth < dist_to_trap
