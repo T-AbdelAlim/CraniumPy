@@ -104,7 +104,7 @@ def _metopic() -> MetopicResult:
 
 _METADATA_KEYS = (
     "file_name", "file_path", "patient_id", "diagnosis", "sex", "date_imaging", "age_imaging",
-    "treatment", "age_surgery_months", "free_variable",
+    "image_timing", "treatment", "age_surgery_months", "free_variable",
 )
 _SETTINGS_KEYS = ("com_correction", "nicp_used", "nicp_template")
 
@@ -160,6 +160,21 @@ def test_metrics_row_settings_reflect_com_and_nicp_off():
     assert row["com_correction"] == "no"
     assert row["nicp_used"] == "no"
     assert row["nicp_template"] == ""
+    # defaults blank when the caller has no real dest_dir to resolve a
+    # written mesh path against (e.g. the browser/session-summary path -
+    # see results_bundle._build_analysis_files, which never passes this)
+    assert row["nicp_mesh_path"] == ""
+
+
+def test_metrics_row_nicp_mesh_path_passed_through_verbatim():
+    # the two desktop writers that DO know a real dest_dir resolve this
+    # themselves (see results_bundle._nicp_mesh_path) and hand it in - this
+    # just confirms _metrics_row doesn't touch/reformat it.
+    row = _metrics_row(
+        "cranium", {}, _config(nicp={"template": "cranium_com"}), None, None, None, None,
+        nicp_mesh_path="/data/results/patient_rg_CN.ply",
+    )
+    assert row["nicp_mesh_path"] == "/data/results/patient_rg_CN.ply"
 
 
 def test_metrics_row_settings_reflect_com_and_nicp_on_with_shipped_template():

@@ -11,6 +11,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from api.routers.cohort import router as cohort_router
 from api.routers.mesh import router as mesh_router
 from api.routers.mesh import templates_router
 
@@ -40,5 +41,6 @@ def health() -> dict[str, str]:
 
 app.include_router(mesh_router)
 app.include_router(templates_router)
+app.include_router(cohort_router)
 
 app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
