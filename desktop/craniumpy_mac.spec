@@ -21,6 +21,11 @@ datas = [
     # spec runs, or Analysis() fails fast here with the dist dir missing.
     (str(REPO_ROOT / "frontend" / "dist"), "frontend"),
     (str(REPO_ROOT / "src" / "craniumpy_core" / "templates"), "craniumpy_core/templates"),
+    # the shipped synthetic demo cohort (xlsx + its NICP-fitted meshes) -
+    # see craniumpy_core.cohort's DEMO_COHORT_DIR, which resolves to
+    # sys._MEIPASS/craniumpy_core/demo_cohort in a frozen exe, same
+    # frozen-vs-source split templates/ above already needs.
+    (str(REPO_ROOT / "src" / "craniumpy_core" / "demo_cohort"), "craniumpy_core/demo_cohort"),
 ]
 
 # same reasoning as the windows spec - uvicorn/pymeshfix resolve some of
