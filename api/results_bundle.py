@@ -37,6 +37,7 @@ from shapely.geometry import MultiPoint
 
 from craniumpy_core.craniometrics import CranioMeasurements, FrontalBossingResult, hc_slice_polygon
 from craniumpy_core.asymmetry import AsymmetryResult
+from craniumpy_core.cohort import GroupMeasurements, SagittalMidlineBand, SpreadBand
 from craniumpy_core.metopic import MetopicResult
 
 
@@ -98,12 +99,30 @@ def _rect_text(fig: Figure, rect, x: float, y: float, text: str, **kwargs) -> No
     fig.text(rl + x * rw, rb + y * rh, text, **kwargs)
 
 
-def _draw_measurements(fig: Figure, rect, mesh: trimesh.Trimesh, measurements: CranioMeasurements) -> None:
+def _draw_measurements(
+    fig: Figure, rect, mesh: trimesh.Trimesh, measurements: CranioMeasurements, spread_band: SpreadBand | None = None
+) -> None:
     """top-down outline of the HC slice, red line style like the old app
-    used to draw, with OFD/BPD spans marked on it too."""
+    used to draw, with OFD/BPD spans marked on it too.
+
+    spread_band (optional - a craniumpy_core.cohort.SpreadBand, see
+    cohort.hc_ring_band) shades a +/-1 SD ring around the HC slice - how
+    much the ring itself varies patient-to-patient, across the cohort
+    group this figure's own mesh is the MEAN shape of. only meaningful
+    (and only ever passed) for a cohort mean-shape report, where
+    `measurements` itself describes the mean rather than a real patient -
+    a real patient has no "spread" of their own to show."""
     polygon = hc_slice_polygon(mesh, measurements.slice_height)
 
     ax = fig.add_axes(_sub(rect, 0.12, 0.20, 0.82, 0.72))
+
+    if spread_band is not None:
+        outer_x, outer_z = spread_band.outer[:, 0], spread_band.outer[:, 2]
+        inner_x, inner_z = spread_band.inner[:, 0], spread_band.inner[:, 2]
+        ax.fill(
+            np.concatenate([outer_x, inner_x[::-1]]), np.concatenate([outer_z, inner_z[::-1]]),
+            color="#d1453d", alpha=0.15, linewidth=0, label="+/-1 SD across group",
+        )
 
     if polygon is not None and len(polygon) > 2:
         closed = np.vstack([polygon, polygon[0]])
@@ -247,12 +266,17 @@ def _asymmetry_figure(mesh: trimesh.Trimesh, asymmetry: AsymmetryResult, *, labe
     return buf.getvalue()
 
 
-def _draw_metopic(fig: Figure, rect, metopic: MetopicResult) -> None:
+def _draw_metopic(fig: Figure, rect, metopic: MetopicResult, spread_band: SpreadBand | None = None) -> None:
     """the forehead contour at the HC slice height, plus the fitted parabola,
     frontal-angle construction, central/temporal regions, and the phi(s)/
     kappa(s)/d_P(s) profiles - see craniumpy_core.metopic for what each of
     these actually is. main panel uses this module's own (x, z) convention,
-    same as _measurement_figure above (x = left-right, z = depth)."""
+    same as _measurement_figure above (x = left-right, z = depth).
+
+    spread_band (optional - a craniumpy_core.cohort.SpreadBand, see
+    cohort.metopic_band) shades a +/-1 SD band around the forehead contour
+    - same "only meaningful for a cohort mean-shape report" reasoning as
+    _draw_measurements' own spread_band param."""
     contour = metopic.contour
     x, z = contour[:, 0], contour[:, 1]
     u = metopic.normalized_arc_length
@@ -280,6 +304,12 @@ def _draw_metopic(fig: Figure, rect, metopic: MetopicResult) -> None:
 
     x_fit = np.linspace(x.min(), x.max(), 200)
     z_fit = metopic.parabola_a * x_fit**2 + metopic.parabola_c
+
+    if spread_band is not None:
+        ax_main.fill_between(
+            spread_band.mean[:, 0], spread_band.inner[:, 2], spread_band.outer[:, 2],
+            color="#3a3a3a", alpha=0.15, linewidth=0, label="+/-1 SD across group",
+        )
 
     ax_main.plot(x, z, color="#3a3a3a", linewidth=1.5, label="forehead contour")
     ax_main.plot(x_fit, z_fit, color="#2563eb", linewidth=1.5, linestyle="--", label="ideal (parabola)")
@@ -401,7 +431,9 @@ def _metopic_figure(metopic: MetopicResult) -> bytes:
     return buf.getvalue()
 
 
-def _draw_frontal_bossing(fig: Figure, rect, result: FrontalBossingResult) -> None:
+def _draw_frontal_bossing(
+    fig: Figure, rect, result: FrontalBossingResult, sagittal_band: SagittalMidlineBand | None = None
+) -> None:
     """side-profile view of the sagittal contour through sellion (z=depth
     on the x-axis, y=height on the y-axis, matching how a side-view photo
     reads) with the angle construction that produced angle_deg - shared by
@@ -411,12 +443,26 @@ def _draw_frontal_bossing(fig: Figure, rect, result: FrontalBossingResult) -> No
     the horizontal reference is drawn along result.horizontal rather than
     along +z: for a display frame reached via a secondary frontal landmark
     those are two different directions, and the angle was measured against
-    the former (see craniumpy_core.pipeline.measure_cranial)."""
+    the former (see craniumpy_core.pipeline.measure_cranial).
+
+    sagittal_band (optional - a craniumpy_core.cohort.SagittalMidlineBand)
+    adds a shaded +/-1 SD ribbon around the profile - how much this same
+    sagittal depth varies patient-to-patient at each height, across the
+    cohort group this figure's own mesh is the MEAN shape of. only
+    meaningful (and only ever passed) for a cohort mean-shape report, where
+    `result` itself describes the mean rather than a real patient - a real
+    patient has no "spread" of their own to show."""
     profile = result.profile
     z, y = profile[:, 2], profile[:, 1]
     sellion, frontal = result.sellion, result.frontal_point
 
     ax = fig.add_axes(_sub(rect, 0.14, 0.19, 0.80, 0.74))
+
+    if sagittal_band is not None:
+        ax.fill_betweenx(
+            sagittal_band.y, sagittal_band.mean_z - sagittal_band.sd_z, sagittal_band.mean_z + sagittal_band.sd_z,
+            color="#3a3a3a", alpha=0.18, linewidth=0, label="+/-1 SD across group",
+        )
 
     ax.plot(z, y, color="#3a3a3a", linewidth=1.5, label="sagittal profile")
     ax.axhline(
@@ -511,6 +557,25 @@ def _nicp_template_name(nicp: dict | None) -> str:
     return ""
 
 
+def _nicp_mesh_path(results_dir: Path, original_filename: str, target: str, nicp_mesh: trimesh.Trimesh | None) -> str:
+    """the absolute path of the NICP-fitted mesh this save actually wrote
+    (or previously wrote, if this call skipped re-writing meshes - see
+    write_analysis_to_folder's include_meshes) - "" if no fit ran, or if
+    one did but the file genuinely isn't on disk (meshes were never saved
+    at all, e.g. the "meshes" export checkbox was off on a session's very
+    first export). filename pattern must match _build_mesh_files' own
+    f"{stem}_rg_{target_suffix}N.ply" exactly, since that's what actually
+    wrote it - checked against the real filesystem rather than assumed, so
+    a cohort spreadsheet never ends up pointing at a file that isn't
+    there."""
+    if nicp_mesh is None:
+        return ""
+    stem = stem_from_filename(original_filename)
+    target_suffix = "C" if target == "cranium" else "F"
+    path = results_dir / f"{stem}_rg_{target_suffix}N.ply"
+    return str(path.resolve()) if path.is_file() else ""
+
+
 def _metrics_row(
     target: str,
     metadata: dict[str, str],
@@ -519,6 +584,7 @@ def _metrics_row(
     asymmetry: AsymmetryResult | None,
     metopic: MetopicResult | None,
     frontal_bossing: FrontalBossingResult | None,
+    nicp_mesh_path: str = "",
 ) -> dict[str, str]:
     """one flat {column: value} row - the shared source for the per-session
     summary spreadsheet, a cohort spreadsheet's accumulated rows (see
@@ -532,7 +598,17 @@ def _metrics_row(
     config is whatever settings dict the JSON report's own "settings" block
     got (see _build_analysis_files) - com_correction/nicp_used/nicp_template
     below are pulled from the exact same source, so the spreadsheet and the
-    JSON report can never disagree about what actually ran."""
+    JSON report can never disagree about what actually ran.
+
+    nicp_mesh_path is the absolute path the NICP-fitted mesh (the third
+    "_rg_{C|F}N.ply" file - see _build_mesh_files) actually got written to,
+    when NICP ran and this row was built by one of the two writers that
+    know a real dest_dir (write_analysis_to_folder/write_results_to_folder)
+    - blank otherwise, same "still a column, just empty" convention as
+    every other field here. this is the join key the cohort workspace uses
+    to find same-template patients' meshes for a mean-shape computation -
+    without it, a cohort spreadsheet has no way to locate the meshes behind
+    its own rows at all."""
     nicp = config.get("nicp")
     row = {
         "file_name": metadata.get("file_name", ""),
@@ -542,6 +618,7 @@ def _metrics_row(
         "sex": metadata.get("sex", ""),
         "date_imaging": metadata.get("date_imaging", ""),
         "age_imaging": metadata.get("age_imaging", ""),
+        "image_timing": metadata.get("image_timing", ""),
         "treatment": metadata.get("treatment", ""),
         "age_surgery_months": metadata.get("age_surgery_months", ""),
         "free_variable": metadata.get("free_variable", ""),
@@ -549,6 +626,7 @@ def _metrics_row(
         "com_correction": "yes" if config.get("com_translation") else "no",
         "nicp_used": "yes" if nicp else "no",
         "nicp_template": _nicp_template_name(nicp),
+        "nicp_mesh_path": nicp_mesh_path,
         "depth_mm": _fmt(craniometrics.depth_mm if craniometrics else None),
         "breadth_mm": _fmt(craniometrics.breadth_mm if craniometrics else None),
         "cephalic_index": _fmt(craniometrics.cephalic_index if craniometrics else None),
@@ -914,6 +992,7 @@ def _report_pdf(
             ("Diagnosis", metadata.get("diagnosis", "")),
             ("Imaging date", metadata.get("date_imaging", "")),
             ("Age at imaging (months)", metadata.get("age_imaging", "")),
+            ("Image timing", metadata.get("image_timing", "")),
             ("Sex", metadata.get("sex", "")),
             ("Treatment", metadata.get("treatment", "")),
             ("Age at surgery (months)", metadata.get("age_surgery_months", "")),
@@ -954,6 +1033,142 @@ def _report_pdf(
                 for line in _wrap(METRIC_EXPLAINERS.get(key, ""), width=105):
                     text_y = _draw_line(page, text_y, line, fontsize=8, color="#555555")
                 text_y -= _pt_to_frac(BLOCK_GAP_PT)
+            pdf.savefig(page)
+
+    return buf.getvalue()
+
+
+def mean_shape_report_pdf(
+    mesh: trimesh.Trimesh,
+    target: str,
+    group_label: str,
+    source_count: int,
+    measurements: GroupMeasurements,
+    sagittal_band: SagittalMidlineBand | None = None,
+    hc_ring_band: SpreadBand | None = None,
+    metopic_band: SpreadBand | None = None,
+) -> bytes:
+    """same multi-page layout as _report_pdf (a title page, then one page
+    per metric group that actually applies) - built for a cohort MEAN
+    shape (see craniumpy_core.cohort.measure_mean_shape) instead of one
+    patient. measurements carries the exact same CranioMeasurements/
+    AsymmetryResult/MetopicResult/FrontalBossingResult dataclasses a real
+    patient's own report is drawn from, so every _draw_* figure function
+    below applies to a mean shape completely unchanged - the only real
+    difference from _report_pdf is the title page (a group description
+    instead of one patient's metadata) and the three optional spread bands.
+
+    group_label is free text describing what this group actually is (e.g.
+    "trigonocephaly, pre-op, surgical" - the same kind of string the
+    frontend's naming.js builds for the mesh-download filename), since
+    there's no single patient/file name to put in its place.
+
+    sagittal_band/hc_ring_band/metopic_band (optional - see
+    craniumpy_core.cohort's sagittal_midline_band/hc_ring_band/
+    metopic_band), when given, each add a +/-1 SD shaded band to their own
+    page - the frontal_bossing, craniometrics, and metopic pages
+    respectively. every number in this report still describes the group's
+    MEAN shape; these bands are the only real patient-to-patient spread
+    shown, each measured by re-running the relevant piece of the single-
+    patient measurement pipeline (a slice search, a forehead contour...)
+    against every individual mesh in the group, not derived from the mean
+    shape's own surface (which has no spread of its own left to show)."""
+    row = _metrics_row(
+        target, {}, {"com_translation": True, "nicp": None},
+        measurements.craniometrics, measurements.asymmetry, measurements.metopic, measurements.frontal_bossing,
+    )
+
+    is_cranial_asymmetry = measurements.asymmetry is not None and target == "cranium"
+    asymmetry_view = "top" if is_cranial_asymmetry else "frontal"
+    asymmetry_label = "cranial" if is_cranial_asymmetry else "facial"
+    asymmetry_group = "cranial_asymmetry" if is_cranial_asymmetry else "asymmetry"
+    asymmetry_sagittal_group = "cranial_asymmetry_sagittal" if is_cranial_asymmetry else "asymmetry_sagittal"
+
+    draw_figure: dict[str, Callable[[Figure, tuple[float, float, float, float]], None]] = {}
+    if measurements.craniometrics is not None:
+        draw_figure["craniometrics"] = lambda fig, rect: _draw_measurements(
+            fig, rect, mesh, measurements.craniometrics, spread_band=hc_ring_band
+        )
+    if measurements.asymmetry is not None:
+        draw_figure[asymmetry_group] = lambda fig, rect: _draw_asymmetry(
+            fig, rect, mesh, measurements.asymmetry, label=asymmetry_label, view=asymmetry_view
+        )
+        draw_figure[asymmetry_sagittal_group] = lambda fig, rect: _draw_asymmetry(
+            fig, rect, mesh, measurements.asymmetry, label=asymmetry_label, view="sagittal"
+        )
+    if measurements.metopic is not None:
+        draw_figure["metopic"] = lambda fig, rect: _draw_metopic(fig, rect, measurements.metopic, spread_band=metopic_band)
+    if measurements.frontal_bossing is not None:
+        draw_figure["frontal_bossing"] = lambda fig, rect: _draw_frontal_bossing(
+            fig, rect, measurements.frontal_bossing, sagittal_band=sagittal_band
+        )
+
+    buf = io.BytesIO()
+    with PdfPages(buf) as pdf:
+        title_page = Figure(figsize=(PAGE_W_IN, PAGE_H_IN))
+        FigureCanvasAgg(title_page)
+        title_page.text(0.5, 0.92, "CranioSuite Cohort Mean Shape Report", ha="center", fontsize=20, weight="bold")
+        title_page.text(
+            0.5, 0.885,
+            f"{'Cranial' if target == 'cranium' else 'Facial'} mean shape - {group_label}",
+            ha="center", fontsize=11, color="#666666",
+        )
+
+        info_lines = [
+            ("Group", group_label),
+            ("Target", "Cranium" if target == "cranium" else "Face"),
+            ("Patients averaged", str(source_count)),
+        ]
+        y = 0.80
+        for label, value in info_lines:
+            title_page.text(TEXT_X, y, f"{label}:", va="top", fontsize=10, weight="bold")
+            for line in _wrap(value or "-", width=54):
+                y = _draw_line(title_page, y, line, fontsize=10, x=LABEL_VALUE_X)
+        y -= _pt_to_frac(BLOCK_GAP_PT)
+        y = _draw_line(
+            title_page, y,
+            "Every number in this report describes the AVERAGE shape of this group, not any single real patient.",
+            fontsize=9, color="#999999",
+        )
+        _draw_line(
+            title_page, y, f"Generated {datetime.now(timezone.utc).strftime('%Y-%m-%d')}", fontsize=8, color="#999999",
+        )
+        pdf.savefig(title_page)
+
+        for group, fields in _PDF_METRIC_FIELDS.items():
+            draw = draw_figure.get(group)
+            if draw is None:
+                continue
+
+            page = Figure(figsize=(PAGE_W_IN, PAGE_H_IN))
+            FigureCanvasAgg(page)
+            draw(page, (0.04, 0.46, 0.92, 0.50))
+
+            text_y = 0.42
+            for key, label, unit in fields:
+                value = row.get(key, "")
+                if not value:
+                    continue
+                display = f"{value} {unit}".strip()
+                text_y = _draw_line(page, text_y, f"{label}: {display}", fontsize=10, weight="bold")
+                for line in _wrap(METRIC_EXPLAINERS.get(key, ""), width=105):
+                    text_y = _draw_line(page, text_y, line, fontsize=8, color="#555555")
+                text_y -= _pt_to_frac(BLOCK_GAP_PT)
+            if group == "frontal_bossing" and sagittal_band is not None:
+                _draw_line(
+                    page, text_y, "Shaded band on the figure above: +/-1 SD sagittal depth across the group.",
+                    fontsize=8, color="#555555",
+                )
+            if group == "craniometrics" and hc_ring_band is not None:
+                _draw_line(
+                    page, text_y, "Shaded ring on the figure above: +/-1 SD head-circumference radius across the group.",
+                    fontsize=8, color="#555555",
+                )
+            if group == "metopic" and metopic_band is not None:
+                _draw_line(
+                    page, text_y, "Shaded band on the figure above: +/-1 SD forehead depth across the group.",
+                    fontsize=8, color="#555555",
+                )
             pdf.savefig(page)
 
     return buf.getvalue()
@@ -1281,7 +1496,10 @@ def write_analysis_to_folder(
     for name, content in files.items():
         (analysis_dir / name).write_bytes(content)
     if cohort_xlsx_path is not None:
-        row = _metrics_row(target, metadata or {}, config, craniometrics, asymmetry, metopic, frontal_bossing)
+        row = _metrics_row(
+            target, metadata or {}, config, craniometrics, asymmetry, metopic, frontal_bossing,
+            nicp_mesh_path=_nicp_mesh_path(results_dir, original_filename, target, nicp_mesh),
+        )
         _upsert_cohort_xlsx(cohort_xlsx_path, row)
     return analysis_dir
 
@@ -1350,6 +1568,9 @@ def write_results_to_folder(
     for name, content in {**mesh_files, **analysis_files}.items():
         (results_dir / name).write_bytes(content)
     if cohort_xlsx_path is not None:
-        row = _metrics_row(target, metadata or {}, config, craniometrics, asymmetry, metopic, frontal_bossing)
+        row = _metrics_row(
+            target, metadata or {}, config, craniometrics, asymmetry, metopic, frontal_bossing,
+            nicp_mesh_path=_nicp_mesh_path(results_dir, original_filename, target, nicp_mesh),
+        )
         _upsert_cohort_xlsx(cohort_xlsx_path, row)
     return results_dir

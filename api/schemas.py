@@ -180,6 +180,13 @@ class PatientMetadata(BaseModel):
     sex: str = ""
     date_imaging: str = ""
     age_imaging: str = ""
+    # "pre-op" or "post_op_{n}", n a free-text follow-up marker the user
+    # fills in themselves (e.g. "6w", "6mo", "1y") - see
+    # PatientMetadataForm.jsx's timing selector, which builds this single
+    # string from a type dropdown + the free-text value rather than
+    # splitting it into two columns, so a cohort spreadsheet can stratify
+    # on one column instead of two.
+    image_timing: str = ""
     treatment: str = ""
     age_surgery_months: str = ""
     free_variable: str = ""
@@ -354,3 +361,193 @@ class ResultsResponse(BaseModel):
     # True when an alt_frontal_landmark was given and the shown/saved mesh
     # is in that frame instead of the sellion one - see AnalyzeRequest
     used_alt_frontal: bool = False
+
+
+# --- cohort / batch-analysis workspace -------------------------------
+
+
+class CohortLoadRequest(BaseModel):
+    """desktop: load a cohort spreadsheet straight from a real local path
+    (the native file picker's own result - see frontend/src/lib/desktop.js's
+    pickExcelFileNative). same "trust a local path, browser and server are
+    always the same machine" reasoning api/routers/mesh.py's
+    get_custom_template_mesh already relies on."""
+
+    path: str
+
+
+class CohortDataResponse(BaseModel):
+    """a loaded cohort spreadsheet, as columns + row dicts - every cell a
+    plain string (see craniumpy_core.cohort.load_cohort_xlsx for why:
+    per-column numeric parsing is the cohort workspace's own job, not
+    something baked into the load step)."""
+
+    columns: list[str]
+    rows: list[dict[str, str]]
+
+
+class CohortStatsTestRequest(BaseModel):
+    """values is {group label: that group's numeric values for one metric} -
+    the cohort workspace does its own filtering/grouping/type-parsing
+    client-side (fast, interactive) and only sends the backend the final
+    numbers to run a real inferential test against."""
+
+    values: dict[str, list[float]]
+
+
+class CohortStatsTestResponse(BaseModel):
+    """both a parametric and a rank-based (nonparametric) test result
+    together, rather than the backend silently picking one - see
+    api/routers/cohort.py's _run_stats_test for which pair runs for 2 vs
+    3+ groups."""
+
+    n_groups: int
+    group_sizes: dict[str, int]
+    test_name: str
+    statistic: float
+    p_value: float
+    alternative_test_name: str
+    alternative_statistic: float
+    alternative_p_value: float
+
+
+class CohortMeanShapeRequest(BaseModel):
+    """mesh_paths must all be NICP-fitted to the identical template - see
+    craniumpy_core.cohort.mean_shape for what happens (a clear 400, not a
+    silently-wrong average) if they aren't."""
+
+    mesh_paths: list[str] = Field(min_length=1)
+
+
+class CohortMeanShapeResponse(BaseModel):
+    """result_id is a short-lived handle - fetch the mesh itself via
+    GET /api/cohort/mean-shape/{result_id}/mesh right after this returns,
+    see api/routers/cohort.py's cache."""
+
+    result_id: str
+    vertex_count: int
+    source_count: int
+    # per-vertex mean distance from that vertex's own mean position (mm),
+    # same length/order as the served mesh's own vertices - directly usable
+    # with the viewer's existing showHeatmap overlay.
+    heatmap: list[float]
+
+
+class CohortReferenceDiffResponse(BaseModel):
+    """signed per-vertex displacement (mm) of an already-computed mean
+    shape (see CohortMeanShapeResponse.result_id) from a shipped reference
+    template - positive where the mean shape sits outward of the
+    reference, negative inward. see craniumpy_core.cohort.reference_diff."""
+
+    heatmap: list[float]
+
+
+class CohortMeanShapeMeasurementsResponse(BaseModel):
+    """the same measurement suite the Patients workspace's Analysis tab
+    shows (see ResultsResponse), run directly on an already-computed mean
+    shape - see craniumpy_core.cohort.measure_mean_shape for how that's
+    possible with no per-group landmark tracking. reuses the exact same
+    per-metric response models as ResultsResponse, so the frontend's
+    existing measurement-table/overlay code needs no separate shape for
+    this. asymmetry is never None (calculate_asymmetry needs no
+    landmarks); craniometrics is set only for a cranium-target group,
+    metopic only for a face-target one - mirrors ResultsResponse's own
+    "blank when it doesn't apply to this target" convention."""
+
+    craniometrics: CraniometricsResponse | None = None
+    asymmetry: AsymmetryResponse
+    metopic: MetopicResponse | None = None
+    frontal_bossing: FrontalBossingResponse | None = None
+
+
+class CohortSagittalBandRequest(BaseModel):
+    """mesh_paths must all be NICP-fitted to the identical template, same
+    as CohortMeanShapeRequest - this is computed independently of any
+    cached /mean-shape result (it needs each individual mesh, not just the
+    average), so it takes the same mesh_paths list the /mean-shape call
+    for this group already used, rather than a result_id."""
+
+    mesh_paths: list[str] = Field(min_length=1)
+    target: str
+
+
+class CohortSagittalBandResponse(BaseModel):
+    """mean +/- SD of the sagittal (midline) forehead-to-vertex depth
+    profile across the group - see
+    craniumpy_core.cohort.sagittal_midline_band. y is a common height grid
+    (mm, ascending); mean_z/sd_z are the same length as y. this is the
+    shape the Mean shape tab's 2D profile chart needs (plain numbers, not
+    3D points) - see CohortSpreadBandResponse for the 3D-ribbon version of
+    the same data, used by the live viewer overlay and the PDF report."""
+
+    y: list[float]
+    mean_z: list[float]
+    sd_z: list[float]
+    source_count: int
+
+
+class CohortSpreadBandResponse(BaseModel):
+    """a +/-1 SD ribbon around some mean curve on the mean shape's own
+    surface, as real 3D points - see craniumpy_core.cohort.SpreadBand
+    (the same shape hc_ring_band/metopic_band/sagittal_band_to_spread_band
+    all return). mean/inner/outer are the same length, in order (point i
+    of each corresponds to the same position along the curve) - the
+    frontend's 3D viewer overlay builds a ribbon mesh directly from
+    inner/outer (see three/spreadBandOverlay.js), closed says whether to
+    connect the last point back to the first (True for the HC ring, False
+    for the sagittal/metopic arcs)."""
+
+    mean: list[LandmarkPoint]
+    inner: list[LandmarkPoint]
+    outer: list[LandmarkPoint]
+    closed: bool
+    source_count: int
+
+
+class CohortReportRequest(BaseModel):
+    """generates a PDF report for a cohort mean shape - see
+    api/results_bundle.py's mean_shape_report_pdf. mesh_paths/target are
+    the same group the /mean-shape call for this group already used.
+    group_label is free text describing the group (e.g. "trigonocephaly,
+    pre-op, surgical" - built client-side from the active filters, same as
+    the mesh-download filename - see frontend/src/workspaces/cohort/lib/
+    naming.js), shown on the report's own title page since there's no
+    single patient/file name to put there instead. include_spread_bands
+    toggles the real patient-to-patient spread visualizations the report
+    can show - the sagittal/frontal-bossing band always, plus the HC-ring
+    band (cranium target) or the metopic band (face target), whichever
+    applies - optional since each one costs a real (if fast) extra
+    measurement pass over every mesh in the group, on top of what the
+    report needs anyway."""
+
+    mesh_paths: list[str] = Field(min_length=1)
+    target: str
+    group_label: str = "cohort"
+    include_spread_bands: bool = True
+
+
+class CohortExportSheet(BaseModel):
+    """one worksheet of a cohort Excel export - title becomes the sheet
+    name (sanitized/deduplicated - see api/routers/cohort.py's
+    _sheet_name), columns/rows are already exactly what should appear,
+    in order - the cohort workspace does its own sorting/filtering/
+    formula evaluation client-side (see workspaces/cohort/lib/stats.js),
+    so this is just "write these cells nicely", not a second copy of that
+    logic."""
+
+    title: str
+    columns: list[str]
+    rows: list[dict[str, str]]
+
+
+class CohortExportRequest(BaseModel):
+    """a formatted Excel workbook - one or more sheets (the Table tab
+    exports one sheet of the current data; the Stratify tab exports a
+    descriptive-stats sheet plus a test-result sheet when a test has been
+    run) - see api/routers/cohort.py's _build_export_xlsx for the actual
+    formatting (colored header, banded rows, frozen header, autosized/
+    auto-numeric columns, same visual style as every other spreadsheet
+    this app produces)."""
+
+    sheets: list[CohortExportSheet] = Field(min_length=1)
+    filename: str = "cohort_export.xlsx"
