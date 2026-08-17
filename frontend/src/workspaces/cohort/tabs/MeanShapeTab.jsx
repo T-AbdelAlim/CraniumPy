@@ -6,7 +6,6 @@ import { heatmapMax, heatmapMaxAbs } from "../../../three/measurementsLayer.js";
 import InfoTooltip from "../../../components/InfoTooltip.jsx";
 import { MEASUREMENT_EXPLAINERS } from "../../../lib/measurementExplainers.js";
 import { buildGroupLabel, buildMeanShapeFilename } from "../lib/naming.js";
-import SagittalBandChart from "../charts/SagittalBandChart.jsx";
 
 const MEAN_SHAPE_EXPLAINER =
   "the vertex-by-vertex average shape of every patient in the selected group, each already fit to the same " +
@@ -34,19 +33,10 @@ const MEASUREMENTS_EXPLAINER =
   "sellion/tragus positions are that same fixed frame, with no per-group landmark tracking needed. numbers here " +
   "describe the AVERAGE shape, not any real patient - see the Stratify tab for the group's own scalar spread.";
 
-const SAGITTAL_EXPLAINER =
-  "the sagittal (midline) forehead-to-vertex depth profile, averaged across every patient in this group, with " +
-  "a shaded +/-1 SD band around it - not from this mean shape's own surface, but from re-measuring EACH " +
-  "patient's own mesh individually and averaging those (the mean shape's own surface is already an average, so " +
-  "it has no spread of its own to show). the solid line is how far out the surface bulges at each height on " +
-  "average; the band is how much that varies patient to patient - a wide band at a given height means this " +
-  "group disagrees a lot right there, a narrow one means they're consistent.";
-
 const SPREAD_BAND_OVERLAY_EXPLAINER =
   "shows the same +/-1 SD ribbon(s) the PDF report can shade, live on the mesh here: the sagittal/frontal-bossing " +
   "band always (orange), plus the HC-ring band (red, cranium groups) or the metopic band (dark gray, face groups) " +
-  "- same underlying data as the sagittal profile tab and the report, just rendered as a real 3D ribbon instead " +
-  "of a 2D chart or a page in a PDF.";
+  "- same underlying data as the report, just rendered as a real 3D ribbon instead of a page in a PDF.";
 
 // colors for the live 3D spread-band ribbons, matching the shading colors
 // the PDF report already uses for the same bands (see results_bundle.py's
@@ -99,8 +89,10 @@ export default function MeanShapeTab({ rows, filters }) {
   const [measurements, setMeasurements] = useState(null); // {craniometrics, asymmetry, metopic, frontal_bossing}
   const [measurementsView, setMeasurementsView] = useState("primary"); // "primary" | "asymmetry"
   const [measurementsStatus, setMeasurementsStatus] = useState("");
-  const [sagittalBand, setSagittalBand] = useState(null); // {y, mean_z, sd_z, source_count}
-  const [sagittalStatus, setSagittalStatus] = useState("");
+  // {y, mean_z, sd_z, source_count} - fetched lazily by refreshSpreadBands
+  // below (the "show +/-1 SD spread ribbon on mesh" checkbox), the only
+  // remaining consumer of this data on this tab.
+  const [sagittalBand, setSagittalBand] = useState(null);
   // live 3D spread-band ribbons in "measurements" mode - only enabled while
   // measurementsView is "primary" (see the checkbox render below), cached
   // per band the same way referenceHeatmaps/sagittalBand already are so
@@ -193,7 +185,6 @@ export default function MeanShapeTab({ rows, filters }) {
     setMeasurements(null);
     setMeasurementsView("primary");
     setSagittalBand(null);
-    setSagittalStatus("");
     setShowSpreadBandsOverlay(false);
     setHcRingBand(null);
     setMetopicBandData(null);
@@ -229,6 +220,15 @@ export default function MeanShapeTab({ rows, filters }) {
     clearOverlays();
     setViewMode("spread");
     viewerRef.current?.showSequentialHeatmap(result.spreadHeatmap);
+    // showSequentialHeatmap always dims the mesh to
+    // ANALYSIS_DEFAULT_MESH_OPACITY as a side effect (see Viewer.jsx) - that
+    // makes sense for the single-patient Analysis workspace, where a
+    // measurement/frontal-bossing construction is drawn on top and needs to
+    // stay visible through the surface, but this is a plain heatmap with
+    // nothing else overlaid, so there's nothing to dim FOR - put it back to
+    // fully opaque, same as the very first time this view shows (right
+    // after handleCompute).
+    viewerRef.current?.setMeshOpacity(1.0);
   }
 
   async function showReferenceDiff(templateName) {
@@ -238,6 +238,7 @@ export default function MeanShapeTab({ rows, filters }) {
     const cached = referenceHeatmaps[templateName];
     if (cached) {
       viewerRef.current?.showHeatmap(cached);
+      viewerRef.current?.setMeshOpacity(1.0); // see showSpread's own comment
       return;
     }
     setReferenceStatus("computing reference diff...");
@@ -245,6 +246,7 @@ export default function MeanShapeTab({ rows, filters }) {
       const { heatmap } = await computeReferenceDiff(result.resultId, templateName);
       setReferenceHeatmaps((prev) => ({ ...prev, [templateName]: heatmap }));
       viewerRef.current?.showHeatmap(heatmap);
+      viewerRef.current?.setMeshOpacity(1.0); // see showSpread's own comment
       setReferenceStatus("");
     } catch (err) {
       setReferenceStatus(`failed: ${err.message}`);
@@ -302,22 +304,6 @@ export default function MeanShapeTab({ rows, filters }) {
     setMeasurementsView(view);
     if (measurements) applyMeasurementsOverlay(measurements, view);
     if (view !== "asymmetry" && showSpreadBandsOverlay) refreshSpreadBands(true);
-  }
-
-  async function showSagittalBand() {
-    clearOverlays();
-    viewerRef.current?.hideHeatmap();
-    setViewMode("sagittal");
-    if (sagittalBand) return;
-    setSagittalStatus("computing sagittal profile...");
-    try {
-      const meshPaths = eligibleRows.map((row) => row.nicp_mesh_path);
-      const data = await computeSagittalBand(meshPaths, result.target);
-      setSagittalBand(data);
-      setSagittalStatus("");
-    } catch (err) {
-      setSagittalStatus(`failed: ${err.message}`);
-    }
   }
 
   async function handleGenerateReport() {
@@ -414,9 +400,6 @@ export default function MeanShapeTab({ rows, filters }) {
             </button>
             <button type="button" className={viewMode === "measurements" ? "active" : ""} onClick={showMeasurements}>
               measurements
-            </button>
-            <button type="button" className={viewMode === "sagittal" ? "active" : ""} onClick={showSagittalBand}>
-              sagittal profile
             </button>
           </div>
           {viewMode === "spread" && (
@@ -550,21 +533,6 @@ export default function MeanShapeTab({ rows, filters }) {
                       </tbody>
                     </table>
                   )}
-                </>
-              )}
-            </>
-          )}
-          {viewMode === "sagittal" && (
-            <>
-              <p className="hint">
-                mean sagittal midline depth, +/-1 SD
-                <InfoTooltip text={SAGITTAL_EXPLAINER} />
-              </p>
-              {sagittalStatus && <p className="status-line">{sagittalStatus}</p>}
-              {sagittalBand && (
-                <>
-                  <p className="hint">{sagittalBand.source_count} patients' own profiles averaged.</p>
-                  <SagittalBandChart y={sagittalBand.y} meanZ={sagittalBand.mean_z} sdZ={sagittalBand.sd_z} />
                 </>
               )}
             </>

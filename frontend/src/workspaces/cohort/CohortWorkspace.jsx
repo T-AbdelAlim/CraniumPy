@@ -122,6 +122,20 @@ export default function CohortWorkspace() {
     }
   }
 
+  // "load a different cohort..." (top right, once a cohort is already
+  // loaded) - back to the starting screen (load a file / load the demo),
+  // not straight into the file picker: the demo cohort is only reachable
+  // from that screen, and jumping straight to a file dialog meant there
+  // was no way back to it (or to just reconsider) without a page reload.
+  function handleGoToStart() {
+    setColumns([]);
+    setRows([]);
+    setDerivedColumns([]);
+    setFilters([]);
+    setActiveTab("overview");
+    setLoadStatus("");
+  }
+
   async function handleLoadDemo() {
     setLoading(true);
     setLoadStatus("loading demo cohort...");
@@ -198,10 +212,9 @@ export default function CohortWorkspace() {
             {t.label}
           </button>
         ))}
-        <button type="button" className="button-subtle cohort-ws-reload-button" onClick={handleLoadFile} disabled={loading}>
+        <button type="button" className="button-subtle cohort-ws-reload-button" onClick={handleGoToStart}>
           load a different cohort...
         </button>
-        <input ref={fileInputRef} type="file" accept=".xlsx" className="hidden" onChange={handleFileInputChange} />
       </div>
       <FilterBar
         rows={rowsWithDerived}

@@ -23,12 +23,15 @@ from shapely.geometry import MultiPoint, Polygon
 
 from api.results_bundle import (
     PAGE_H_IN,
+    PAGE_H_PT,
     PAGE_W_IN,
+    TEXT_BOTTOM_MARGIN_PT,
     _PDF_METRIC_FIELDS,
     _draw_asymmetry,
     _draw_frontal_bossing,
     _draw_measurements,
     _draw_metopic,
+    _draw_metric_fields,
     _id_mapping_path,
     _metrics_row,
     _silhouette_polygon,
@@ -493,6 +496,55 @@ def test_metopic_figure_xlabel_legend_caption_dont_overlap():
         assert tick_bottom >= title_top
 
 
+# --- _draw_metric_fields (PDF metric-group text blocks) -------------------
+
+
+def test_draw_metric_fields_keeps_text_above_the_bottom_margin_even_with_a_long_group():
+    # metopic has more fields (and longer explainers) than any other group -
+    # combined with an extra spread-band caption (see mean_shape_report_pdf),
+    # this is the exact combination that used to run text off the physical
+    # bottom of the page (see TEXT_BOTTOM_MARGIN_PT's own docstring).
+    fields = _PDF_METRIC_FIELDS["metopic"]
+    row = {key: "1.23" for key, _label, _unit in fields}
+    caption = "Shaded band on the figure above: +/-1 SD forehead depth across the group."
+
+    page = Figure(figsize=(PAGE_W_IN, PAGE_H_IN))
+    _draw_metric_fields(page, 0.42, fields, row, extra_captions=[caption])
+
+    canvas = FigureCanvasAgg(page)
+    canvas.draw()
+    renderer = canvas.get_renderer()
+    fig_h = page.bbox.height
+
+    lowest_text_bottom = min(t.get_window_extent(renderer).y0 for t in page.texts)
+    assert lowest_text_bottom / fig_h >= TEXT_BOTTOM_MARGIN_PT / PAGE_H_PT
+
+
+def test_draw_metric_fields_uses_the_normal_explainer_size_for_a_short_group():
+    # a short group (one field, one short explainer) has plenty of room -
+    # the shrink-to-fit math shouldn't touch it at all.
+    fields = _PDF_METRIC_FIELDS["frontal_bossing"]
+    row = {key: "62.5" for key, _label, _unit in fields}
+
+    page = Figure(figsize=(PAGE_W_IN, PAGE_H_IN))
+    _draw_metric_fields(page, 0.42, fields, row)
+
+    explainer_texts = [t for t in page.texts if t.get_fontsize() != 10]
+    assert explainer_texts
+    assert all(t.get_fontsize() == pytest.approx(8.0) for t in explainer_texts)
+
+
+def test_draw_metric_fields_skips_fields_with_no_value():
+    fields = _PDF_METRIC_FIELDS["metopic"]
+    row = {fields[0][0]: "1.23"}  # only the first field has a value
+
+    page = Figure(figsize=(PAGE_W_IN, PAGE_H_IN))
+    _draw_metric_fields(page, 0.42, fields, row)
+
+    bold_lines = [t for t in page.texts if t.get_fontsize() == 10]
+    assert len(bold_lines) == 1
+
+
 # --- asymmetry figure (silhouette + sagittal view) ------------------------
 
 
@@ -556,6 +608,22 @@ def test_draw_asymmetry_sagittal_view_has_no_silhouette_and_only_the_data_half()
     triangulation = ax.collections[0]._triangulation
     used_vertex_indices = np.unique(triangulation.triangles)
     assert np.all(vertices[used_vertex_indices, 0] >= 0)
+
+
+def test_draw_asymmetry_sagittal_view_faces_left():
+    # this view only ever shows the anatomical LEFT half (x >= 0, see the
+    # test above) - the x-axis has to be inverted so higher z (more
+    # anterior/toward the nose) ends up on the LEFT of the plot, or the
+    # profile reads as facing right, which looks like the opposite side of
+    # the face. see _draw_asymmetry's own docstring.
+    mesh, asymmetry = _asymmetry_mesh_and_heatmap()
+
+    page = Figure(figsize=(6, 6))
+    _draw_asymmetry(page, (0, 0, 1, 1), mesh, asymmetry, label="cranial", view="sagittal")
+    ax = page.axes[0]
+
+    xlim = ax.get_xlim()
+    assert xlim[0] > xlim[1]  # inverted axis: higher z is plotted further left
 
 
 def test_pdf_metric_fields_orders_asymmetry_sections_last():

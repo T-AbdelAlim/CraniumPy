@@ -6,6 +6,10 @@ desktop-specific part of this project - everything else is shared with the
 web version.
 """
 
+import json
+import os
+import platform
+import subprocess
 import threading
 
 import uvicorn
@@ -93,6 +97,71 @@ class Api:
         )
         return result[0] if result else None
 
+    def open_folder(self, path: str) -> bool:
+        """the frontend's "go to save folder" button (see
+        components/SaveFolderControl.jsx) - opens `path` in the OS's own
+        file browser (Explorer/Finder/whatever *nix desktop is running).
+        path is always something the backend itself just reported back as
+        a real "saved_to" location (see api/routers/mesh.py's save/export
+        endpoints), never raw user text, so there's no path-injection
+        surface here worth hardening against - the isdir check below is
+        purely to keep the button a harmless no-op if that folder got
+        moved/deleted after the fact, not a security boundary."""
+        if not path or not os.path.isdir(path):
+            return False
+        system = platform.system()
+        if system == "Windows":
+            os.startfile(path)  # noqa: S606
+        elif system == "Darwin":
+            subprocess.Popen(["open", path])
+        else:
+            subprocess.Popen(["xdg-open", path])
+        return True
+
+
+def _register_native_drop(window: webview.Window) -> None:
+    """desktop-only: lets a drag-and-drop onto the viewer (see
+    frontend/src/components/Viewer.jsx's onFilesDropped) resolve the
+    dropped file's REAL filesystem path, the same way "choose file(s)..."
+    already can via pick_file above - a plain browser drop only ever hands
+    the frontend File objects (name/size/bytes), never a real path, same
+    limitation pick_file's own docstring already calls out for a bare
+    <input type=file>.
+
+    pywebview's own DOM drag-and-drop bridge (webview.dom) is what makes
+    this possible: registering a 'drop' listener through it (rather than
+    plain JS) makes pywebview additionally resolve each dropped file
+    against WebView2's own native access to it, attaching the real path as
+    'pywebviewFullPath' on that file's entry before this callback runs (see
+    site-packages/webview/util.py's js_bridge_call and
+    site-packages/webview/js/api.js's edgechromium branch, which is what
+    actually asks WebView2 for the path via postMessageWithAdditionalObjects).
+
+    registered on <body> (once the page has actually loaded - dom access
+    needs real DOM to query against) rather than any specific element,
+    since every drop bubbles up to it regardless of where on the page it
+    lands; this fires ALONGSIDE the frontend's own plain-JS drop handler on
+    the viewer container (both are independent listeners on the same real
+    browser event), not instead of it - that handler already prevents the
+    browser's own default action (navigating to the file) and always
+    completes the upload itself, this only supplies a real path for it to
+    prefer when one resolves in time (see lib/desktop.js's
+    waitForNativeDropPaths, which races this against a short timeout so a
+    plain browser drop, or a drop this couldn't resolve, still uploads
+    normally instead of hanging).
+    """
+
+    def on_drop(event: dict) -> None:
+        files = (event.get("dataTransfer") or {}).get("files") or []
+        paths = {f["name"]: f["pywebviewFullPath"] for f in files if f.get("pywebviewFullPath")}
+        if not paths:
+            return
+        window.evaluate_js(
+            f"window.__cranioSuiteNativeDrop && window.__cranioSuiteNativeDrop({json.dumps(paths)})"
+        )
+
+    window.dom.body.events.drop += on_drop
+
 
 def main() -> None:
     server_thread = threading.Thread(target=_run_server, daemon=True)
@@ -106,6 +175,7 @@ def main() -> None:
     api = Api()
     window = webview.create_window("CranioSuite", f"http://{HOST}:{PORT}", width=1280, height=800, js_api=api)
     api._window = window
+    window.events.loaded += lambda: _register_native_drop(window)
     webview.start()
 
     # webview.start() returns once the window closes, but the server thread

@@ -48,12 +48,17 @@ export default function PreprocessingPanel({
   nicpProgress,
   nicpStatus,
   nicpError,
+  nicpResultReady,
+  useNicpMesh,
+  onUseNicpMeshChange,
   onSaveMeshes,
   savingMeshes,
   saveMeshesStatus,
   saveDestDir,
   onChooseSaveFolder,
   onUseDefaultSaveFolder,
+  savedMeshesFolder,
+  onGoToSaveFolder,
 }) {
   const names = activeLandmarkNames(useAltFrontal);
   const allPicked = names.every((n) => n in landmarks);
@@ -288,6 +293,20 @@ export default function PreprocessingPanel({
               <p className="progress-label">{nicpStatus}</p>
             </>
           )}
+          {nicpResultReady && (
+            <>
+              <label className="checkbox">
+                <input type="checkbox" checked={useNicpMesh} onChange={(e) => onUseNicpMeshChange(e.target.checked)} />
+                continue with the NICP-fitted mesh in the viewer (including Analysis)
+              </label>
+              {useNicpMesh && (
+                <p className="hint">
+                  the Asymmetry heatmap always shows on the original mesh regardless - it's colored per-vertex, which
+                  doesn't carry over to the NICP-fitted mesh's own, different vertex layout.
+                </p>
+              )}
+            </>
+          )}
 
           <button type="button" onClick={onSaveMeshes} disabled={savingMeshes}>
             save meshes
@@ -298,6 +317,8 @@ export default function PreprocessingPanel({
             saveDestDir={saveDestDir}
             onChooseSaveFolder={onChooseSaveFolder}
             onUseDefaultSaveFolder={onUseDefaultSaveFolder}
+            savedLocation={savedMeshesFolder}
+            onGoToSaveFolder={onGoToSaveFolder}
           />
         </>
       )}

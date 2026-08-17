@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { useThreeScene } from "../three/useThreeScene.js";
@@ -38,7 +38,7 @@ const ANALYSIS_DEFAULT_MESH_OPACITY = 0.35;
 // onPick/onDrag are event-shaped callback props - things that *happen* in
 // the viewer, reported outward, same as an onClick. later layers (HC-line,
 // heatmap, template overlay) follow the same split as they're added.
-const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks, landmarkColors, onPick, onDrag }, ref) {
+const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks, landmarkColors, onPick, onDrag, onFilesDropped }, ref) {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
   const sceneBagRef = useThreeScene(canvasRef, containerRef);
@@ -68,7 +68,13 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
   const draggingNameRef = useRef(null);
   const onPickRef = useRef(onPick);
   const onDragRef = useRef(onDrag);
+  const onFilesDroppedRef = useRef(onFilesDropped);
   const wireframeRef = useRef(wireframe);
+  // whether a file is currently being dragged over the canvas - purely a
+  // local visual (dashed border + "drop to load" hint), so it stays out of
+  // App.jsx entirely; only the actual drop result (the file list) bubbles
+  // out, via onFilesDropped.
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
 
   useEffect(() => {
     onPickRef.current = onPick;
@@ -77,6 +83,45 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
   useEffect(() => {
     onDragRef.current = onDrag;
   }, [onDrag]);
+
+  useEffect(() => {
+    onFilesDroppedRef.current = onFilesDropped;
+  }, [onFilesDropped]);
+
+  // drag-and-drop as an alternative to the "choose file(s)..." browse
+  // button (see workspaces/data/UploadPanel.jsx) - only active when the
+  // caller actually wired onFilesDropped (App.jsx only does this on the
+  // Data tab; the cohort workspace's own second Viewer instance, for
+  // showing a computed mean shape, never does - dropping a file there
+  // wouldn't mean anything). event.preventDefault() in dragOver is what
+  // tells the browser this element is a valid drop target at all; without
+  // it, drop never fires and the cursor shows a "not allowed" icon instead.
+  function handleDragEnter(event) {
+    event.preventDefault();
+    if (onFilesDroppedRef.current) setIsDraggingOver(true);
+  }
+
+  function handleDragOver(event) {
+    event.preventDefault();
+  }
+
+  // dragLeave fires on every boundary crossing, including moving from the
+  // container onto the canvas element inside it - only actually clear the
+  // highlight once the pointer has left the container itself (relatedTarget
+  // is where the pointer went; still inside the container means a child
+  // boundary, not a real leave).
+  function handleDragLeave(event) {
+    if (event.currentTarget.contains(event.relatedTarget)) return;
+    setIsDraggingOver(false);
+  }
+
+  function handleDrop(event) {
+    event.preventDefault();
+    setIsDraggingOver(false);
+    if (!onFilesDroppedRef.current) return;
+    const files = Array.from(event.dataTransfer?.files || []);
+    if (files.length > 0) onFilesDroppedRef.current(files);
+  }
 
   // read by hideNicpPreview to restore the patient mesh's wireframe state
   // to whatever the checkbox actually says, rather than assuming it was
@@ -459,8 +504,16 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
   }));
 
   return (
-    <div ref={containerRef} className="viewer-container">
+    <div
+      ref={containerRef}
+      className={isDraggingOver ? "viewer-container viewer-drag-active" : "viewer-container"}
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       <canvas ref={canvasRef} className="viewer-canvas" />
+      {isDraggingOver && <p className="viewer-drop-hint">Drop to load mesh</p>}
     </div>
   );
 });

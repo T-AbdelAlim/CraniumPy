@@ -5,7 +5,23 @@
 // entirely on the backend - see api/schemas.py's SaveRequest.dest_dir).
 // renders nothing in browser mode - there's no real folder a browser tab
 // can write into, so the whole idea of "picking a folder" doesn't apply.
-export default function SaveFolderControl({ isDesktop, saveDestDir, onChooseSaveFolder, onUseDefaultSaveFolder }) {
+//
+// savedLocation is the REAL folder the last save/export actually wrote to
+// (the backend's own "saved_to", see App.jsx's handleSaveMeshes/
+// handleExportAnalysis) - not saveDestDir, which is just the override
+// choice and can drift from where a past save actually landed (e.g. the
+// user picks a different folder AFTER already saving once). "go to save
+// folder" always renders (per its own name, it should always be findable
+// in the same spot) but stays disabled until there's a real location to
+// open - nothing's been saved this session/target yet otherwise.
+export default function SaveFolderControl({
+  isDesktop,
+  saveDestDir,
+  onChooseSaveFolder,
+  onUseDefaultSaveFolder,
+  savedLocation,
+  onGoToSaveFolder,
+}) {
   if (!isDesktop) return null;
   return (
     <>
@@ -20,6 +36,15 @@ export default function SaveFolderControl({ isDesktop, saveDestDir, onChooseSave
           </button>
         )}
       </div>
+      <button
+        type="button"
+        className="button-subtle"
+        onClick={() => onGoToSaveFolder(savedLocation)}
+        disabled={!savedLocation}
+        title={savedLocation ? `Open ${savedLocation}` : "Nothing saved here yet"}
+      >
+        go to save folder
+      </button>
     </>
   );
 }
