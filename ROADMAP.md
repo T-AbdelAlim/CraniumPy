@@ -16,6 +16,8 @@
 * Export selection: checkboxes choose whether measurements, asymmetry, and/or meshes are included in a given export
 * Reporting: a JSON report (every measurement plus a settings block - target, landmark count, center-of-mass correction, NICP template), a vector PDF report (asymmetry section always last) pairing each measurement with a plain-language explanation, and a per-patient Excel summary (real numeric cells, formatted as an Excel table) - filenames tagged `_cranial`/`_frontal` by target
 * Cohort export (desktop-only): accumulates rows across sessions into a shared Excel file, keyed on source file so a re-export updates rather than duplicates; each distinct file gets a sequential cohort ID, with the patient ID <-> cohort ID mapping kept in a separate, local-only file - a first step on "de-identification helper" below
+* Cohort analysis workspace: a second top-level mode for exploring an accumulated cohort spreadsheet - filtering/stratifying, user-defined derived metrics, real statistical tests (Welch's/Mann-Whitney, ANOVA/Kruskal-Wallis, picked by group count) with explainers and doc links, plots, and a formatted Excel export of any comparison
+* 3D mean shape across NICP-fitted patients sharing the same template: an inter-patient spread heatmap, a signed diff heatmap against a reference template, the same craniometrics/asymmetry/forehead-morphology suite run on the averaged shape, a +/-1 SD spread ribbon (HC ring, metopic contour, sagittal profile) shown live in the 3D viewer or shaded into a mean-shape PDF report, and a named mesh export
 * Results saving: local folder (desktop app) or zip download (web app), with a JSON report and 2D measurement/asymmetry/forehead-morphology figures
 * Textured mesh support (.obj + .mtl + texture), with wireframe/texture toggles
 * Cross-platform: web app + standalone desktop app (Windows .exe, macOS .app)
@@ -28,9 +30,7 @@
 * Objective shape severity score (FP score) - [details](https://doi.org/10.1111/joa.14061)
 
 ### Batch / cohort analysis
-* Batch pipeline runner - process a folder of preprocessed meshes end-to-end without repeating the manual steps per file, with resumable progress and per-file logs
-* Aggregate cohort statistics - mean/SD/median per metric (HC, BPD, OFD, CI, volume, MFA), import predefined excelsheet, exportable summary tables
-* Stratified group comparisons - by treatment type, age bracket, sex, syndrome, etc., with standard group-comparison stats (t-test/ANOVA, effect sizes) based on predefined excelsheet
+* Batch pipeline runner - process a folder of raw scans end-to-end without repeating the manual steps per file, with resumable progress and per-file logs (the cohort workspace explores what's already been exported; it doesn't run the pipeline itself)
 * Normative/percentile reference curves - age/sex-matched percentile or z-score comparison, similar to pediatric growth charts
 * Automated QC flags - surface failed/suspect pipeline runs (bad repair, outlier asymmetry likely from a mis-pick) for manual review instead of checking every file by hand
 * De-identification helper, beyond cohort export's own patient ID/cohort ID split above - e.g. stripping identifiers out of filenames/free-text fields too before a batch dataset is shared
