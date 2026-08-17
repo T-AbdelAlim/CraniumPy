@@ -1,13 +1,16 @@
 import ResizablePane from "./ResizablePane.jsx";
 
 // the persistent application shell: left nav, top context bar, center
-// workspace (with its own tab strip), right inspector. only "Patients" is
-// rendered in the nav - Research/References/History have nothing behind
-// them yet, and a nav entry with nowhere to go is worse than no entry. no
-// routing here either - workspace switching is local tab state until
-// patient persistence gives routes something real to key on (:patientId).
-// a bottom jobs bar slots into this grid once an async job (register,
-// analyze) actually exists to report on.
+// workspace (with its own tab strip), right inspector. the nav switches
+// between the two top-level app modes - "Patients" (single-patient
+// preprocess/analyze/export, everything else in this app) and "Cohort"
+// (batch/cohort analysis across already-exported patients - see
+// workspaces/cohort/CohortWorkspace.jsx). Research/References/History have
+// nothing behind them yet, and a nav entry with nowhere to go is worse than
+// no entry. no routing here either - workspace switching is local tab state
+// until patient persistence gives routes something real to key on
+// (:patientId). a bottom jobs bar slots into this grid once an async job
+// (register, analyze) actually exists to report on.
 //
 // nav/inspector are each wrapped in a ResizablePane (its own width/collapse
 // state) rather than fixed grid columns - "auto 1fr auto" below just lets
@@ -15,6 +18,8 @@ import ResizablePane from "./ResizablePane.jsx";
 // itself carries no width state.
 export default function Shell({
   contextLabel,
+  appMode,
+  onAppModeChange,
   workspaces,
   activeWorkspace,
   onWorkspaceChange,
@@ -33,25 +38,40 @@ export default function Shell({
       <ResizablePane side="left" defaultWidth={230} storageKey="nav">
         <nav className="shell-nav">
           <div className="shell-nav-top">
-            <div className="shell-nav-item active">Patients</div>
+            <button
+              type="button"
+              className={appMode === "patients" ? "shell-nav-item active" : "shell-nav-item"}
+              onClick={() => onAppModeChange("patients")}
+            >
+              Patients
+            </button>
+            <button
+              type="button"
+              className={appMode === "cohort" ? "shell-nav-item active" : "shell-nav-item"}
+              onClick={() => onAppModeChange("cohort")}
+            >
+              Cohort
+            </button>
           </div>
           {metadataForm && <div className="shell-nav-bottom">{metadataForm}</div>}
         </nav>
       </ResizablePane>
 
       <main className="shell-workspace">
-        <div className="shell-workspace-tabs">
-          {workspaces.map((w) => (
-            <button
-              key={w.id}
-              type="button"
-              className={w.id === activeWorkspace ? "shell-tab active" : "shell-tab"}
-              onClick={() => onWorkspaceChange(w.id)}
-            >
-              {w.label}
-            </button>
-          ))}
-        </div>
+        {workspaces.length > 0 && (
+          <div className="shell-workspace-tabs">
+            {workspaces.map((w) => (
+              <button
+                key={w.id}
+                type="button"
+                className={w.id === activeWorkspace ? "shell-tab active" : "shell-tab"}
+                onClick={() => onWorkspaceChange(w.id)}
+              >
+                {w.label}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="shell-workspace-content">{workspace}</div>
       </main>
 

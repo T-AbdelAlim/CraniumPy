@@ -30,6 +30,8 @@ const DIAGNOSIS_QUICK_PICKS = [
   "Unknown",
 ];
 
+const POST_OP_PREFIX = "post_op_";
+
 export default function PatientMetadataForm({
   metadata,
   onFieldChange,
@@ -39,6 +41,23 @@ export default function PatientMetadataForm({
   onCohortModeChange,
 }) {
   const diagnosisInputRef = useRef(null);
+
+  // image_timing is stored as one flat string (see api/schemas.py's
+  // PatientMetadata) - "pre-op", "post_op_{n}", or "" (unspecified) - so a
+  // cohort spreadsheet can stratify on a single column rather than two.
+  // this form still edits it as two controls (a type dropdown + the
+  // free-text "n" the user fills in for post-op), derived from that one
+  // string rather than kept as separate local state, so it stays in sync
+  // if metadata.image_timing ever changes from outside this form (e.g. a
+  // fresh upload resetting it).
+  const timingType = metadata.image_timing === "pre-op" ? "pre-op" : metadata.image_timing.startsWith(POST_OP_PREFIX) ? "post-op" : "";
+  const postOpValue = metadata.image_timing.startsWith(POST_OP_PREFIX) ? metadata.image_timing.slice(POST_OP_PREFIX.length) : "";
+
+  function handleTimingTypeChange(type) {
+    if (type === "pre-op") onFieldChange("image_timing", "pre-op");
+    else if (type === "post-op") onFieldChange("image_timing", `${POST_OP_PREFIX}${postOpValue}`);
+    else onFieldChange("image_timing", "");
+  }
 
   function handleDiagnosisQuickPick(value) {
     if (!value) return;
@@ -115,6 +134,25 @@ export default function PatientMetadataForm({
           onChange={(e) => onFieldChange("age_imaging", e.target.value)}
         />
       </label>
+      <label>
+        image timing
+        <select value={timingType} onChange={(e) => handleTimingTypeChange(e.target.value)}>
+          <option value="">unspecified</option>
+          <option value="pre-op">pre-op</option>
+          <option value="post-op">post-op</option>
+        </select>
+      </label>
+      {timingType === "post-op" && (
+        <label>
+          post-op follow-up (e.g. 6w, 6mo, 1y)
+          <input
+            type="text"
+            placeholder="6mo"
+            value={postOpValue}
+            onChange={(e) => onFieldChange("image_timing", `${POST_OP_PREFIX}${e.target.value}`)}
+          />
+        </label>
+      )}
       <label>
         treatment
         <input type="text" value={metadata.treatment} onChange={(e) => onFieldChange("treatment", e.target.value)} />
