@@ -1,5 +1,6 @@
 # CranioSuite (built on CraniumPy)
 
+
   * [Description](#description)
   * [Download](#download)
   * [Usage](#usage)
@@ -15,9 +16,17 @@
     * [Patient/visit metadata and reporting](#patientvisit-metadata-and-reporting)
     * [Cohort export and cohort IDs](#cohort-export-and-cohort-ids)
     * [Saving your results](#saving-your-results)
+  * [Cohort analysis workspace](#cohort-analysis-workspace)
+    * [Loading a cohort](#loading-a-cohort)
+    * [Filtering and stratifying](#filtering-and-stratifying)
+    * [Custom metrics](#custom-metrics)
+    * [Mean shape](#mean-shape)
+    * [Excel export](#excel-export)
+    * [Demo cohort](#demo-cohort)
   * [Running it from source](#running-it-from-source)
   * [Known issues](#known-issues)
   * [Citation](#citation)
+  * [Notes on usage](#notes-on-usage)
   * [Author](#author)
 
 
@@ -27,7 +36,7 @@
 This repository is two things layered on top of each other:
 
 * **CraniumPy** (`src/craniumpy_core`) - the dependency-light processing library: landmark-based registration, repair, clipping, resampling, non-rigid template fitting, and every measurement (cranial cephalometrics, forehead/frontal bossing morphology, facial asymmetry). No UI code lives here.
-* **CranioSuite** - the application built on top of that library: the web/desktop UI, the analysis workflow (Data / Preprocessing / Analysis workspaces), and the reporting layer (per-patient PDF/Excel, cohort accumulation with center-local de-identification). This is what `desktop/craniumpy.spec` packages and what the standalone `.exe`/`.app` is titled.
+* **CranioSuite** - the application built on top of that library: the web/desktop UI, the per-patient analysis workflow (Data / Preprocessing / Analysis workspaces), the reporting layer (per-patient PDF/Excel, cohort accumulation with center-local de-identification), and a second Cohort mode for looking back at everything accumulated across patients - see [Cohort analysis workspace](#cohort-analysis-workspace). This is what `desktop/craniumpy.spec` packages and what the standalone `.exe`/`.app` is titled.
 
 CranioSuite registers and analyzes craniofacial 3D scans (`.ply`, `.obj`, `.stl`): landmark picking, registration, clipping, repair, and resampling, followed by cephalometric measurements, forehead/frontal-bossing shape analysis, or a facial asymmetry score - then reports all of it as a plain-language PDF and a per-patient/cohort Excel spreadsheet.
 
@@ -43,6 +52,7 @@ Current capabilities (rigid registration and manual landmarking only, see [Regis
 * Asymmetry scoring for both cranial and facial targets, with an in-viewer colour scale and a side-on companion figure in the saved report.
 * Switching between Cranial Vault and Face & Forehead mid-session keeps your landmarks and alignment, and instantly restores whatever scene you'd already built for that target - nothing gets recomputed.
 * Patient/visit metadata entry (including a diagnosis field with a craniosynostosis-subtype quick-pick), a plain-language PDF report, and a per-patient/cohort Excel export that tracks the settings each run actually used (center-of-mass correction, NICP template) alongside every measurement - see [Patient/visit metadata and reporting](#patientvisit-metadata-and-reporting). Checkboxes let you choose what to include (measurements/asymmetry/meshes) each time you export.
+* A separate Cohort mode for exploring everything accumulated across patients: filtering/stratifying, user-defined derived metrics, real statistical tests, plots, and a 3D mean shape (with an inter-patient spread heatmap, a diff against a reference template, and mean measurements with a +/-1 SD spread ribbon) across whichever patients share the same NICP template - see [Cohort analysis workspace](#cohort-analysis-workspace).
 
 ![Reconstruction](resources/CraniumPy_info.png)
 
@@ -139,7 +149,7 @@ The heatmap and the index describe opposite halves by default, a quirk carried o
 Resampling to a target vertex count (optional, default 10000) is one part of what "run pipeline" does - see [Registration and clipping](#registration-and-clipping) above for the rest (repair, clip, center-of-mass correction). The measurement algorithm was validated at 10000 vertices.
 
 ### Patient/visit metadata and reporting
-A form in the sidebar collects patient/visit fields before you export: patient ID, diagnosis, sex, imaging date, age at imaging, treatment, age at surgery, and one free-text variable - all optional, left blank if not filled in. Diagnosis is a plain text field by default (type anything - useful beyond craniosynostosis), with a quick-pick dropdown alongside it for the common craniosynostosis subtypes, "Syndromic" (which prompts you to type the syndrome name right after), and "Unknown". File name and path are captured automatically from whatever you loaded.
+A form in the sidebar collects patient/visit fields before you export: patient ID, diagnosis, sex, imaging date, age at imaging, imaging timing, treatment, age at surgery, and one free-text variable - all optional, left blank if not filled in. Diagnosis is a plain text field by default (type anything - useful beyond craniosynostosis), with a quick-pick dropdown alongside it for the common craniosynostosis subtypes, "Syndromic" (which prompts you to type the syndrome name right after), and "Unknown". Imaging timing is either "pre-op" or "post-op" with a free-text follow-up label you fill in (e.g. "6mo", "1y") - stored as one column (`pre-op`, `post_op_6mo`, ...) so a cohort spreadsheet can filter/stratify on it directly, see [Cohort analysis workspace](#cohort-analysis-workspace). File name and path are captured automatically from whatever you loaded.
 
 Three checkboxes above "export analysis" - **measurements**, **asymmetry**, **meshes** - choose what actually gets written, all ticked by default. Unticking one leaves that section out of the report/PDF/spreadsheet entirely (not just hidden), or skips the mesh files.
 
@@ -161,6 +171,38 @@ Desktop app: "Save results" writes a `CP_{name}_{C|F}_{3|4}[_CoM]/` folder next 
 Web app: the same folder is downloaded as a zip. Cohort accumulation (see above) is desktop-only - a browser download is a one-shot file with nowhere persistent to append a second export to.
 
 Filenames are shortened: a dotted sub-segment (e.g. `1016510_20210730.000112_edited`) is truncated at the first dot (`1016510_20210730_edited`). The original filename is preserved in the report.
+
+
+## Cohort analysis workspace
+
+A second top-level mode ("Cohort", next to "Patients" in the sidebar) for looking back at everything patient exports have accumulated into a cohort spreadsheet, instead of it just sitting on disk (see [Cohort export and cohort IDs](#cohort-export-and-cohort-ids)). Load one (or the shipped demo cohort) and it's laid out as its own set of sub-tabs: Overview, Table, Custom metrics, Stratify & compare, Plots, and Mean shape - all reading from the same loaded/filtered data, so a derived metric added in Custom metrics is immediately usable in Stratify or Plots.
+
+### Loading a cohort
+"load cohort file..." opens a real file picker in the desktop app, or a browser upload in the web app. "load demo cohort" loads a shipped, synthetic 150-patient cohort - see [Demo cohort](#demo-cohort) below. Loading a different file resets every filter, derived metric, and tab back to a clean state.
+
+### Filtering and stratifying
+A filter bar sits above every tab, so a filter set once stays in effect across all of them: categorical columns get a checkbox per distinct value, numeric columns get a min/max range. This is what makes "pre-op only", "compare pre-op vs post-op within one treatment group", or "age at imaging between 2 and 3" possible - filter down first, then stratify or compute a mean shape on whatever's left.
+
+The **Stratify & compare** tab picks a numeric metric plus a column to group by (categorical as-is, or a numeric column split into equal-width bins), and shows per-group descriptive stats (n, mean, median, SD, IQR) and a box plot instantly, client-side. "run statistical test" sends the grouped values to the backend for a real `scipy.stats` test - Welch's t-test alongside Mann-Whitney U for 2 groups, one-way ANOVA alongside Kruskal-Wallis H for 3+, always a parametric and a rank-based result together, each with a one-line explanation of why it was picked and a link to the real scipy documentation for the exact assumptions/formula. Which test's assumptions actually hold for your data - sample size, distribution shape, independence between observations - is picked automatically from the group count alone, not verified against the data itself; check that yourself before drawing conclusions from the result.
+
+### Custom metrics
+A name + formula box (e.g. `cephalic_index / age_imaging`) adds a derived column usable everywhere else in the workspace, evaluated by a small, deliberately restricted arithmetic parser (numbers, `+-*/()`, column names) rather than `eval` - a formula can't do anything but arithmetic on existing columns.
+
+### Mean shape
+Groups loaded rows by `nicp_template` (only rows with a real NICP-fitted mesh path are eligible - see [Non-rigid template fitting (NICP)](#non-rigid-template-fitting-nicp)), computes the vertex-by-vertex average shape across the picked group, and shows it in its own 3D viewer with four interchangeable views:
+
+* **Spread** - per-vertex mean distance (mm) from that vertex's own average position across the group, a teal heatmap. This is inter-patient shape spread, not a per-patient asymmetry measure.
+* **Vs reference template** - signed per-vertex distance of the mean shape from a chosen shipped template, along the template's own surface normal - red where the mean shape sits outward of the reference, blue where it sits inward. The reference has to be the exact template the group was fit to (defaulted automatically); a mismatched one fails with a clear error rather than silently comparing the wrong points.
+* **Measurements** - the same craniometrics/asymmetry/forehead-morphology suite the Patients workspace computes for one patient, run instead on the group's averaged mean shape - numbers here describe the average shape, not any real patient. A "show +/-1 SD spread ribbon on mesh" toggle overlays a real 3D ribbon on the HC ring, the metopic contour, or the sagittal profile (whichever applies to the target), showing how much each of those varies patient to patient across the group - computed by re-measuring every individual patient's own mesh and averaging, not from the mean shape's own surface, which has no spread of its own to show.
+* **Sagittal profile** - the same sagittal +/-1 SD spread, shown as a 2D forehead-to-vertex depth chart instead of a 3D ribbon.
+
+The mean mesh downloads as a `.ply` named after whatever filters (or template group, if none are active) produced it, e.g. `trigonocephaly_pre-op_surgical_mean.ply`. "generate report (PDF)" produces the same multi-page layout a single patient's own report uses, with the mean measurements and, if the checkbox is on, every spread ribbon that applies to the target shaded onto its own figure.
+
+### Excel export
+Any stratified comparison (descriptive stats + test result) exports as a formatted `.xlsx` - colored header, banded rows, a frozen filterable header row, auto-detected numeric columns - the same formatted-export endpoint the mean-shape workflow's own file downloads reuse.
+
+### Demo cohort
+`scripts/generate_demo_cohort.py` generates the shipped `resources/demo_cohort/` - 150 synthetic patients split across two NICP template groups (a cranial and a facial reference), with clinically-informed, diagnosis-correlated parameter ranges (cephalic index, frontal/metopic angle, asymmetry) so a stratified comparison in the demo actually shows something rather than pure noise. Not run at app startup - regenerate it manually if you want to change the synthetic parameters.
 
 
 ## Running it from source
@@ -222,9 +264,12 @@ _Abdel-Alim et al. Reliability and Agreement of Automated Head Measurements From
 Abdel-Alim, T. (2022). CraniumPy [Computer software]. https://doi.org/10.5281/zenodo.5634153
 ```
 
+## Notes on usage:
+**Research use only - not a medical device.** CranioSuite has not been assessed or certified under the EU Medical Device Regulation (MDR), the FDA, or any equivalent regulatory framework, and carries no CE mark. It is intended for research use, not for clinical diagnosis, treatment planning, or any other patient-care decision. Several of its measurements are new, reproducible reference implementations that have not yet been validated against a clinical severity score or independent ground truth.
+
 
 ## Author
-Tareq Abdel-Alim | Departments of Neurosurgery and Radiology, Erasmus MC, Rotterdam, the Netherlands
+Tareq Abdel-Alim | Departments of Radiology and Neurosurgery, Erasmus MC, Rotterdam, the Netherlands
 
 If you have any questions, suggestions, or problems do not hesitate to contact me:
 t.abdelalim@erasmusmc.nl
