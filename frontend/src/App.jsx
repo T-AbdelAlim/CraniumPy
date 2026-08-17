@@ -72,9 +72,19 @@ function baseName(path) {
   return path.split(/[\\/]/).pop();
 }
 
-// see displayedMeshKeyRef.
-function meshDisplayKey(sid, descriptor) {
-  return `${sid}:${descriptor}`;
+// see displayedMeshKeyRef. target has to be part of this key, not just
+// descriptor - /mesh/{stage} (meshUrl below) doesn't take target in the
+// URL at all, it serves whatever the session's own active_target
+// currently is (see api/sessions.py's Session.switch_active_target) - so
+// the exact same descriptor ("result", "registered", ...) refers to a
+// completely different mesh once the active target changes. leaving
+// target out of this key was the bug behind "switch to cranium, run it,
+// switch back to face and the mesh doesn't change" - both targets' own
+// "result" stage collided on the same key, so the cache check wrongly
+// concluded nothing needed reloading, leaving cranium's mesh on screen
+// under face's own overlays/landmarks/template comparison.
+function meshDisplayKey(sid, target, descriptor) {
+  return `${sid}:${target}:${descriptor}`;
 }
 
 const NICP_DEFAULTS = { alphaStart: 200, alphaEnd: 1, alphaSteps: 20, gamma: 1.0, distThreshold: 10.0, innerIters: 3 };
@@ -292,7 +302,7 @@ function App() {
     const { hasTexture: loadedHasTexture } = await viewerRef.current.displayMesh(meshUrl(newSessionId), {
       selectionHasTexture: newSelectionHasTexture,
     });
-    displayedMeshKeyRef.current = meshDisplayKey(newSessionId, "original");
+    displayedMeshKeyRef.current = meshDisplayKey(newSessionId, target, "original");
     setHasTexture(loadedHasTexture);
     setTextureEnabled(loadedHasTexture);
     setMeshRevision((n) => n + 1);
@@ -765,7 +775,7 @@ function App() {
       applyTargetSnapshot(incomingSnapshot);
       if (sessionId) {
         const descriptor = incomingSnapshot.showingNicpResult ? "nicp-result" : incomingSnapshot.meshStage;
-        const neededKey = meshDisplayKey(sessionId, descriptor);
+        const neededKey = meshDisplayKey(sessionId, newTarget, descriptor);
         // skip the fetch/GLTF-parse/camera-refit entirely when what's
         // already on screen is already exactly this - e.g. toggling back
         // and forth without touching anything else in between.
@@ -798,7 +808,7 @@ function App() {
     // being LEFT was also still in that state (the common "just exploring
     // the toggle" case before picking landmarks), this is a no-op: same
     // mesh already showing.
-    const neededKey = meshDisplayKey(sessionId, "original");
+    const neededKey = meshDisplayKey(sessionId, newTarget, "original");
     if (displayedMeshKeyRef.current !== neededKey) {
       await viewerRef.current.displayMesh(meshUrl(sessionId, "original"), { selectionHasTexture });
       displayedMeshKeyRef.current = neededKey;
@@ -828,7 +838,7 @@ function App() {
   async function handleReset() {
     resetPreprocessingState();
     await viewerRef.current.displayMesh(meshUrl(sessionId, "original"), { selectionHasTexture });
-    displayedMeshKeyRef.current = meshDisplayKey(sessionId, "original");
+    displayedMeshKeyRef.current = meshDisplayKey(sessionId, target, "original");
     setMeshRevision((n) => n + 1);
   }
 
@@ -853,7 +863,7 @@ function App() {
       });
       if (result.status === "done") {
         await viewerRef.current.displayMesh(meshUrl(sessionId, "registered"), { selectionHasTexture });
-        displayedMeshKeyRef.current = meshDisplayKey(sessionId, "registered");
+        displayedMeshKeyRef.current = meshDisplayKey(sessionId, alignTarget, "registered");
         setMeshRevision((n) => n + 1);
         const transform = await getRegisteredTransform(sessionId);
         setRegisteredTransform(transform);
@@ -925,7 +935,7 @@ function App() {
         // opt back out, not in, every time.
         setShowTemplateOverlay(true);
         await viewerRef.current.displayMesh(meshUrl(sessionId, "result"), { selectionHasTexture });
-        displayedMeshKeyRef.current = meshDisplayKey(sessionId, "result");
+        displayedMeshKeyRef.current = meshDisplayKey(sessionId, target, "result");
         setShowingNicpResult(false);
         setMeshRevision((n) => n + 1);
         setRunProgress(100);
@@ -1016,7 +1026,7 @@ function App() {
         // hideNicpPreview call below becomes a harmless no-op for the
         // success path, same as it always was for the failure path.
         await viewerRef.current.displayMesh(nicpResultMeshUrl(sessionId), { selectionHasTexture: false });
-        displayedMeshKeyRef.current = meshDisplayKey(sessionId, "nicp-result");
+        displayedMeshKeyRef.current = meshDisplayKey(sessionId, target, "nicp-result");
         setShowingNicpResult(true);
         setNicpResultReady(true);
         // land on just the fitted mesh, not a template comparison drawn on
@@ -1060,7 +1070,7 @@ function App() {
   async function handleUseNicpMeshChange(checked) {
     setShowingNicpResult(checked);
     const descriptor = checked ? "nicp-result" : "result";
-    const neededKey = meshDisplayKey(sessionId, descriptor);
+    const neededKey = meshDisplayKey(sessionId, target, descriptor);
     if (displayedMeshKeyRef.current !== neededKey) {
       await viewerRef.current.displayMesh(
         checked ? nicpResultMeshUrl(sessionId) : meshUrl(sessionId, "result"),
@@ -1142,7 +1152,7 @@ function App() {
       // different vertex set.
       const wantNicpMesh = showingNicpResult && !showAsymmetry;
       const descriptor = wantNicpMesh ? "nicp-result" : "result";
-      const neededKey = meshDisplayKey(sessionId, descriptor);
+      const neededKey = meshDisplayKey(sessionId, target, descriptor);
       if (displayedMeshKeyRef.current !== neededKey) {
         await viewerRef.current?.displayMesh(
           wantNicpMesh ? nicpResultMeshUrl(sessionId) : meshUrl(sessionId, "result"),
