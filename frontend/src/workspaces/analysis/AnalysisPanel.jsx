@@ -84,6 +84,8 @@ export default function AnalysisPanel({
   saveDestDir,
   onChooseSaveFolder,
   onUseDefaultSaveFolder,
+  savedAnalysisFolder,
+  onGoToSaveFolder,
 }) {
   if (!pipelineRan) {
     return <p className="hint">Run the pipeline in Preprocessing first.</p>;
@@ -352,6 +354,8 @@ export default function AnalysisPanel({
         saveDestDir={saveDestDir}
         onChooseSaveFolder={onChooseSaveFolder}
         onUseDefaultSaveFolder={onUseDefaultSaveFolder}
+        savedLocation={savedAnalysisFolder}
+        onGoToSaveFolder={onGoToSaveFolder}
       />
     </section>
   );

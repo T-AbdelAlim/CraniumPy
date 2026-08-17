@@ -18,6 +18,8 @@ import {
   templateMeshUrl,
   customTemplateMeshUrl,
   uploadCustomTemplate,
+  uploadSession,
+  openFromPaths,
   nicpPreviewMeshUrl,
   nicpResultMeshUrl,
   saveMeshes,
@@ -31,7 +33,8 @@ import { LANDMARK_NAMES, ALT_FRONTAL_NAME, LANDMARK_COLORS, nextUnpickedLandmark
 import { heatmapMaxAbs } from "./three/measurementsLayer.js";
 import { applyTransform, applyInverseTransform } from "./lib/transform.js";
 import { defaultTemplateForTarget, templateChoiceStorageKey, customTemplatePathStorageKey } from "./lib/templates.js";
-import { isDesktopApp, pickFileNative, pickFolderNative, pickExcelFileNative } from "./lib/desktop.js";
+import { isDesktopApp, pickFileNative, pickFolderNative, pickExcelFileNative, waitForNativeDropPaths, openFolderNative } from "./lib/desktop.js";
+import { hasMeshFile, hasTextureFile, primaryMeshFile } from "./lib/meshFiles.js";
 
 const WORKSPACES = [
   { id: "data", label: "Data" },
@@ -106,6 +109,13 @@ function App() {
   const displayedMeshKeyRef = useRef(null);
   const [sessionId, setSessionId] = useState(null);
   const [meshLabel, setMeshLabel] = useState("");
+  // feedback for the viewer's own drag-and-drop drop zone (see
+  // handleFilesDropped/Viewer.jsx's onFilesDropped) - separate from
+  // UploadPanel's own local status text, since the drop target is the
+  // viewer canvas, not the sidebar UploadPanel renders in. cleared on every
+  // fresh upload (handleUploaded), regardless of which path produced it, so
+  // a stale drop message can't linger over a mesh loaded by browsing instead.
+  const [dropStatus, setDropStatus] = useState("");
   const [selectionHasTexture, setSelectionHasTexture] = useState(false);
   const [wireframe, setWireframe] = useState(false);
   const [textureEnabled, setTextureEnabled] = useState(false);
@@ -176,6 +186,15 @@ function App() {
   // backend). shared between "save meshes" and "export analysis" since
   // it's one destination choice, not two.
   const [saveDestDir, setSaveDestDir] = useState(null);
+  // the REAL folder the last "save meshes"/"export analysis" actually
+  // wrote to (the backend's own "saved_to", not saveDestDir - see
+  // SaveFolderControl.jsx's own comment on why those two can differ) -
+  // each has its own, since the two actions can land in different folders
+  // (different settings -> different result folder name, see the
+  // README's own "Saving your results" section). null until a desktop
+  // save actually succeeds; "go to save folder" stays disabled until then.
+  const [lastSavedMeshesFolder, setLastSavedMeshesFolder] = useState(null);
+  const [lastSavedAnalysisFolder, setLastSavedAnalysisFolder] = useState(null);
   // bumped after every displayMesh() call so the template-overlay effect
   // (below) knows to re-show against whatever mesh is now on screen -
   // Viewer.displayMesh already drops any active overlay itself since the
@@ -205,14 +224,30 @@ function App() {
   // readable without hiding the mesh surface entirely - see Viewer.jsx's
   // ANALYSIS_DEFAULT_MESH_OPACITY, which this mirrors.
   const [analysisMeshOpacity, setAnalysisMeshOpacity] = useState(0.35);
-  // true right after a completed NICP fit swaps the viewer to show the
-  // fitted template mesh instead of the patient's own result mesh (see
-  // handleFitTemplate) - craniometrics/asymmetry/metopic overlays are all
-  // computed against result_mesh, never the NICP fit, so the Analysis-tab
-  // overlay effect below checks this and restores result_mesh first
-  // whenever it's true, rather than drawing those overlays on the wrong
-  // mesh.
+  // whether the NICP-fitted mesh (rather than the patient's own plain
+  // result mesh) is what the viewer should be showing - a real user
+  // choice (PreprocessingPanel's "continue with NICP mesh" checkbox, see
+  // handleUseNicpMeshChange), not just a transient flag: it starts true
+  // the moment a fit succeeds (see handleFitTemplate) but then persists
+  // across workspace switches until the user says otherwise, the same way
+  // every other per-target preprocessing choice does (see
+  // captureTargetSnapshot/applyTargetSnapshot). craniometrics/frontal-
+  // bossing/metopic overlays are all plain 3D points/lines, independent of
+  // the mesh's own vertex layout, so they read correctly on either mesh -
+  // but the asymmetry heatmap is a literal per-VERTEX-INDEX color array
+  // computed against result_mesh's own vertices (see
+  // craniumpy_core.asymmetry), so the Analysis-tab overlay effect below
+  // always shows result_mesh specifically while asymmetry's heatmap is the
+  // active view, regardless of this - there's no valid way to show a
+  // result_mesh-indexed heatmap on the NICP mesh's own, entirely different
+  // vertex set.
   const [showingNicpResult, setShowingNicpResult] = useState(false);
+  // whether a NICP fit has actually SUCCEEDED for the current session+
+  // target - separate from showingNicpResult (which the user can toggle
+  // freely once this is true) so unchecking "continue with NICP mesh"
+  // doesn't also hide the checkbox itself. reset alongside showingNicpResult
+  // everywhere that resets it; never touched by the checkbox.
+  const [nicpResultReady, setNicpResultReady] = useState(false);
   const [exportingAnalysis, setExportingAnalysis] = useState(false);
   const [exportAnalysisStatus, setExportAnalysisStatus] = useState("");
   // separate from exportAnalysisStatus above so the two lines can't get
@@ -248,6 +283,7 @@ function App() {
     setMeshLabel(newMeshLabel);
     setSelectionHasTexture(newSelectionHasTexture);
     setWireframe(false);
+    setDropStatus("");
     resetPreprocessingState();
     // a fresh mesh almost always means a new patient - carrying over the
     // previous patient's sex/treatment/etc by accident is worse than
@@ -260,6 +296,52 @@ function App() {
     setHasTexture(loadedHasTexture);
     setTextureEnabled(loadedHasTexture);
     setMeshRevision((n) => n + 1);
+  }
+
+  // dropped onto the viewer canvas (see Viewer.jsx's onFilesDropped) - an
+  // alternative to UploadPanel's "choose file(s)..." browse button, only
+  // wired up while the Data tab is active (see the Viewer prop below).
+  // plain browser drag-and-drop never exposes a real filesystem path (same
+  // limitation UploadPanel's own <input type=file> branch has) - in the
+  // desktop app, waitForNativeDropPaths races pywebview's own native drop
+  // resolution (see desktop/app.py's _register_native_drop) against a
+  // short timeout, and if every dropped file resolved to a real path, this
+  // opens straight from those paths instead - the exact same
+  // openFromPaths flow "choose file(s)..." itself uses, so a dropped mesh
+  // gets file_path pre-filled and can save straight back next to its
+  // source, same as a browsed one. falls back to the plain browser-bytes
+  // upload (no real path) whenever that didn't happen - the web app
+  // always, or the rare case a path didn't resolve in time.
+  async function handleFilesDropped(files) {
+    const names = files.map((f) => f.name);
+    if (!hasMeshFile(names)) {
+      setDropStatus("No .ply/.obj/.stl found in the files you dropped");
+      return;
+    }
+    setDropStatus("Uploading...");
+    try {
+      const nativePaths = await waitForNativeDropPaths();
+      const resolvedPaths = nativePaths && names.every((n) => nativePaths[n]) ? names.map((n) => nativePaths[n]) : null;
+
+      const { sessionId: newSessionId } = resolvedPaths ? await openFromPaths(resolvedPaths) : await uploadSession(files);
+      const primaryName = primaryMeshFile(names);
+      const filePath = resolvedPaths && primaryName ? resolvedPaths[names.indexOf(primaryName)] : "";
+
+      // no success message - handleUploaded already clears dropStatus
+      // (see its own setDropStatus("") near the top) as part of loading
+      // the mesh, so the viewer just shows the loaded mesh, not text
+      // sitting in the middle of it. (browsing still shows its own
+      // vertex/face count, in UploadPanel's own sidebar status line - that
+      // one isn't overlaid on the 3D view, so it stays.)
+      await handleUploaded({
+        sessionId: newSessionId,
+        meshLabel: primaryName ?? "",
+        filePath,
+        selectionHasTexture: hasTextureFile(names),
+      });
+    } catch (err) {
+      setDropStatus(`Upload failed: ${err.message}`);
+    }
   }
 
   function handlePatientMetadataFieldChange(field, value) {
@@ -308,9 +390,12 @@ function App() {
     setNicpStatus("");
     setNicpError(false);
     setShowingNicpResult(false);
+    setNicpResultReady(false);
     setSavingMeshes(false);
     setSaveMeshesStatus("");
     setSaveDestDir(null);
+    setLastSavedMeshesFolder(null);
+    setLastSavedAnalysisFolder(null);
     setAnalysisResults(null);
     setAnalysisStatus("");
     setExportingAnalysis(false);
@@ -331,6 +416,14 @@ function App() {
     setSaveDestDir(null);
   }
 
+  // "go to save folder" (SaveFolderControl.jsx) - folder is whichever of
+  // lastSavedMeshesFolder/lastSavedAnalysisFolder the caller's own control
+  // is showing; the button itself is already disabled whenever that's
+  // null, so a real call here always has a real folder to open.
+  async function handleGoToSaveFolder(folder) {
+    await openFolderNative(folder, (msg) => setSaveMeshesStatus(`Couldn't open the folder: ${msg}`));
+  }
+
   // desktop: writes straight next to the source file (or saveDestDir, if
   // the user picked one via "change save folder..."); browser: downloads a
   // zip. tries the desktop path first and falls back on exactly a 400 (no
@@ -343,6 +436,7 @@ function App() {
       try {
         const { saved_to: savedTo } = await saveMeshes(sessionId, saveDestDir);
         setSaveMeshesStatus(`Saved to ${savedTo}`);
+        setLastSavedMeshesFolder(savedTo);
         setSavingMeshes(false);
         return;
       } catch (err) {
@@ -531,6 +625,7 @@ function App() {
     return {
       meshStage: pipelineRan ? "result" : alignSucceeded ? "registered" : "original",
       showingNicpResult,
+      nicpResultReady,
       pipelineRan,
       runStarted,
       runProgress,
@@ -547,12 +642,14 @@ function App() {
       nicpError,
       savingMeshes,
       saveMeshesStatus,
+      lastSavedMeshesFolder,
       analysisResults,
       analysisStatus,
       analysisViewMode,
       exportingAnalysis,
       exportAnalysisStatus,
       exportCohortStatus,
+      lastSavedAnalysisFolder,
     };
   }
 
@@ -572,14 +669,17 @@ function App() {
     setNicpStatus(snapshot.nicpStatus);
     setNicpError(snapshot.nicpError);
     setShowingNicpResult(snapshot.showingNicpResult);
+    setNicpResultReady(snapshot.nicpResultReady);
     setSavingMeshes(snapshot.savingMeshes);
     setSaveMeshesStatus(snapshot.saveMeshesStatus);
+    setLastSavedMeshesFolder(snapshot.lastSavedMeshesFolder);
     setAnalysisResults(snapshot.analysisResults);
     setAnalysisStatus(snapshot.analysisStatus);
     setAnalysisViewMode(snapshot.analysisViewMode);
     setExportingAnalysis(snapshot.exportingAnalysis);
     setExportAnalysisStatus(snapshot.exportAnalysisStatus);
     setExportCohortStatus(snapshot.exportCohortStatus);
+    setLastSavedAnalysisFolder(snapshot.lastSavedAnalysisFolder);
   }
 
   // a target that's never been clipped/run this session - same "nothing
@@ -598,13 +698,16 @@ function App() {
     setNicpStatus("");
     setNicpError(false);
     setShowingNicpResult(false);
+    setNicpResultReady(false);
     setSavingMeshes(false);
     setSaveMeshesStatus("");
+    setLastSavedMeshesFolder(null);
     setAnalysisResults(null);
     setAnalysisStatus("");
     setAnalysisViewMode("metopic");
     setExportingAnalysis(false);
     setExportAnalysisStatus("");
+    setLastSavedAnalysisFolder(null);
     setExportCohortStatus("");
   }
 
@@ -915,6 +1018,7 @@ function App() {
         await viewerRef.current.displayMesh(nicpResultMeshUrl(sessionId), { selectionHasTexture: false });
         displayedMeshKeyRef.current = meshDisplayKey(sessionId, "nicp-result");
         setShowingNicpResult(true);
+        setNicpResultReady(true);
         // land on just the fitted mesh, not a template comparison drawn on
         // top of it - if "compare to template" was checked, switch it back
         // off rather than re-showing it against the new result; the user
@@ -944,6 +1048,27 @@ function App() {
       // notice the mesh actually changed - not a redraw request.
       setMeshRevision((n) => n + 1);
     }
+  }
+
+  // PreprocessingPanel's "continue with NICP mesh" checkbox - only ever
+  // reachable once nicpResultReady, so sessionId/the NICP mesh itself are
+  // both guaranteed to exist. swaps the viewer immediately (this is what
+  // makes it visible on the Preprocessing tab itself, not just next time
+  // Analysis opens) - the Analysis-tab overlay effect below reads this
+  // same state on its own next run (a fresh fetch, or a view-mode switch),
+  // so the two never have to coordinate directly.
+  async function handleUseNicpMeshChange(checked) {
+    setShowingNicpResult(checked);
+    const descriptor = checked ? "nicp-result" : "result";
+    const neededKey = meshDisplayKey(sessionId, descriptor);
+    if (displayedMeshKeyRef.current !== neededKey) {
+      await viewerRef.current.displayMesh(
+        checked ? nicpResultMeshUrl(sessionId) : meshUrl(sessionId, "result"),
+        { selectionHasTexture: checked ? false : selectionHasTexture },
+      );
+      displayedMeshKeyRef.current = neededKey;
+    }
+    setMeshRevision((n) => n + 1);
   }
 
   // fetches craniometrics/asymmetry/metopic once a completed run exists and
@@ -989,20 +1114,6 @@ function App() {
   useEffect(() => {
     if (!analysisResults) return;
     (async () => {
-      // craniometrics/asymmetry/metopic were all computed against
-      // result_mesh - if the viewer's currently showing a completed NICP
-      // fit instead (see handleFitTemplate), swap back before drawing
-      // anything, or these overlays would end up positioned against the
-      // wrong mesh entirely.
-      if (showingNicpResult) {
-        await viewerRef.current?.displayMesh(meshUrl(sessionId, "result"), { selectionHasTexture });
-        displayedMeshKeyRef.current = meshDisplayKey(sessionId, "result");
-        setShowingNicpResult(false);
-      }
-      viewerRef.current?.hideMeasurementsOverlay();
-      viewerRef.current?.hideHeatmap();
-      viewerRef.current?.hideMetopicOverlay();
-      viewerRef.current?.hideFrontalBossingOverlay();
       // mirrors AnalysisPanel.jsx's own showMeasurements/showAsymmetry/
       // showMetopic derivation exactly, so the live 3D overlay always
       // matches whatever the panel's numbers/mode-toggle are currently
@@ -1018,6 +1129,32 @@ function App() {
       const showAsymmetry = analysisResults.asymmetry && (!showModeToggle || analysisViewMode === "asymmetry");
       const showMeasurements = analysisResults.craniometrics && (!showModeToggle || analysisViewMode !== "asymmetry");
       const showMetopic = analysisResults.metopic && (!showModeToggle || analysisViewMode !== "asymmetry");
+
+      // craniometrics/frontal-bossing/metopic overlays are plain 3D points/
+      // lines, independent of the mesh's own vertex layout, so they read
+      // correctly on either mesh - respect "continue with NICP mesh" (see
+      // PreprocessingPanel.jsx, handleUseNicpMeshChange) for those. the
+      // asymmetry heatmap can't: it's a literal per-VERTEX-INDEX color
+      // array computed against result_mesh's own vertices (see
+      // craniumpy_core.asymmetry), so it always needs result_mesh
+      // specifically regardless of that checkbox - there's no valid way to
+      // show a result_mesh-indexed heatmap on the NICP mesh's own, entirely
+      // different vertex set.
+      const wantNicpMesh = showingNicpResult && !showAsymmetry;
+      const descriptor = wantNicpMesh ? "nicp-result" : "result";
+      const neededKey = meshDisplayKey(sessionId, descriptor);
+      if (displayedMeshKeyRef.current !== neededKey) {
+        await viewerRef.current?.displayMesh(
+          wantNicpMesh ? nicpResultMeshUrl(sessionId) : meshUrl(sessionId, "result"),
+          { selectionHasTexture: wantNicpMesh ? false : selectionHasTexture },
+        );
+        displayedMeshKeyRef.current = neededKey;
+      }
+
+      viewerRef.current?.hideMeasurementsOverlay();
+      viewerRef.current?.hideHeatmap();
+      viewerRef.current?.hideMetopicOverlay();
+      viewerRef.current?.hideFrontalBossingOverlay();
       if (showMeasurements) {
         viewerRef.current?.showMeasurementsOverlay({
           hcPolygon: analysisResults.craniometrics.hc_slice_polygon,
@@ -1046,7 +1183,12 @@ function App() {
     })();
     // deliberately not deps of this effect (see handleAnalysisMeshOpacityChange
     // for the opacity one): dragging the opacity slider shouldn't rebuild the
-    // whole overlay, and showingNicpResult is read once per run, not watched.
+    // whole overlay. showingNicpResult/sessionId/selectionHasTexture are
+    // read fresh off the closure each run rather than watched directly -
+    // this effect already re-runs on every natural trigger (a fresh fetch,
+    // or a view-mode switch), so it never needs to coordinate with
+    // handleUseNicpMeshChange (the other place showingNicpResult drives a
+    // swap) beyond that.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [analysisResults, analysisViewMode]);
 
@@ -1072,6 +1214,7 @@ function App() {
           sessionId, saveDestDir, patientMetadata, targetCohortPath, exportSelection,
         );
         setExportAnalysisStatus(`Saved to ${savedTo}`);
+        setLastSavedAnalysisFolder(savedTo);
         if (targetCohortPath) {
           setExportCohortStatus(`added to cohort ${baseName(targetCohortPath)}: ${targetCohortPath}`);
         }
@@ -1202,12 +1345,17 @@ function App() {
             nicpProgress={nicpProgress}
             nicpStatus={nicpStatus}
             nicpError={nicpError}
+            nicpResultReady={nicpResultReady}
+            useNicpMesh={showingNicpResult}
+            onUseNicpMeshChange={handleUseNicpMeshChange}
             onSaveMeshes={handleSaveMeshes}
             savingMeshes={savingMeshes}
             saveMeshesStatus={saveMeshesStatus}
             saveDestDir={saveDestDir}
             onChooseSaveFolder={handleChooseSaveFolder}
             onUseDefaultSaveFolder={handleUseDefaultSaveFolder}
+            savedMeshesFolder={lastSavedMeshesFolder}
+            onGoToSaveFolder={handleGoToSaveFolder}
           />
         ) : onAnalysisTab ? (
           <AnalysisPanel
@@ -1232,6 +1380,8 @@ function App() {
             saveDestDir={saveDestDir}
             onChooseSaveFolder={handleChooseSaveFolder}
             onUseDefaultSaveFolder={handleUseDefaultSaveFolder}
+            savedAnalysisFolder={lastSavedAnalysisFolder}
+            onGoToSaveFolder={handleGoToSaveFolder}
           />
         ) : (
           <>
@@ -1258,8 +1408,10 @@ function App() {
             landmarkColors={LANDMARK_COLORS}
             onPick={onPreprocessingTab ? handlePick : undefined}
             onDrag={onPreprocessingTab ? handleDrag : undefined}
+            onFilesDropped={!onPreprocessingTab && !onAnalysisTab ? handleFilesDropped : undefined}
           />
-          {sessionId == null && <p className="hint overlay">Upload a mesh to begin.</p>}
+          {sessionId == null && !dropStatus && <p className="hint overlay">Upload a mesh to begin.</p>}
+          {dropStatus && <p className="hint overlay">{dropStatus}</p>}
           {onAnalysisTab &&
             analysisResults?.asymmetry &&
             (!analysisResults?.metopic || analysisViewMode === "asymmetry") && (

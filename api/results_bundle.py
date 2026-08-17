@@ -121,7 +121,23 @@ def _draw_measurements(
         inner_x, inner_z = spread_band.inner[:, 0], spread_band.inner[:, 2]
         ax.fill(
             np.concatenate([outer_x, inner_x[::-1]]), np.concatenate([outer_z, inner_z[::-1]]),
-            color="#d1453d", alpha=0.15, linewidth=0, label="+/-1 SD across group",
+            color="#d1453d", alpha=0.5, linewidth=0, label="+/-1 SD across group",
+        )
+        # a real inter-patient radius SD is often only ~1-2mm against an
+        # ~80mm mean radius - true to scale, that's sub-pixel at any normal
+        # render resolution, so the fill alone (and a thin boundary stroke)
+        # is indistinguishable from the solid HC line drawn right on top of
+        # it a few lines down. a deliberately bold boundary stroke - well
+        # past what the data's own mm-scale width would justify - is what
+        # actually keeps a real but small band visible as a distinct
+        # colored edge either side of that line, rather than pretending
+        # the underlying spread is bigger than it is (the fill itself, and
+        # the numbers in the report/UI, are still drawn to true scale).
+        ax.plot(
+            np.append(outer_x, outer_x[0]), np.append(outer_z, outer_z[0]), color="#d1453d", linewidth=2.2, alpha=0.8
+        )
+        ax.plot(
+            np.append(inner_x, inner_x[0]), np.append(inner_z, inner_z[0]), color="#d1453d", linewidth=2.2, alpha=0.8
         )
 
     if polygon is not None and len(polygon) > 2:
@@ -213,8 +229,7 @@ def _draw_asymmetry(
       "top"      - x horizontal, z vertical, looking straight down
                    (cranial's usual view - a frontal view would just show
                    the back of the scalp foreshortened into almost nothing).
-      "sagittal" - z (depth) horizontal, y (height) vertical, side-on - same
-                   convention _draw_frontal_bossing's profile view uses.
+      "sagittal" - z (depth) horizontal, y (height) vertical, side-on.
                    restricted to the half of the mesh that actually carries
                    the heatmap (see craniumpy_core.asymmetry's module
                    docstring - the other half is always zeroed): collapsing
@@ -223,7 +238,14 @@ def _draw_asymmetry(
                    restriction renders as noise rather than a clean profile.
                    no silhouette either, for the same reason - a silhouette
                    of the WHOLE head/face wouldn't match a plot that only
-                   ever draws one half of it.
+                   ever draws one half of it. the x-axis is inverted below
+                   (unlike _draw_frontal_bossing's own profile view, which
+                   plots z left-to-right as-is) - this view only ever shows
+                   the LEFT half's own surface (x >= 0 - see below), so
+                   plotting z as-is would face the profile rightward, which
+                   reads as the RIGHT side of the face; inverting it faces
+                   the (correctly left) half leftward instead, matching
+                   what it actually is.
     """
     vertices = np.asarray(mesh.vertices)
     faces = np.asarray(mesh.faces)
@@ -248,6 +270,9 @@ def _draw_asymmetry(
     if show_silhouette:
         silhouette = _silhouette_polygon(vertices[:, [horizontal_idx, vertical_idx]])
         ax.plot(silhouette[:, 0], silhouette[:, 1], color="#999999", linewidth=0.8, zorder=3)
+
+    if view == "sagittal":
+        ax.invert_xaxis()
 
     ax.set_aspect("equal")
     ax.set_xlabel(horizontal_label)
@@ -308,8 +333,15 @@ def _draw_metopic(fig: Figure, rect, metopic: MetopicResult, spread_band: Spread
     if spread_band is not None:
         ax_main.fill_between(
             spread_band.mean[:, 0], spread_band.inner[:, 2], spread_band.outer[:, 2],
-            color="#3a3a3a", alpha=0.15, linewidth=0, label="+/-1 SD across group",
+            color="#3a3a3a", alpha=0.5, linewidth=0, label="+/-1 SD across group",
         )
+        # see _draw_measurements' own comment on the matching HC-ring band -
+        # a deliberately bold boundary stroke keeps a real but small band
+        # visible either side of the forehead-contour line drawn over it
+        # just below, in the same color, rather than the two becoming
+        # indistinguishable.
+        ax_main.plot(spread_band.mean[:, 0], spread_band.inner[:, 2], color="#3a3a3a", linewidth=2.2, alpha=0.8)
+        ax_main.plot(spread_band.mean[:, 0], spread_band.outer[:, 2], color="#3a3a3a", linewidth=2.2, alpha=0.8)
 
     ax_main.plot(x, z, color="#3a3a3a", linewidth=1.5, label="forehead contour")
     ax_main.plot(x_fit, z_fit, color="#2563eb", linewidth=1.5, linestyle="--", label="ideal (parabola)")
@@ -459,10 +491,19 @@ def _draw_frontal_bossing(
     ax = fig.add_axes(_sub(rect, 0.14, 0.19, 0.80, 0.74))
 
     if sagittal_band is not None:
+        inner_z = sagittal_band.mean_z - sagittal_band.sd_z
+        outer_z = sagittal_band.mean_z + sagittal_band.sd_z
         ax.fill_betweenx(
-            sagittal_band.y, sagittal_band.mean_z - sagittal_band.sd_z, sagittal_band.mean_z + sagittal_band.sd_z,
-            color="#3a3a3a", alpha=0.18, linewidth=0, label="+/-1 SD across group",
+            sagittal_band.y, inner_z, outer_z,
+            color="#3a3a3a", alpha=0.5, linewidth=0, label="+/-1 SD across group",
         )
+        # see _draw_measurements' own comment on the matching HC-ring band -
+        # a deliberately bold boundary stroke keeps a real but small band
+        # visible either side of the sagittal-profile line drawn over it
+        # just below, in the same color, rather than the two becoming
+        # indistinguishable.
+        ax.plot(inner_z, sagittal_band.y, color="#3a3a3a", linewidth=2.2, alpha=0.8)
+        ax.plot(outer_z, sagittal_band.y, color="#3a3a3a", linewidth=2.2, alpha=0.8)
 
     ax.plot(z, y, color="#3a3a3a", linewidth=1.5, label="sagittal profile")
     ax.axhline(
@@ -926,6 +967,14 @@ BLOCK_GAP_PT = 9.0
 TEXT_X = 0.10
 LABEL_VALUE_X = 0.46
 
+# guaranteed blank space at the physical bottom of a metric-fields page - a
+# fixed 8pt explainer size (see _draw_metric_fields) can genuinely run a
+# long enough group (metopic's own 7 fields, especially with a spread-band
+# caption tacked on - see mean_shape_report_pdf) right off the page with
+# nothing to stop it otherwise, since text_y itself never gets checked
+# against the page's own physical bottom edge.
+TEXT_BOTTOM_MARGIN_PT = 20.0
+
 
 def _pt_to_frac(points: float) -> float:
     """points -> figure-fraction of an A4 portrait page's height."""
@@ -946,6 +995,61 @@ def _wrap(text: str, width: int) -> list[str]:
     """textwrap, but never returns an empty list for empty input - callers
     iterate the result and an empty string still needs to occupy its line."""
     return textwrap.wrap(text, width=width) or [""]
+
+
+def _draw_metric_fields(
+    page: Figure,
+    text_y: float,
+    fields: list[tuple[str, str, str]],
+    row: dict[str, str],
+    extra_captions: list[str] = (),
+    wrap_width: int = 105,
+) -> float:
+    """one metric group's text block: a bold label:value line per field
+    that actually has a value, each followed by its wrapped one-line-per-
+    sentence-ish explainer (see METRIC_EXPLAINERS), then any extra plain
+    caption lines drawn after all of them (the spread-band notes
+    mean_shape_report_pdf adds - e.g. "Shaded band on the figure above:
+    ..."). returns the y position after the last line, same convention as
+    _draw_line, for a caller that wants to keep drawing below it (none do
+    right now, but nothing here assumes otherwise).
+
+    the explainer/caption font size shrinks (never grows past the normal
+    8pt) just enough to keep the WHOLE block above TEXT_BOTTOM_MARGIN_PT
+    from the page's own physical bottom edge - a fixed size regardless of
+    how much text a group has is what let a long enough group (metopic's
+    own 7 fields, worse with a spread-band caption on top) run text right
+    off the page, since nothing ever checked text_y against where the page
+    actually ends. only the explainer text shrinks, never the bold label
+    line - that's the actual number/name being reported, more important to
+    keep at a normal, easily readable size than the explanation under it.
+    line COUNTS (from _wrap) don't depend on font size (a fixed character
+    width, not a fixed physical width), so the fit-to-budget math below is
+    exact, not an approximation that then needs re-checking after the fact."""
+    present = [(key, label, unit) for key, label, unit in fields if row.get(key, "")]
+    explainer_lines = [_wrap(METRIC_EXPLAINERS.get(key, ""), width=wrap_width) for key, _label, _unit in present]
+    caption_lines = [_wrap(c, width=wrap_width) for c in extra_captions]
+
+    label_and_gap_total_pt = len(present) * (10 * LINE_SPACING + BLOCK_GAP_PT)
+    explainer_line_count = sum(len(lines) for lines in explainer_lines) + sum(len(lines) for lines in caption_lines)
+    explainer_fontsize = 8.0
+    if explainer_line_count > 0:
+        budget_pt = text_y * PAGE_H_PT - TEXT_BOTTOM_MARGIN_PT
+        max_fontsize = (budget_pt - label_and_gap_total_pt) / (explainer_line_count * LINE_SPACING)
+        explainer_fontsize = max(6.0, min(8.0, max_fontsize))
+
+    for (key, label, unit), lines in zip(present, explainer_lines):
+        display = f"{row[key]} {unit}".strip()
+        text_y = _draw_line(page, text_y, f"{label}: {display}", fontsize=10, weight="bold")
+        for line in lines:
+            text_y = _draw_line(page, text_y, line, fontsize=explainer_fontsize, color="#555555")
+        text_y -= _pt_to_frac(BLOCK_GAP_PT)
+
+    for lines in caption_lines:
+        for line in lines:
+            text_y = _draw_line(page, text_y, line, fontsize=explainer_fontsize, color="#555555")
+
+    return text_y
 
 
 def _report_pdf(
@@ -1023,16 +1127,7 @@ def _report_pdf(
             FigureCanvasAgg(page)
             draw(page, (0.04, 0.46, 0.92, 0.50))
 
-            text_y = 0.42
-            for key, label, unit in fields:
-                value = row.get(key, "")
-                if not value:
-                    continue
-                display = f"{value} {unit}".strip()
-                text_y = _draw_line(page, text_y, f"{label}: {display}", fontsize=10, weight="bold")
-                for line in _wrap(METRIC_EXPLAINERS.get(key, ""), width=105):
-                    text_y = _draw_line(page, text_y, line, fontsize=8, color="#555555")
-                text_y -= _pt_to_frac(BLOCK_GAP_PT)
+            _draw_metric_fields(page, 0.42, fields, row)
             pdf.savefig(page)
 
     return buf.getvalue()
@@ -1144,31 +1239,15 @@ def mean_shape_report_pdf(
             FigureCanvasAgg(page)
             draw(page, (0.04, 0.46, 0.92, 0.50))
 
-            text_y = 0.42
-            for key, label, unit in fields:
-                value = row.get(key, "")
-                if not value:
-                    continue
-                display = f"{value} {unit}".strip()
-                text_y = _draw_line(page, text_y, f"{label}: {display}", fontsize=10, weight="bold")
-                for line in _wrap(METRIC_EXPLAINERS.get(key, ""), width=105):
-                    text_y = _draw_line(page, text_y, line, fontsize=8, color="#555555")
-                text_y -= _pt_to_frac(BLOCK_GAP_PT)
+            extra_captions = []
             if group == "frontal_bossing" and sagittal_band is not None:
-                _draw_line(
-                    page, text_y, "Shaded band on the figure above: +/-1 SD sagittal depth across the group.",
-                    fontsize=8, color="#555555",
-                )
+                extra_captions.append("Shaded band on the figure above: +/-1 SD sagittal depth across the group.")
             if group == "craniometrics" and hc_ring_band is not None:
-                _draw_line(
-                    page, text_y, "Shaded ring on the figure above: +/-1 SD head-circumference radius across the group.",
-                    fontsize=8, color="#555555",
-                )
+                extra_captions.append("Shaded ring on the figure above: +/-1 SD head-circumference radius across the group.")
             if group == "metopic" and metopic_band is not None:
-                _draw_line(
-                    page, text_y, "Shaded band on the figure above: +/-1 SD forehead depth across the group.",
-                    fontsize=8, color="#555555",
-                )
+                extra_captions.append("Shaded band on the figure above: +/-1 SD forehead depth across the group.")
+
+            _draw_metric_fields(page, 0.42, fields, row, extra_captions=extra_captions)
             pdf.savefig(page)
 
     return buf.getvalue()

@@ -79,7 +79,7 @@ export default function UploadPanel({ onUploaded }) {
       />
       <p className="hint">
         For a textured .obj, multi-select (ctrl/cmd-click) the .obj, its .mtl, and the texture image together in the
-        file picker.
+        file picker. You can also drag a mesh file straight onto the viewer instead of browsing for it.
       </p>
       <p className="hint">{meshPath}</p>
       <p className="hint">{status}</p>
