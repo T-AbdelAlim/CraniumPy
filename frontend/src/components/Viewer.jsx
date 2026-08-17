@@ -6,10 +6,11 @@ import { applyOpacityState, applyTextureState, applyWireframeState, disposeMesh,
 import { pointerToNdc, raycastMesh, raycastMarkers } from "../three/picking.js";
 import { syncLandmarkMarkers, disposeLandmarkMarkers } from "../three/landmarksLayer.js";
 import { addTemplateOverlay, removeTemplateOverlay, removeTemplateOverlayExtras } from "../three/templateOverlay.js";
-import { addMeasurementsOverlay, removeMeasurementsOverlay, applyHeatmap, removeHeatmap } from "../three/measurementsLayer.js";
+import { addMeasurementsOverlay, removeMeasurementsOverlay, applyHeatmap, applySequentialHeatmap, removeHeatmap } from "../three/measurementsLayer.js";
 import { addMetopicOverlay, removeMetopicOverlay } from "../three/metopicOverlay.js";
 import { addFrontalBossingOverlay, removeFrontalBossingOverlay } from "../three/frontalBossingOverlay.js";
 import { addNodesOverlay, removeNodesOverlay, resyncNodesGeometry } from "../three/nicpFitVisualization.js";
+import { addSpreadBandRibbon, removeSpreadBandRibbon } from "../three/spreadBandOverlay.js";
 
 // deforming-template color during a live NICP fit - matches the --hc red
 // token already used elsewhere in this app, so "moving/deforming" reads as
@@ -60,6 +61,10 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
   const nicpPreviewRef = useRef(null);
   const nicpPreviewNodesRef = useRef(null);
   const mainMeshNodesRef = useRef(null);
+  // cohort mean-shape spread-band ribbons (HC-ring/metopic/sagittal, see
+  // three/spreadBandOverlay.js), keyed by caller-chosen id so the three
+  // bands can be shown/hidden independently of each other.
+  const spreadBandsRef = useRef({});
   const draggingNameRef = useRef(null);
   const onPickRef = useRef(onPick);
   const onDragRef = useRef(onDrag);
@@ -92,6 +97,7 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
         removeMetopicOverlay(sceneBagRef.current, metopicOverlayRef.current);
         removeFrontalBossingOverlay(sceneBagRef.current, frontalBossingOverlayRef.current);
         if (nicpPreviewRef.current) sceneBagRef.current.scene.remove(nicpPreviewRef.current);
+        for (const band of Object.values(spreadBandsRef.current)) removeSpreadBandRibbon(sceneBagRef.current, band);
       }
       removeNodesOverlay(nicpPreviewNodesRef.current);
       removeNodesOverlay(mainMeshNodesRef.current);
@@ -185,11 +191,13 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
         removeMetopicOverlay(sceneBagRef.current, metopicOverlayRef.current);
         removeFrontalBossingOverlay(sceneBagRef.current, frontalBossingOverlayRef.current);
         if (nicpPreviewRef.current) sceneBagRef.current.scene.remove(nicpPreviewRef.current);
+        for (const band of Object.values(spreadBandsRef.current)) removeSpreadBandRibbon(sceneBagRef.current, band);
       }
       templateOverlayRef.current = null;
       measurementsOverlayRef.current = null;
       metopicOverlayRef.current = null;
       frontalBossingOverlayRef.current = null;
+      spreadBandsRef.current = {};
       removeNodesOverlay(nicpPreviewNodesRef.current);
       nicpPreviewNodesRef.current = null;
       removeNodesOverlay(mainMeshNodesRef.current);
@@ -356,6 +364,17 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
       applyHeatmap(meshObject, heatmap);
       applyOpacityState(meshStateRef, ANALYSIS_DEFAULT_MESH_OPACITY);
     },
+    // the cohort workspace's "spread" mean-shape view (see
+    // MeanShapeTab.jsx) - a non-negative magnitude heatmap, rendered with
+    // the sequential (white -> teal) scale instead of showHeatmap's
+    // diverging blue/red, since there's no "direction" to this data (see
+    // measurementsLayer.js's applySequentialHeatmap).
+    showSequentialHeatmap(heatmap) {
+      const meshObject = meshStateRef.current.object;
+      if (!meshObject) return;
+      applySequentialHeatmap(meshObject, heatmap);
+      applyOpacityState(meshStateRef, ANALYSIS_DEFAULT_MESH_OPACITY);
+    },
     hideHeatmap() {
       removeHeatmap(meshStateRef.current.object);
       applyOpacityState(meshStateRef, 1.0);
@@ -405,6 +424,28 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
       if (!sceneBag) return;
       removeFrontalBossingOverlay(sceneBag, frontalBossingOverlayRef.current);
       frontalBossingOverlayRef.current = null;
+    },
+    // cohort mean-shape +/-1 SD spread ribbon (HC-ring/metopic/sagittal, see
+    // craniumpy_core.cohort.SpreadBand and three/spreadBandOverlay.js) - id
+    // lets the caller (MeanShapeTab.jsx) show up to three of these
+    // independently (one per applicable band) without one hiding another.
+    showSpreadBand(id, innerPoints, outerPoints, closed, color = 0xd1453d) {
+      const sceneBag = sceneBagRef.current;
+      if (!sceneBag) return;
+      removeSpreadBandRibbon(sceneBag, spreadBandsRef.current[id]);
+      spreadBandsRef.current[id] = addSpreadBandRibbon(sceneBag, innerPoints, outerPoints, closed, color);
+    },
+    hideSpreadBand(id) {
+      const sceneBag = sceneBagRef.current;
+      if (!sceneBag) return;
+      removeSpreadBandRibbon(sceneBag, spreadBandsRef.current[id]);
+      delete spreadBandsRef.current[id];
+    },
+    hideAllSpreadBands() {
+      const sceneBag = sceneBagRef.current;
+      if (!sceneBag) return;
+      for (const band of Object.values(spreadBandsRef.current)) removeSpreadBandRibbon(sceneBag, band);
+      spreadBandsRef.current = {};
     },
     // the Analysis workspace's opacity slider - only ever touches the
     // mesh's own material(s), never the measurement/heatmap/metopic

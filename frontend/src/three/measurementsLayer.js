@@ -26,31 +26,45 @@ export function heatmapMaxAbs(heatmap) {
   return Math.max(...heatmap.map(Math.abs), 1e-6);
 }
 
-// colors vertices by the per-vertex asymmetry heatmap, tinting whichever
-// material(s) the mesh is already showing (textured, plain skin-toned,
-// vertex-colored) rather than swapping in a separate flat/unlit material -
-// ported from frontend_legacy/app.js's applyAsymmetryHeatmap, which did the
-// same multiplicative tint. divergingColor(0) is pure white, the
-// multiplicative identity, so the half the asymmetry calculation zeroed out
-// by design (see calculate_asymmetry's own docstring - the mirrored half is
-// always set to exactly 0.0, not a real "zero asymmetry" reading) passes
-// straight through unchanged, still showing the mesh's own normal lit
-// shading - no separate "neutral color" placeholder needed the way the
-// previous unlit-material version required, and real surface detail
-// (creases, folds) stays visible under the tinted half too instead of going
-// flat. heatmap is per-vertex signed distance (mm), same order as the
-// mesh's own vertices (see craniumpy_core.asymmetry.calculate_asymmetry) -
-// assumes a single-mesh GLB (mesh_to_glb always produces one), so no
-// per-child index offsetting is needed.
-export function applyHeatmap(meshObject, heatmap) {
-  const maxAbs = heatmapMaxAbs(heatmap);
+// white (0) -> --accent-teal (max) sequential scale, for heatmaps that are
+// an unsigned MAGNITUDE (e.g. the cohort mean-shape's inter-patient spread
+// - how far a point wandered, with no "direction") rather than a signed
+// deviation. deliberately NOT the diverging blue-white-red scale below,
+// which reads as "which way" as much as "how much" - reusing it for
+// magnitude-only data would visually claim a direction that isn't there.
+// same gamma<1 shaping as divergingColor, for the same reason (push
+// moderate values toward saturation sooner instead of washing out near
+// white in the middle of the range).
+const SEQUENTIAL_MAX_COLOR = new THREE.Color(0x178c83);
+function sequentialColor(t) {
+  const clamped = Math.max(0, Math.min(1, t)) ** 0.6;
+  return new THREE.Color(1, 1, 1).lerp(SEQUENTIAL_MAX_COLOR, clamped);
+}
 
+// the largest value in a non-negative (magnitude) heatmap - the sequential
+// scale's range is always [0, max]. same "exported so the scalar-bar
+// legend can't drift from what actually got rendered" reasoning as
+// heatmapMaxAbs.
+export function heatmapMax(heatmap) {
+  return Math.max(...heatmap, 1e-6);
+}
+
+// shared vertex-color tinting: multiplies whichever material(s) the mesh
+// is already showing (textured, plain skin-toned, vertex-colored) by a
+// per-vertex color computed from `colorFn(value)`, rather than swapping in
+// a separate flat/unlit material - ported from frontend_legacy/app.js's
+// applyAsymmetryHeatmap, which did the same multiplicative tint. white is
+// the multiplicative identity, so a colorFn that returns white at its
+// "neutral" value (0 deviation, 0 spread) passes the mesh's own normal lit
+// shading straight through unchanged there - real surface detail stays
+// visible under the tinted areas too, instead of going flat.
+function tintMesh(meshObject, values, colorFn) {
   meshObject.traverse((child) => {
     if (!child.isMesh) return;
     const count = child.geometry.attributes.position.count;
     const colors = new Float32Array(count * 3);
     for (let i = 0; i < count; i++) {
-      const c = divergingColor((heatmap[i] ?? 0) / maxAbs);
+      const c = colorFn(values[i] ?? 0);
       colors[i * 3] = c.r;
       colors[i * 3 + 1] = c.g;
       colors[i * 3 + 2] = c.b;
@@ -62,6 +76,31 @@ export function applyHeatmap(meshObject, heatmap) {
       mat.needsUpdate = true;
     }
   });
+}
+
+// colors vertices by a per-vertex signed heatmap (mm), diverging blue
+// (negative/inward) - white (0) - red (positive/outward/protruded) - used
+// for both the per-patient asymmetry heatmap (calculate_asymmetry's
+// mirrored-half distance) and the cohort mean-shape's reference-template
+// diff (see craniumpy_core.cohort.reference_diff). divergingColor(0) is
+// pure white; see tintMesh for why that matters for the half
+// calculate_asymmetry zeroes out by design (see that function's own
+// docstring). heatmap is per-vertex, same order as the mesh's own vertices
+// - assumes a single-mesh GLB (mesh_to_glb always produces one), so no
+// per-child index offsetting is needed.
+export function applyHeatmap(meshObject, heatmap) {
+  const maxAbs = heatmapMaxAbs(heatmap);
+  tintMesh(meshObject, heatmap, (v) => divergingColor(v / maxAbs));
+}
+
+// colors vertices by a per-vertex non-negative MAGNITUDE heatmap (mm) - the
+// cohort mean-shape's inter-patient spread (see
+// craniumpy_core.cohort.mean_shape's variability). uses the sequential
+// (not diverging) scale above, deliberately distinct from applyHeatmap's
+// red/blue - see sequentialColor's own comment for why.
+export function applySequentialHeatmap(meshObject, heatmap) {
+  const max = heatmapMax(heatmap);
+  tintMesh(meshObject, heatmap, (v) => sequentialColor(v / max));
 }
 
 export function removeHeatmap(meshObject) {

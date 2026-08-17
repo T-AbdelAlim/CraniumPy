@@ -73,6 +73,7 @@ export default function PreprocessingPanel({
       <li key={name} data-name={name} className={p ? "picked" : ""}>
         <span className="landmark-swatch" />
         <span className="landmark-label">{LANDMARK_LABELS[name]}</span>
+        <span className="landmark-sep"> | </span>
         <span className="landmark-desc">{LANDMARK_DESCRIPTIONS[name]}</span>
         <span className="landmark-value">{p ? `${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}` : "not picked"}</span>
       </li>

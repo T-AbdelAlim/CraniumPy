@@ -6,6 +6,7 @@ import MeshViewToggles from "./workspaces/data/MeshViewToggles.jsx";
 import PreprocessingPanel from "./workspaces/preprocessing/PreprocessingPanel.jsx";
 import AnalysisPanel from "./workspaces/analysis/AnalysisPanel.jsx";
 import PatientMetadataForm from "./components/PatientMetadataForm.jsx";
+import CohortWorkspace from "./workspaces/cohort/CohortWorkspace.jsx";
 import {
   meshUrl,
   startAlign,
@@ -86,6 +87,7 @@ const BLANK_PATIENT_METADATA = {
   sex: "",
   date_imaging: "",
   age_imaging: "",
+  image_timing: "",
   treatment: "",
   age_surgery_months: "",
   free_variable: "",
@@ -109,6 +111,13 @@ function App() {
   const [textureEnabled, setTextureEnabled] = useState(false);
   const [hasTexture, setHasTexture] = useState(false);
   const [activeWorkspace, setActiveWorkspace] = useState("data");
+  // "patients" (everything else in this file) | "cohort" (batch/cohort
+  // analysis across already-exported patients - see
+  // workspaces/cohort/CohortWorkspace.jsx). a full remount on switch, not a
+  // dual-mounted-hidden Viewer - see CohortWorkspace's own module comment
+  // for why that tradeoff is fine for v1: the backend session is untouched
+  // either way, only in-progress frontend landmark/align state resets.
+  const [appMode, setAppMode] = useState("patients");
 
   const [target, setTarget] = useState("cranium");
   const [useAltFrontal, setUseAltFrontal] = useState(false);
@@ -1111,8 +1120,23 @@ function App() {
   const onAnalysisTab = activeWorkspace === "analysis";
   const inspectorTitle = onPreprocessingTab ? "Preprocessing" : onAnalysisTab ? "Analysis" : "Data";
 
+  if (appMode === "cohort") {
+    return (
+      <Shell
+        appMode={appMode}
+        onAppModeChange={setAppMode}
+        workspaces={[]}
+        workspace={<CohortWorkspace />}
+        inspectorTitle={null}
+        inspector={null}
+      />
+    );
+  }
+
   return (
     <Shell
+      appMode={appMode}
+      onAppModeChange={setAppMode}
       contextLabel={meshLabel}
       workspaces={WORKSPACES}
       activeWorkspace={activeWorkspace}
