@@ -14,10 +14,10 @@ import MeanShapeTab from "./tabs/MeanShapeTab.jsx";
 const TABS = [
   { id: "overview", label: "Overview" },
   { id: "table", label: "Table" },
-  { id: "metrics", label: "Custom metrics" },
   { id: "stratify", label: "Stratify & compare" },
   { id: "plots", label: "Plots" },
   { id: "meanshape", label: "Mean shape" },
+  { id: "metrics", label: "Custom metrics" },
 ];
 
 // batch/cohort analysis - a second top-level workspace alongside Patients

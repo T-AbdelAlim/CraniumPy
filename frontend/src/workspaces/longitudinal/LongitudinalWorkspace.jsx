@@ -71,7 +71,15 @@ export default function LongitudinalWorkspace() {
         )}
       </div>
       <div className="longitudinal-ws-content">
-        {activeTab === "compare" && (
+        {/* both tabs stay mounted the whole time, just hidden via CSS when
+            not active - not a conditional render. each tab owns real,
+            hard-to-recompute state (uploaded sessions, loaded Viewer
+            meshes, per-slot target/entry-mode, an established
+            correspondence set...) that a full unmount would throw away -
+            switching back to Compare used to come back to an empty upload
+            screen with the meshes gone from the viewers, even though the
+            underlying sessions/measurements were still perfectly valid. */}
+        <div style={{ display: activeTab === "compare" ? undefined : "none" }}>
           <CompareTab
             slots={slots}
             onSlotsChange={setSlots}
@@ -80,8 +88,10 @@ export default function LongitudinalWorkspace() {
             overlayMode={overlayMode}
             onOverlayModeChange={setOverlayMode}
           />
-        )}
-        {activeTab === "correspondence" && <CorrespondenceTab slots={slots} />}
+        </div>
+        <div style={{ display: activeTab === "correspondence" ? undefined : "none" }}>
+          <CorrespondenceTab slots={slots} />
+        </div>
       </div>
     </div>
   );

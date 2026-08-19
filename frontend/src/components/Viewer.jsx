@@ -412,11 +412,19 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
     // own docstring) rather than swapping in new ones, so
     // meshStateRef.current.materials already points at the right objects -
     // no rebuild needed the way texture toggling needs one.
-    showHeatmap(heatmap) {
+    //
+    // dim defaults to true (the Analysis workspace's own long-standing
+    // behavior, where the user's own opacity slider immediately takes over
+    // - see ANALYSIS_DEFAULT_MESH_OPACITY above) - the Longitudinal
+    // workspace's own heatmaps (Compare tab's asymmetry overlay,
+    // Correspondence tab's change map) pass dim:false, since those don't
+    // have an opacity slider to recover visibility with afterward and the
+    // user wants those heatmaps fully opaque.
+    showHeatmap(heatmap, { dim = true } = {}) {
       const meshObject = meshStateRef.current.object;
       if (!meshObject) return;
       applyHeatmap(meshObject, heatmap);
-      applyOpacityState(meshStateRef, ANALYSIS_DEFAULT_MESH_OPACITY);
+      applyOpacityState(meshStateRef, dim ? ANALYSIS_DEFAULT_MESH_OPACITY : 1.0);
     },
     // the cohort workspace's "spread" mean-shape view (see
     // MeanShapeTab.jsx) - a non-negative magnitude heatmap, rendered with

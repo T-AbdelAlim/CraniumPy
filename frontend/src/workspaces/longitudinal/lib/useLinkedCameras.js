@@ -20,32 +20,57 @@ import { useEffect, useRef } from "react";
 export function useLinkedCameras(viewerRefs, enabled) {
   const syncingRef = useRef(false);
 
+  // a string fingerprint of which refs are currently populated (e.g.
+  // "110" for three viewers, the third not mounted yet) - recomputed on
+  // every render, not just inside the effect. this exists because
+  // `viewerRefs` itself doesn't reliably change identity when a new viewer
+  // becomes available: CompareTab.jsx passes the SAME array object every
+  // render (elements pushed into it in place as slots are added), so the
+  // effect below would never re-run to attach a listener on a newly-added
+  // third/fourth viewer - "link cameras" would keep working for the
+  // original two (their listeners were already attached) but a new viewer
+  // would never get one of its own, so moving IT never propagated anywhere
+  // even though moving one of the original two still (correctly) moved
+  // everything including the new one, via the live/mutated array read
+  // inside the handler below. depending on this fingerprint instead of
+  // `viewerRefs` itself forces a re-attach exactly when the set of
+  // populated refs actually changes.
+  const populatedKey = viewerRefs.map((r) => (r.current ? "1" : "0")).join("");
+
   useEffect(() => {
     if (!enabled) return undefined;
-    const controlsList = viewerRefs.map((r) => r.current?.getControls()).filter(Boolean);
-    if (controlsList.length < 2) return undefined;
+    // pair each ref with its controls together, rather than filtering
+    // controls into their own separately-indexed array - a `.filter` on
+    // just the controls list used to desync its indices from `viewerRefs`
+    // whenever any ref wasn't populated yet, so a handler could end up
+    // reading/writing the wrong viewer entirely.
+    const entries = viewerRefs
+      .map((ref) => ({ ref, controls: ref.current?.getControls() }))
+      .filter((e) => e.controls);
+    if (entries.length < 2) return undefined;
 
-    function makeHandler(sourceIndex) {
+    function makeHandler(sourceEntry) {
       return () => {
         // setCameraState below calls controls.update(), which itself fires
         // a 'change' event on THAT instance - without this guard, two (or
         // more) linked viewers would immediately recurse into each other.
         if (syncingRef.current) return;
         syncingRef.current = true;
-        const state = viewerRefs[sourceIndex].current?.getCameraState();
+        const state = sourceEntry.ref.current?.getCameraState();
         if (state) {
-          viewerRefs.forEach((r, i) => {
-            if (i !== sourceIndex) r.current?.setCameraState(state);
+          entries.forEach((e) => {
+            if (e !== sourceEntry) e.ref.current?.setCameraState(state);
           });
         }
         syncingRef.current = false;
       };
     }
 
-    const handlers = controlsList.map((_, i) => makeHandler(i));
-    controlsList.forEach((controls, i) => controls.addEventListener("change", handlers[i]));
+    const handlers = entries.map((e) => makeHandler(e));
+    entries.forEach((e, i) => e.controls.addEventListener("change", handlers[i]));
     return () => {
-      controlsList.forEach((controls, i) => controls.removeEventListener("change", handlers[i]));
+      entries.forEach((e, i) => e.controls.removeEventListener("change", handlers[i]));
     };
-  }, [viewerRefs, enabled]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, populatedKey]);
 }

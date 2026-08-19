@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import UploadPanel from "../data/UploadPanel.jsx";
 import Viewer from "../../components/Viewer.jsx";
 import { meshUrl, startAlign, startClip, pollStatus } from "../../api/sessions.js";
 import { measureMesh } from "../../api/longitudinal.js";
 import { LANDMARK_COLORS, LANDMARK_LABELS, LANDMARK_NAMES, nextUnpickedLandmark } from "../../lib/landmarks.js";
+import { detectTargetFromFilename } from "./lib/detectTarget.js";
 
 // one compared image's own mini pipeline + its own <Viewer> - deliberately a
 // smaller state machine than App.jsx's own (no target-switch snapshotting,
@@ -25,55 +26,62 @@ import { LANDMARK_COLORS, LANDMARK_LABELS, LANDMARK_NAMES, nextUnpickedLandmark 
 // workspace's mean-shape measurements already rely on. that sidesteps
 // needing a session's own /run (built for the single-patient
 // upload->align->clip->run flow's resample+measure step) entirely.
+//
+// every viewerRef.current.displayMesh(...) call below is explicitly
+// awaited, in line, before anything that depends on the mesh actually
+// being on screen (measuring, or CompareTab's own overlay/heatmap effect
+// noticing slot.ready flip true) - this used to be a separate useEffect
+// keyed on [sessionId, meshStage] that fired the load WITHOUT awaiting it,
+// racing against measureAndReport's own (independent) API call: whichever
+// finished first didn't matter for correctness, but if the measurement
+// finished BEFORE the mesh had actually loaded, CompareTab's overlay
+// effect ran against a Viewer with nothing (or the previous mesh) in it -
+// every show*Overlay/showHeatmap call silently no-ops with no mesh to
+// draw on, and nothing ever re-triggers them once the mesh finally does
+// load. that was the "asymmetry heatmap shows opaque, no color" bug.
 export default function TimepointSlot({ slot, onChange, viewerRef, colorIndex, canRemove, onRemove }) {
   const [entryMode, setEntryMode] = useState(null); // null | "pipeline" | "preregistered"
   const [target, setTarget] = useState("cranium");
+  const [detectedTargetNote, setDetectedTargetNote] = useState(null); // {detected} | null
   const [sessionId, setSessionId] = useState(null);
   const [landmarks, setLandmarks] = useState({});
   const [stage, setStage] = useState("upload"); // "upload" | "picking" | "processing" | "ready"
   const [status, setStatus] = useState("");
-  const [meshStage, setMeshStage] = useState("original");
   const [measurements, setMeasurements] = useState(null);
 
   const displayLandmarks = {};
   for (const [name, p] of Object.entries(landmarks)) displayLandmarks[name] = p;
 
-  // reflects the mesh currently in the viewer whenever sessionId/meshStage
-  // changes - landmark markers stay controlled by the `landmarks` prop
-  // regardless (Viewer.jsx re-syncs them independently of displayMesh).
-  useEffect(() => {
-    if (!sessionId || !viewerRef.current) return;
-    viewerRef.current.displayMesh(meshUrl(sessionId, meshStage), { selectionHasTexture: false });
-  }, [sessionId, meshStage]);
-
-  // sid is always passed explicitly rather than read from the sessionId
-  // state - handleUploaded needs to call this in the very same tick as
-  // setSessionId(sid), before that state update has actually landed (React
-  // state isn't synchronous), so reading the `sessionId` closure variable
-  // there would still see the PREVIOUS value (null, for a fresh slot).
-  async function measureAndReport(sid, stageForRef) {
+  async function measureAndReport(sid, stageForRef, measureTarget) {
     setStatus("measuring...");
     try {
-      const m = await measureMesh({ sessionId: sid, stage: stageForRef }, target);
+      const m = await measureMesh({ sessionId: sid, stage: stageForRef }, measureTarget);
       setMeasurements(m);
       setStage("ready");
       setStatus("");
       onChange({
-        ...slot, sessionId: sid, stage: stageForRef, target, measurements: m, ready: true,
+        ...slot, sessionId: sid, stage: stageForRef, target: measureTarget, measurements: m, ready: true,
       });
     } catch (err) {
       setStatus(`measurement failed: ${err.message}`);
     }
   }
 
-  function handleUploaded({ sessionId: sid }) {
+  async function handleUploaded({ sessionId: sid, meshLabel }) {
     setSessionId(sid);
     if (entryMode === "preregistered") {
-      setMeshStage("original");
-      measureAndReport(sid, "original");
+      const detected = detectTargetFromFilename(meshLabel || "");
+      const effectiveTarget = detected || target;
+      if (detected && detected !== target) {
+        setTarget(detected);
+        setDetectedTargetNote({ detected });
+      }
+      await viewerRef.current?.displayMesh(meshUrl(sid, "original"), { selectionHasTexture: false });
+      await measureAndReport(sid, "original", effectiveTarget);
     } else {
       setStage("picking");
       setStatus("ctrl/cmd-click the mesh to place each landmark");
+      await viewerRef.current?.displayMesh(meshUrl(sid, "original"), { selectionHasTexture: false });
     }
   }
 
@@ -98,14 +106,14 @@ export default function TimepointSlot({ slot, onChange, viewerRef, colorIndex, c
       setStatus("clipping...");
       await startClip(sessionId, { target, landmarks: LANDMARK_NAMES.map((n) => landmarks[n]), comTranslation: true });
       await pollStatus(sessionId, (s, detail) => setStatus(detail ? `${s}: ${detail}` : s));
-      setMeshStage("clipped");
       // landmarks were picked in the RAW mesh's own coordinates - once the
       // viewer switches to showing the clipped/registered mesh, those
       // points no longer correspond to anything on screen (and the pick
       // handler is gone anyway, see the Viewer's onPick prop below), so
       // there's nothing for the markers to still be pointing at.
       setLandmarks({});
-      await measureAndReport(sessionId, "clipped");
+      await viewerRef.current?.displayMesh(meshUrl(sessionId, "clipped"), { selectionHasTexture: false });
+      await measureAndReport(sessionId, "clipped", target);
     } catch (err) {
       setStatus(`registration failed: ${err.message}`);
       setStage("picking");
@@ -119,6 +127,7 @@ export default function TimepointSlot({ slot, onChange, viewerRef, colorIndex, c
     setStage("upload");
     setStatus("");
     setMeasurements(null);
+    setDetectedTargetNote(null);
     onChange({ ...slot, sessionId: null, ready: false, measurements: null });
   }
 
@@ -133,7 +142,7 @@ export default function TimepointSlot({ slot, onChange, viewerRef, colorIndex, c
           type="text"
           className="longitudinal-slot-label-input"
           value={slot.label}
-          placeholder={`Timepoint ${colorIndex + 1}`}
+          placeholder={`Timepoint ${colorIndex}`}
           onChange={(e) => onChange({ ...slot, label: e.target.value })}
         />
         {canRemove && (
@@ -169,7 +178,7 @@ export default function TimepointSlot({ slot, onChange, viewerRef, colorIndex, c
             <button type="button" onClick={() => setEntryMode("pipeline")}>
               new scan (upload + register)
             </button>
-            <button type="button" className="button-subtle" onClick={() => setEntryMode("preregistered")}>
+            <button type="button" onClick={() => setEntryMode("preregistered")}>
               already registered file...
             </button>
           </>
@@ -203,6 +212,25 @@ export default function TimepointSlot({ slot, onChange, viewerRef, colorIndex, c
         )}
 
         {(stage === "processing" || (stage === "ready" && status)) && <p className="status-line">{status}</p>}
+
+        {stage === "ready" && detectedTargetNote && (
+          <p className="longitudinal-detected-note">
+            recognized {detectedTargetNote.detected === "face" ? "facial" : "cranial"} mesh, switched to "
+            {detectedTargetNote.detected === "face" ? "face" : "cranium"}"
+            <button
+              type="button"
+              className="button-subtle"
+              onClick={() => {
+                const other = target === "face" ? "cranium" : "face";
+                setTarget(other);
+                setDetectedTargetNote(null);
+                measureAndReport(sessionId, "original", other);
+              }}
+            >
+              use {target === "face" ? "cranium" : "face"} instead
+            </button>
+          </p>
+        )}
 
         {stage === "ready" && (
           <>

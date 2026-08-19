@@ -35,7 +35,7 @@ export default function MeasurementComparisonTable({ slots }) {
             {ready.map((s, i) => (
               <th key={s.id}>
                 <span className="viewer-legend-swatch" style={{ background: s.color, display: "inline-block", marginRight: "0.4em" }} />
-                {s.label || `Timepoint ${i + 1}`}
+                {s.label || `Timepoint ${i}`}
               </th>
             ))}
           </tr>

@@ -1011,6 +1011,11 @@ select {
   height: auto;
 }
 
+.cohort-ws-boxplot-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
 .cohort-ws-legend {
   display: flex;
   flex-wrap: wrap;
@@ -1228,7 +1233,8 @@ select {
 
 .longitudinal-slot-viewer {
   position: relative;
-  height: 320px;
+  width: 100%;
+  aspect-ratio: 1;
 }
 
 .longitudinal-slot-controls {
@@ -1270,8 +1276,42 @@ select {
 .longitudinal-correspondence-viewers {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 1rem;
+  grid-auto-rows: auto;
+  gap: 0.4rem 1rem;
   margin-top: 1rem;
+}
+
+/* each panel's children (heading, its own controls row, the viewer) become
+   direct items of the grid above instead of being sized as a group inside
+   a column - so row 1 is both panels' headings, row 2 is both panels'
+   control rows, row 3 is both viewers, each row sized to its own tallest
+   member. without this, "show heatmap" (one line) vs the morph control's
+   button+slider+speed-dropdown+readout (a taller row) left the two
+   viewers starting at two different heights even though the panels
+   themselves were in the same grid row.
+
+   display:contents alone isn't enough - grid auto-placement fills row 1's
+   BOTH columns before moving to row 2, in DOM order, and a panel's own 3
+   children all come before the next panel's in the DOM (that's what
+   display:contents promotes, not an interleaved h3/h3, control/control,
+   viewer/viewer order) - so without explicit grid-row per child, panel A's
+   own label would land in row 1 next to panel B's h3. assigning each
+   child's role to a fixed row is what actually lines the two panels up. */
+.longitudinal-correspondence-panel {
+  display: contents;
+}
+
+.longitudinal-correspondence-panel > h3 {
+  grid-row: 1;
+}
+
+.longitudinal-correspondence-panel > label,
+.longitudinal-correspondence-panel > .longitudinal-morph-control {
+  grid-row: 2;
+}
+
+.longitudinal-correspondence-panel > .longitudinal-slot-viewer {
+  grid-row: 3;
 }
 
 .longitudinal-correspondence-panel h3 {
@@ -1280,6 +1320,26 @@ select {
   letter-spacing: 0.03em;
   color: var(--text-muted);
   margin: 0 0 0.4rem;
+}
+
+.longitudinal-detected-note {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.longitudinal-detected-note button {
+  width: auto;
+  margin: 0;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.75rem;
 }
 
 .longitudinal-morph-control {

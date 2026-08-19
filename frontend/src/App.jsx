@@ -812,19 +812,39 @@ function App() {
     if (restored && incomingSnapshot) {
       applyTargetSnapshot(incomingSnapshot);
       if (sessionId) {
-        const descriptor = incomingSnapshot.showingNicpResult ? "nicp-result" : incomingSnapshot.meshStage;
-        const neededKey = meshDisplayKey(sessionId, newTarget, descriptor);
-        // skip the fetch/GLTF-parse/camera-refit entirely when what's
-        // already on screen is already exactly this - e.g. toggling back
-        // and forth without touching anything else in between.
-        if (displayedMeshKeyRef.current !== neededKey) {
-          await viewerRef.current.displayMesh(
-            incomingSnapshot.showingNicpResult ? nicpResultMeshUrl(sessionId) : meshUrl(sessionId, incomingSnapshot.meshStage),
-            { selectionHasTexture: incomingSnapshot.showingNicpResult ? false : selectionHasTexture },
-          );
-          displayedMeshKeyRef.current = neededKey;
+        // on the Analysis tab, with a completed run, the Analysis-tab
+        // overlay effect below (watching analysisResults/analysisViewMode,
+        // both of which applyTargetSnapshot just changed) is ABOUT to
+        // notice this and reload+decorate the result/nicp-result mesh
+        // itself, in one place - doing it again here would race it: two
+        // independent displayMesh calls for the same key, with no
+        // guarantee which one's showMeasurementsOverlay/setMeshOpacity
+        // work (only that effect does that part) actually lands on the
+        // mesh that ends up on screen. that was the "switch target twice,
+        // come back to Analysis, mesh is no longer opaque/overlay-less"
+        // bug - and the same race could just as easily have landed on the
+        // plain result mesh instead of the NICP one when "continue with
+        // NICP mesh" was on, for the identical reason. also deliberately
+        // NOT bumping meshRevision in this case: that would additionally
+        // trigger the results-fetch effect to re-fetch already-correct
+        // (just-restored) results AND reset analysisViewMode back to its
+        // default, undoing what applyTargetSnapshot above just restored.
+        const onAnalysisTabWithResults = activeWorkspace === "analysis" && incomingSnapshot.pipelineRan;
+        if (!onAnalysisTabWithResults) {
+          const descriptor = incomingSnapshot.showingNicpResult ? "nicp-result" : incomingSnapshot.meshStage;
+          const neededKey = meshDisplayKey(sessionId, newTarget, descriptor);
+          // skip the fetch/GLTF-parse/camera-refit entirely when what's
+          // already on screen is already exactly this - e.g. toggling back
+          // and forth without touching anything else in between.
+          if (displayedMeshKeyRef.current !== neededKey) {
+            await viewerRef.current.displayMesh(
+              incomingSnapshot.showingNicpResult ? nicpResultMeshUrl(sessionId) : meshUrl(sessionId, incomingSnapshot.meshStage),
+              { selectionHasTexture: incomingSnapshot.showingNicpResult ? false : selectionHasTexture },
+            );
+            displayedMeshKeyRef.current = neededKey;
+          }
+          setMeshRevision((n) => n + 1);
         }
-        setMeshRevision((n) => n + 1);
       }
       return;
     }
