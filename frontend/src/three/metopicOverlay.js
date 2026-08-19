@@ -7,12 +7,17 @@ import * as THREE from "three";
 // (x, z) plane lifted into 3D) - see api/schemas.py's MetopicResponse and
 // craniumpy_core.metopic's module docstring for the axis convention.
 
-const CONTOUR_COLOR = 0x3a3a3a;
-const PARABOLA_COLOR = 0x2563eb;
-const CENTRAL_COLOR = 0xd1453d;
-const TEMPORAL_COLOR = 0x0891b2;
-const FRONTAL_ANGLE_COLOR = 0x16a34a;
-const MIDLINE_COLOR = 0x999999;
+// default palette - overridable per call (see addMetopicOverlay's colors
+// param) so the Longitudinal workspace can draw two timepoints' contours in
+// two distinct, legend-matched palettes in the same viewer.
+const DEFAULT_METOPIC_COLORS = {
+  contour: 0x3a3a3a,
+  parabola: 0x2563eb,
+  central: 0xd1453d,
+  temporal: 0x0891b2,
+  frontalAngle: 0x16a34a,
+  midline: 0x999999,
+};
 
 function toVec3(point2d, y) {
   return new THREE.Vector3(point2d.x, y, point2d.z);
@@ -37,13 +42,14 @@ function contourSegmentInWindow(contour, normalizedArcLength, [start, end], y) {
   return points;
 }
 
-export function addMetopicOverlay({ sceneBag, metopic, markerRadius }) {
+export function addMetopicOverlay({ sceneBag, metopic, markerRadius, colors }) {
+  const c = { ...DEFAULT_METOPIC_COLORS, ...colors };
   const group = new THREE.Group();
   const y = metopic.slice_height;
   const contour = metopic.contour;
 
   const contourPoints = contour.map((p) => toVec3(p, y));
-  group.add(lineFromPoints(contourPoints, CONTOUR_COLOR));
+  group.add(lineFromPoints(contourPoints, c.contour));
 
   const xs = contour.map((p) => p.x);
   const xMin = Math.min(...xs);
@@ -55,37 +61,37 @@ export function addMetopicOverlay({ sceneBag, metopic, markerRadius }) {
     const z = metopic.parabola_a * x * x + metopic.parabola_c;
     parabolaPoints.push(new THREE.Vector3(x, y, z));
   }
-  group.add(lineFromPoints(parabolaPoints, PARABOLA_COLOR, true));
+  group.add(lineFromPoints(parabolaPoints, c.parabola, true));
 
   const zs = contour.map((p) => p.z);
   group.add(
     lineFromPoints(
       [new THREE.Vector3(0, y, Math.min(...zs)), new THREE.Vector3(0, y, Math.max(...zs))],
-      MIDLINE_COLOR,
+      c.midline,
       true
     )
   );
 
   const centralPts = contourSegmentInWindow(contour, metopic.normalized_arc_length, metopic.central_window, y);
-  if (centralPts.length > 1) group.add(lineFromPoints(centralPts, CENTRAL_COLOR));
+  if (centralPts.length > 1) group.add(lineFromPoints(centralPts, c.central));
   const leftPts = contourSegmentInWindow(contour, metopic.normalized_arc_length, metopic.left_temporal_window, y);
-  if (leftPts.length > 1) group.add(lineFromPoints(leftPts, TEMPORAL_COLOR));
+  if (leftPts.length > 1) group.add(lineFromPoints(leftPts, c.temporal));
   const rightPts = contourSegmentInWindow(contour, metopic.normalized_arc_length, metopic.right_temporal_window, y);
-  if (rightPts.length > 1) group.add(lineFromPoints(rightPts, TEMPORAL_COLOR));
+  if (rightPts.length > 1) group.add(lineFromPoints(rightPts, c.temporal));
 
   const [M, L, R] = metopic.frontal_angle_points;
-  group.add(lineFromPoints([toVec3(L, y), toVec3(M, y), toVec3(R, y)], FRONTAL_ANGLE_COLOR));
+  group.add(lineFromPoints([toVec3(L, y), toVec3(M, y), toVec3(R, y)], c.frontalAngle));
   for (const p of [L, R]) {
     const marker = new THREE.Mesh(
       new THREE.SphereGeometry(markerRadius, 12, 12),
-      new THREE.MeshBasicMaterial({ color: FRONTAL_ANGLE_COLOR })
+      new THREE.MeshBasicMaterial({ color: c.frontalAngle })
     );
     marker.position.copy(toVec3(p, y));
     group.add(marker);
   }
   const ridgeMarker = new THREE.Mesh(
     new THREE.SphereGeometry(markerRadius, 12, 12),
-    new THREE.MeshBasicMaterial({ color: CENTRAL_COLOR })
+    new THREE.MeshBasicMaterial({ color: c.central })
   );
   ridgeMarker.position.copy(toVec3(M, y));
   group.add(ridgeMarker);

@@ -2,15 +2,16 @@ import ResizablePane from "./ResizablePane.jsx";
 
 // the persistent application shell: left nav, top context bar, center
 // workspace (with its own tab strip), right inspector. the nav switches
-// between the two top-level app modes - "Patients" (single-patient
-// preprocess/analyze/export, everything else in this app) and "Cohort"
+// between the top-level app modes - "Per patient" (single-patient
+// preprocess/analyze/export, everything else in this app), "Longitudinal"
+// (follow-up comparison across a patient's own timepoints - see
+// workspaces/longitudinal/LongitudinalWorkspace.jsx), and "Cohort"
 // (batch/cohort analysis across already-exported patients - see
-// workspaces/cohort/CohortWorkspace.jsx). Research/References/History have
-// nothing behind them yet, and a nav entry with nowhere to go is worse than
-// no entry. no routing here either - workspace switching is local tab state
-// until patient persistence gives routes something real to key on
-// (:patientId). a bottom jobs bar slots into this grid once an async job
-// (register, analyze) actually exists to report on.
+// workspaces/cohort/CohortWorkspace.jsx). no routing here either -
+// workspace switching is local tab state until patient persistence gives
+// routes something real to key on (:patientId). a bottom jobs bar slots
+// into this grid once an async job (register, analyze) actually exists to
+// report on.
 //
 // nav/inspector are each wrapped in a ResizablePane (its own width/collapse
 // state) rather than fixed grid columns - "auto 1fr auto" below just lets
@@ -38,12 +39,20 @@ export default function Shell({
       <ResizablePane side="left" defaultWidth={230} storageKey="nav">
         <nav className="shell-nav">
           <div className="shell-nav-top">
+            <h3 className="metadata-form-title">Workspace</h3>
             <button
               type="button"
               className={appMode === "patients" ? "shell-nav-item active" : "shell-nav-item"}
               onClick={() => onAppModeChange("patients")}
             >
-              Patients
+              Per patient
+            </button>
+            <button
+              type="button"
+              className={appMode === "longitudinal" ? "shell-nav-item active" : "shell-nav-item"}
+              onClick={() => onAppModeChange("longitudinal")}
+            >
+              Longitudinal
             </button>
             <button
               type="button"

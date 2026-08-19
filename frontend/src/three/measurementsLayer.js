@@ -88,8 +88,18 @@ function tintMesh(meshObject, values, colorFn) {
 // docstring). heatmap is per-vertex, same order as the mesh's own vertices
 // - assumes a single-mesh GLB (mesh_to_glb always produces one), so no
 // per-child index offsetting is needed.
-export function applyHeatmap(meshObject, heatmap) {
-  const maxAbs = heatmapMaxAbs(heatmap);
+//
+// maxAbs normally comes from the given heatmap itself (heatmapMaxAbs) - the
+// color scale always spans exactly what's being shown. fixedMaxAbs
+// overrides that with an explicit value instead, for a caller that redraws
+// the SAME diverging scale against a heatmap whose own magnitude changes
+// from call to call (see the Longitudinal workspace's morph animation,
+// LongitudinalMorphViewer.jsx) - without a fixed reference, a heatmap
+// scaled down by some factor would renormalize right back to full
+// saturation against its own (now smaller) max, and the color would never
+// visibly change at all.
+export function applyHeatmap(meshObject, heatmap, fixedMaxAbs) {
+  const maxAbs = fixedMaxAbs ?? heatmapMaxAbs(heatmap);
   tintMesh(meshObject, heatmap, (v) => divergingColor(v / maxAbs));
 }
 
@@ -130,24 +140,33 @@ function addSpan(group, a, b, color, markerRadius) {
   }
 }
 
+// default palette, matching results_bundle.py's _measurement_figure exactly
+// - overridable per call (see colors param below) so the Longitudinal
+// workspace can draw two timepoints' overlays in two distinct, legend-
+// matched palettes in the same viewer without them being indistinguishable.
+const DEFAULT_MEASUREMENTS_COLORS = { hc: 0xd1453d, bpd: 0x2563eb, ofd: 0x16a34a };
+
 // the HC-slice ring (closed red loop) plus the BPD (blue) and OFD (green)
 // spans with endpoint markers - same visual as
 // results_bundle.py's _measurement_figure, live on the mesh instead of a
 // static PNG. hcPolygon may be null (a slice plane that missed the mesh -
 // see craniumpy_core.craniometrics.hc_slice_polygon), in which case just
-// the two spans show.
-export function addMeasurementsOverlay({ sceneBag, hcPolygon, frontOpt, occOpt, lhOpt, rhOpt, markerRadius }) {
+// the two spans show. colors optionally overrides the default red/blue/
+// green palette (see DEFAULT_MEASUREMENTS_COLORS) - any keys left out fall
+// back to their default.
+export function addMeasurementsOverlay({ sceneBag, hcPolygon, frontOpt, occOpt, lhOpt, rhOpt, markerRadius, colors }) {
+  const c = { ...DEFAULT_MEASUREMENTS_COLORS, ...colors };
   const group = new THREE.Group();
 
   if (hcPolygon && hcPolygon.length > 2) {
     const points = hcPolygon.map((p) => new THREE.Vector3(p.x, p.y, p.z));
     points.push(points[0].clone());
     const geo = new THREE.BufferGeometry().setFromPoints(points);
-    group.add(new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xd1453d, linewidth: 2 })));
+    group.add(new THREE.Line(geo, new THREE.LineBasicMaterial({ color: c.hc, linewidth: 2 })));
   }
 
-  addSpan(group, lhOpt, rhOpt, 0x2563eb, markerRadius); // BPD (breadth)
-  addSpan(group, occOpt, frontOpt, 0x16a34a, markerRadius); // OFD (depth)
+  addSpan(group, lhOpt, rhOpt, c.bpd, markerRadius); // BPD (breadth)
+  addSpan(group, occOpt, frontOpt, c.ofd, markerRadius); // OFD (depth)
 
   sceneBag.scene.add(group);
   return group;

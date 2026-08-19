@@ -655,13 +655,16 @@ def _metrics_row(
         "file_name": metadata.get("file_name", ""),
         "file_path": metadata.get("file_path", ""),
         "patient_id": metadata.get("patient_id", ""),
+        "date_of_birth": metadata.get("date_of_birth", ""),
         "diagnosis": metadata.get("diagnosis", ""),
         "sex": metadata.get("sex", ""),
         "date_imaging": metadata.get("date_imaging", ""),
         "age_imaging": metadata.get("age_imaging", ""),
         "image_timing": metadata.get("image_timing", ""),
+        "surgical_status": metadata.get("surgical_status", ""),
         "treatment": metadata.get("treatment", ""),
-        "age_surgery_months": metadata.get("age_surgery_months", ""),
+        "date_of_intervention": metadata.get("date_of_intervention", ""),
+        "age_intervention_months": metadata.get("age_intervention_months", ""),
         "free_variable": metadata.get("free_variable", ""),
         "target": target,
         "com_correction": "yes" if config.get("com_translation") else "no",
@@ -783,14 +786,21 @@ def _row_key(row: dict[str, str]) -> str:
     return row.get("file_path") or row.get("file_name") or ""
 
 
-def _upsert_rows(path: Path, row: dict[str, str]) -> None:
+def _upsert_rows(path: Path, row: dict[str, str], key_fn: Callable[[dict[str, str]], str] = _row_key) -> None:
     """creates path with a header + this row if it doesn't exist yet;
-    otherwise replaces the row matching this session's _row_key or appends
-    a new one. unions the existing file's columns with this row's, so an
-    older file (fewer columns, from before some feature existed) doesn't
-    lose data - its rows just stay blank in any new column, and this row
-    stays blank in any column only the old file had."""
-    key = _row_key(row)
+    otherwise replaces the row matching key_fn(row) or appends a new one.
+    unions the existing file's columns with this row's, so an older file
+    (fewer columns, from before some feature existed) doesn't lose data -
+    its rows just stay blank in any new column, and this row stays blank
+    in any column only the old file had.
+
+    key_fn defaults to _row_key (file_path/file_name) - the ordinary case,
+    and what the id-mapping file always uses (see _upsert_cohort_xlsx).
+    the cohort file itself passes a different key_fn (matching on
+    cohort_id instead), since file_path/file_name are deliberately never
+    columns in that file at all - see _upsert_cohort_xlsx's own docstring
+    for why."""
+    key = key_fn(row)
     header, existing_rows = _read_xlsx_rows(path)
 
     fieldnames = list(row.keys())
@@ -801,7 +811,7 @@ def _upsert_rows(path: Path, row: dict[str, str]) -> None:
     replaced = False
     if key:
         for i, existing in enumerate(existing_rows):
-            if _row_key(existing) == key:
+            if key_fn(existing) == key:
                 existing_rows[i] = row
                 replaced = True
                 break
@@ -829,38 +839,69 @@ def _next_cohort_id(existing_ids: list[str]) -> str:
     return f"C{highest + 1:05d}"
 
 
+# columns that never appear in the shared cohort file itself - anything
+# that identifies the patient (directly, like patient_id/date_of_birth, or
+# indirectly, like a file_name/file_path that might embed a name or MRN)
+# stays only in the id-mapping companion file (see _id_mapping_path).
+# age_imaging/age_intervention_months are deliberately NOT in this set -
+# they're derived FROM date_of_birth, but a plain age-in-months number
+# isn't itself patient-identifying the way the underlying dates are, and
+# the whole point of a shared cohort file is to carry exactly that kind of
+# de-identified derived measurement.
+_COHORT_XLSX_EXCLUDED_COLUMNS = {"patient_id", "file_name", "file_path", "date_of_birth", "date_of_intervention"}
+
+
 def _upsert_cohort_xlsx(cohort_path: Path, row: dict[str, str]) -> None:
     """upserts this session's row into a shared, cross-center-ready cohort
-    spreadsheet, keyed on file_path/file_name (see _row_key) - a second
-    export of the same source file overwrites its existing row instead of
-    duplicating it, exactly like _upsert_rows in general, but this one
-    additionally assigns every distinct file a cohort_id: a short,
-    sequential, center-issued identifier that can travel with the row when
-    this file is shared with another center, in place of patient_id (a
+    spreadsheet - a second export of the same source file overwrites its
+    existing row instead of duplicating it, exactly like _upsert_rows in
+    general, but this one additionally assigns every distinct file a
+    cohort_id: a short, sequential, center-issued identifier that can
+    travel with the row when this file is shared with another center, in
+    place of every patient-identifying field this function strips out
+    before writing (see _COHORT_XLSX_EXCLUDED_COLUMNS) - patient_id (a
     locally meaningful identifier, e.g. a hospital MRN or local study
-    number, that must not leave this center). the id is stable across
-    re-exports of the same file (reused, not reassigned, when a row is
-    overwritten), and recorded alongside patient_id in a SEPARATE file next
-    to this one (see _id_mapping_path) - only that companion file, never
-    this one, should be treated as sensitive and kept off anything shared
-    onward."""
+    number), file_name/file_path (which can embed a patient name or MRN in
+    the filename itself), and date_of_birth/date_of_intervention (real
+    calendar dates, identifying in combination with the rest of a row even
+    though the derived age-in-months fields that stay behind aren't). the
+    id is stable across re-exports of the same file (reused, not
+    reassigned, when a row is overwritten), and recorded - alongside every
+    field just stripped out - in a SEPARATE file next to this one (see
+    _id_mapping_path). that companion file, never this one, is what should
+    be treated as sensitive and kept off anything shared onward; matching
+    "is this the same file as before" (so re-exporting reuses the same
+    cohort_id) has to key off THAT file's own rows now, since the fields
+    _row_key needs for that are exactly the ones this file no longer
+    carries."""
+    mapping_path = _id_mapping_path(cohort_path)
+    _, existing_mapping_rows = _read_xlsx_rows(mapping_path)
     _, existing_cohort_rows = _read_xlsx_rows(cohort_path)
     key = _row_key(row)
-    existing_id = next((r.get("cohort_id", "") for r in existing_cohort_rows if _row_key(r) == key), "")
-    cohort_id = existing_id or _next_cohort_id([r.get("cohort_id", "") for r in existing_cohort_rows])
+    existing_id = next((r.get("cohort_id", "") for r in existing_mapping_rows if _row_key(r) == key), "")
+    # minted from whichever of the two files' own ids goes higher, not just
+    # the mapping file's - a cohort file that ever ends up without a
+    # matching (or fully in-sync) mapping file next to it (hand-edited,
+    # migrated from an older version, mapping file deleted...) still can't
+    # collide with an id already sitting in the cohort file itself.
+    all_existing_ids = [r.get("cohort_id", "") for r in existing_mapping_rows] + [
+        r.get("cohort_id", "") for r in existing_cohort_rows
+    ]
+    cohort_id = existing_id or _next_cohort_id(all_existing_ids)
 
-    patient_id = row.get("patient_id", "")
-    cohort_row = {k: v for k, v in row.items() if k != "patient_id"}
+    cohort_row = {k: v for k, v in row.items() if k not in _COHORT_XLSX_EXCLUDED_COLUMNS}
     cohort_row = {"cohort_id": cohort_id, **cohort_row}
-    _upsert_rows(cohort_path, cohort_row)
+    _upsert_rows(cohort_path, cohort_row, key_fn=lambda r: r.get("cohort_id", ""))
 
     mapping_row = {
         "cohort_id": cohort_id,
-        "patient_id": patient_id,
+        "patient_id": row.get("patient_id", ""),
         "file_name": row.get("file_name", ""),
         "file_path": row.get("file_path", ""),
+        "date_of_birth": row.get("date_of_birth", ""),
+        "date_of_intervention": row.get("date_of_intervention", ""),
     }
-    _upsert_rows(_id_mapping_path(cohort_path), mapping_row)
+    _upsert_rows(mapping_path, mapping_row)
 
 
 # short, parent-facing one-liners for the metrics actually shown on the PDF
@@ -1093,13 +1134,16 @@ def _report_pdf(
         info_lines = [
             ("File", metadata.get("file_name", "") or original_filename),
             ("Patient ID", metadata.get("patient_id", "")),
+            ("Date of birth", metadata.get("date_of_birth", "")),
             ("Diagnosis", metadata.get("diagnosis", "")),
             ("Imaging date", metadata.get("date_imaging", "")),
             ("Age at imaging (months)", metadata.get("age_imaging", "")),
             ("Image timing", metadata.get("image_timing", "")),
+            ("Surgical status", metadata.get("surgical_status", "")),
             ("Sex", metadata.get("sex", "")),
             ("Treatment", metadata.get("treatment", "")),
-            ("Age at surgery (months)", metadata.get("age_surgery_months", "")),
+            ("Date of intervention", metadata.get("date_of_intervention", "")),
+            ("Age at intervention (months)", metadata.get("age_intervention_months", "")),
             ("Notes", metadata.get("free_variable", "")),
         ]
         y = 0.80
@@ -1248,6 +1292,134 @@ def mean_shape_report_pdf(
                 extra_captions.append("Shaded band on the figure above: +/-1 SD forehead depth across the group.")
 
             _draw_metric_fields(page, 0.42, fields, row, extra_captions=extra_captions)
+            pdf.savefig(page)
+
+    return buf.getvalue()
+
+
+def longitudinal_comparison_report_pdf(
+    mesh_a: trimesh.Trimesh,
+    mesh_b: trimesh.Trimesh,
+    target: str,
+    label_a: str,
+    label_b: str,
+    measurements_a: GroupMeasurements,
+    measurements_b: GroupMeasurements,
+    diff_heatmap: np.ndarray | None = None,
+) -> bytes:
+    """two-timepoint comparison PDF for the Longitudinal/Follow-up
+    workspace - a title page, then Timepoint A's own full report section
+    (one page per metric group that applies, exactly _report_pdf's own
+    per-group page layout), then Timepoint B's section the same way, then
+    (when diff_heatmap is given) a final page showing the per-vertex
+    change from mesh_a to mesh_b as a heatmap - same diverging blue/red
+    scale an asymmetry heatmap uses, reusing _draw_asymmetry unchanged via
+    a synthetic AsymmetryResult wrapping diff_heatmap (see
+    craniumpy_core.cohort.reference_diff for what diff_heatmap actually is
+    - not a real asymmetry measurement, just the same "signed mm
+    displacement, diverging colormap" shape).
+
+    each section reuses the exact same full-page-width rect
+    mean_shape_report_pdf's own pages already use, rather than splitting
+    the page in half for both timepoints at once - every _draw_* figure
+    function's title/legend/colorbar text is sized in fixed points, not
+    scaled to the rect it's given, so halving the page width just runs
+    that text into the other half instead of shrinking to fit. two
+    full-width sections avoids that outright, at the cost of a longer PDF
+    instead of a literally side-by-side one."""
+    row_a = _metrics_row(
+        target, {}, {"com_translation": True, "nicp": None},
+        measurements_a.craniometrics, measurements_a.asymmetry, measurements_a.metopic, measurements_a.frontal_bossing,
+    )
+    row_b = _metrics_row(
+        target, {}, {"com_translation": True, "nicp": None},
+        measurements_b.craniometrics, measurements_b.asymmetry, measurements_b.metopic, measurements_b.frontal_bossing,
+    )
+
+    is_cranial = target == "cranium"
+    asymmetry_view = "top" if is_cranial else "frontal"
+    asymmetry_label = "cranial" if is_cranial else "facial"
+    asymmetry_group = "cranial_asymmetry" if is_cranial else "asymmetry"
+    asymmetry_sagittal_group = "cranial_asymmetry_sagittal" if is_cranial else "asymmetry_sagittal"
+
+    def draw_figure_for(mesh: trimesh.Trimesh, measurements: GroupMeasurements) -> dict[str, Callable]:
+        draw_figure: dict[str, Callable[[Figure, tuple[float, float, float, float]], None]] = {}
+        if measurements.craniometrics is not None:
+            draw_figure["craniometrics"] = lambda fig, rect: _draw_measurements(fig, rect, mesh, measurements.craniometrics)
+        if measurements.asymmetry is not None:
+            draw_figure[asymmetry_group] = lambda fig, rect: _draw_asymmetry(
+                fig, rect, mesh, measurements.asymmetry, label=asymmetry_label, view=asymmetry_view
+            )
+            draw_figure[asymmetry_sagittal_group] = lambda fig, rect: _draw_asymmetry(
+                fig, rect, mesh, measurements.asymmetry, label=asymmetry_label, view="sagittal"
+            )
+        if measurements.metopic is not None:
+            draw_figure["metopic"] = lambda fig, rect: _draw_metopic(fig, rect, measurements.metopic)
+        if measurements.frontal_bossing is not None:
+            draw_figure["frontal_bossing"] = lambda fig, rect: _draw_frontal_bossing(fig, rect, measurements.frontal_bossing)
+        return draw_figure
+
+    sections = [
+        (label_a, "#2563eb", row_a, draw_figure_for(mesh_a, measurements_a)),
+        (label_b, "#d1453d", row_b, draw_figure_for(mesh_b, measurements_b)),
+    ]
+
+    buf = io.BytesIO()
+    with PdfPages(buf) as pdf:
+        title_page = Figure(figsize=(PAGE_W_IN, PAGE_H_IN))
+        FigureCanvasAgg(title_page)
+        title_page.text(0.5, 0.92, "CranioSuite Longitudinal Comparison Report", ha="center", fontsize=20, weight="bold")
+        title_page.text(
+            0.5, 0.885, f"{'Cranial' if target == 'cranium' else 'Facial'} comparison", ha="center", fontsize=11, color="#666666",
+        )
+
+        info_lines = [
+            ("Timepoint A", label_a),
+            ("Timepoint B", label_b),
+            ("Target", "Cranium" if target == "cranium" else "Face"),
+        ]
+        y = 0.80
+        for label, value in info_lines:
+            title_page.text(TEXT_X, y, f"{label}:", va="top", fontsize=10, weight="bold")
+            for line in _wrap(value or "-", width=54):
+                y = _draw_line(title_page, y, line, fontsize=10, x=LABEL_VALUE_X)
+        y -= _pt_to_frac(BLOCK_GAP_PT)
+        y = _draw_line(
+            title_page, y,
+            "Each timepoint's own analysis follows as its own section, in the same order as a single-patient report.",
+            fontsize=9, color="#999999",
+        )
+        if diff_heatmap is not None:
+            y = _draw_line(
+                title_page, y,
+                "Includes a per-vertex change map on the final page (both timepoints share point correspondence).",
+                fontsize=9, color="#999999",
+            )
+        _draw_line(
+            title_page, y, f"Generated {datetime.now(timezone.utc).strftime('%Y-%m-%d')}", fontsize=8, color="#999999",
+        )
+        pdf.savefig(title_page)
+
+        for section_label, color, row, draw_figure in sections:
+            for group, fields in _PDF_METRIC_FIELDS.items():
+                draw = draw_figure.get(group)
+                if draw is None:
+                    continue
+
+                page = Figure(figsize=(PAGE_W_IN, PAGE_H_IN))
+                FigureCanvasAgg(page)
+                page.text(0.5, 0.975, section_label, ha="center", fontsize=12, weight="bold", color=color)
+                draw(page, (0.04, 0.46, 0.92, 0.50))
+                _draw_metric_fields(page, 0.42, fields, row)
+                pdf.savefig(page)
+
+        if diff_heatmap is not None:
+            page = Figure(figsize=(PAGE_W_IN, PAGE_H_IN))
+            FigureCanvasAgg(page)
+            page.text(0.5, 0.96, f"Change from {label_a} to {label_b}", ha="center", fontsize=13, weight="bold")
+            synthetic = AsymmetryResult(heatmap=diff_heatmap, mean_asymmetry_index=float(np.mean(np.abs(diff_heatmap))))
+            view = "top" if target == "cranium" else "frontal"
+            _draw_asymmetry(page, (0.04, 0.06, 0.92, 0.84), mesh_b, synthetic, label="net", view=view)
             pdf.savefig(page)
 
     return buf.getvalue()

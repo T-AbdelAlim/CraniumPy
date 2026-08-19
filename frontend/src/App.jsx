@@ -7,6 +7,7 @@ import PreprocessingPanel from "./workspaces/preprocessing/PreprocessingPanel.js
 import AnalysisPanel from "./workspaces/analysis/AnalysisPanel.jsx";
 import PatientMetadataForm from "./components/PatientMetadataForm.jsx";
 import CohortWorkspace from "./workspaces/cohort/CohortWorkspace.jsx";
+import LongitudinalWorkspace from "./workspaces/longitudinal/LongitudinalWorkspace.jsx";
 import {
   meshUrl,
   startAlign,
@@ -89,6 +90,17 @@ function meshDisplayKey(sid, target, descriptor) {
 
 const NICP_DEFAULTS = { alphaStart: 200, alphaEnd: 1, alphaSteps: 20, gamma: 1.0, distThreshold: 10.0, innerIters: 3 };
 
+// the fields that genuinely differ per IMAGE rather than per patient - reset
+// to blank on a fresh upload even in "same patient, new image" mode (see
+// handleUploaded/PatientMetadataForm's freeze toggle), where every other
+// field carries over unchanged instead of being retyped. file_name/file_path
+// aren't in this list - they're never frozen at all, always overwritten from
+// whatever was just uploaded (see handleUploaded) - that's also what keeps a
+// same-patient follow-up's cohort row from colliding with the first visit's:
+// api/results_bundle.py's _row_key upserts on file_path/file_name, so two
+// genuinely different files always land as two separate rows.
+const PER_IMAGE_METADATA_FIELDS = ["date_imaging", "age_imaging", "image_timing", "surgical_status", "free_variable"];
+
 // every patient/visit field, blank - file_name/file_path get filled in
 // separately on upload (see handleUploaded), the rest are the user's to
 // type. matches api/schemas.py's PatientMetadata field set.
@@ -96,13 +108,16 @@ const BLANK_PATIENT_METADATA = {
   file_name: "",
   file_path: "",
   patient_id: "",
+  date_of_birth: "",
   diagnosis: "",
   sex: "",
   date_imaging: "",
   age_imaging: "",
   image_timing: "",
+  surgical_status: "",
   treatment: "",
-  age_surgery_months: "",
+  date_of_intervention: "",
+  age_intervention_months: "",
   free_variable: "",
 };
 
@@ -133,10 +148,14 @@ function App() {
   const [activeWorkspace, setActiveWorkspace] = useState("data");
   // "patients" (everything else in this file) | "cohort" (batch/cohort
   // analysis across already-exported patients - see
-  // workspaces/cohort/CohortWorkspace.jsx). a full remount on switch, not a
-  // dual-mounted-hidden Viewer - see CohortWorkspace's own module comment
-  // for why that tradeoff is fine for v1: the backend session is untouched
-  // either way, only in-progress frontend landmark/align state resets.
+  // workspaces/cohort/CohortWorkspace.jsx) | "longitudinal" (side-by-side
+  // comparison of two or more already-registered images of the same
+  // patient, or against a reference - see
+  // workspaces/longitudinal/LongitudinalWorkspace.jsx). a full remount on
+  // switch, not a dual-mounted-hidden Viewer - see CohortWorkspace's own
+  // module comment for why that tradeoff is fine for v1: the backend
+  // session is untouched either way, only in-progress frontend
+  // landmark/align state resets.
   const [appMode, setAppMode] = useState("patients");
 
   const [target, setTarget] = useState("cranium");
@@ -282,6 +301,14 @@ function App() {
   const [patientMetadata, setPatientMetadata] = useState(BLANK_PATIENT_METADATA);
   const [cohortMode, setCohortMode] = useState("none"); // "none" | "create" | "append"
   const [cohortPath, setCohortPath] = useState(null);
+  // "same patient, new image" - see PatientMetadataForm's freeze toggle.
+  // when on, a fresh upload keeps every field except file_name/file_path
+  // (always overwritten - see PER_IMAGE_METADATA_FIELDS' own comment) and
+  // PER_IMAGE_METADATA_FIELDS (reset blank, since those genuinely need new
+  // input for a new image). stays on across uploads until the user turns
+  // it off - processing a third, fourth, ... image of the same patient in
+  // a row shouldn't need re-toggling each time.
+  const [samePatientMode, setSamePatientMode] = useState(false);
 
   async function handleUploaded({
     sessionId: newSessionId,
@@ -295,10 +322,21 @@ function App() {
     setWireframe(false);
     setDropStatus("");
     resetPreprocessingState();
-    // a fresh mesh almost always means a new patient - carrying over the
-    // previous patient's sex/treatment/etc by accident is worse than
-    // having to retype, so every field resets, not just the identity ones.
-    setPatientMetadata({ ...BLANK_PATIENT_METADATA, file_name: newMeshLabel || "", file_path: newFilePath || "" });
+    if (samePatientMode) {
+      // everything except file_name/file_path carries over unchanged, then
+      // the per-image fields reset blank for fresh input - see
+      // PER_IMAGE_METADATA_FIELDS.
+      setPatientMetadata((prev) => {
+        const next = { ...prev, file_name: newMeshLabel || "", file_path: newFilePath || "" };
+        for (const field of PER_IMAGE_METADATA_FIELDS) next[field] = "";
+        return next;
+      });
+    } else {
+      // a fresh mesh means a new patient - carrying over the previous
+      // patient's sex/treatment/etc by accident is worse than having to
+      // retype, so every field resets, not just the identity ones.
+      setPatientMetadata({ ...BLANK_PATIENT_METADATA, file_name: newMeshLabel || "", file_path: newFilePath || "" });
+    }
     const { hasTexture: loadedHasTexture } = await viewerRef.current.displayMesh(meshUrl(newSessionId), {
       selectionHasTexture: newSelectionHasTexture,
     });
@@ -1286,6 +1324,19 @@ function App() {
     );
   }
 
+  if (appMode === "longitudinal") {
+    return (
+      <Shell
+        appMode={appMode}
+        onAppModeChange={setAppMode}
+        workspaces={[]}
+        workspace={<LongitudinalWorkspace />}
+        inspectorTitle={null}
+        inspector={null}
+      />
+    );
+  }
+
   return (
     <Shell
       appMode={appMode}
@@ -1304,6 +1355,8 @@ function App() {
             cohortMode={cohortMode}
             cohortPath={cohortPath}
             onCohortModeChange={handleCohortModeChange}
+            samePatientMode={samePatientMode}
+            onSamePatientModeChange={setSamePatientMode}
           />
         )
       }

@@ -106,8 +106,9 @@ def _metopic() -> MetopicResult:
 
 
 _METADATA_KEYS = (
-    "file_name", "file_path", "patient_id", "diagnosis", "sex", "date_imaging", "age_imaging",
-    "image_timing", "treatment", "age_surgery_months", "free_variable",
+    "file_name", "file_path", "patient_id", "date_of_birth", "diagnosis", "sex", "date_imaging", "age_imaging",
+    "image_timing", "surgical_status", "treatment", "date_of_intervention", "age_intervention_months",
+    "free_variable",
 )
 _SETTINGS_KEYS = ("com_correction", "nicp_used", "nicp_template")
 
@@ -260,7 +261,11 @@ def _read_mapping(cohort_path: Path) -> list[dict[str, str]]:
 def test_upsert_cohort_xlsx_creates_file_with_header_and_row(tmp_path):
     cohort_path = tmp_path / "cohort.xlsx"
     row = _metrics_row(
-        "cranium", {"file_name": "a.ply", "file_path": "/data/a.ply", "patient_id": "MRN-1"},
+        "cranium",
+        {
+            "file_name": "a.ply", "file_path": "/data/a.ply", "patient_id": "MRN-1",
+            "date_of_birth": "2020-01-01", "date_of_intervention": "2021-06-01", "age_imaging": "18",
+        },
         _config(), _craniometrics(), None, None, None,
     )
 
@@ -269,19 +274,26 @@ def test_upsert_cohort_xlsx_creates_file_with_header_and_row(tmp_path):
     assert cohort_path.exists()
     rows = _read_cohort(cohort_path)
     assert len(rows) == 1
-    # the shared cohort file gets a cohort_id in place of the local
-    # patient_id - see test_upsert_cohort_xlsx_writes_local_id_mapping_file
-    # for where patient_id actually ends up
+    # the shared cohort file gets a cohort_id in place of every
+    # patient-identifying field - see
+    # test_upsert_cohort_xlsx_writes_local_id_mapping_file for where those
+    # actually end up. a derived field like age_imaging isn't itself
+    # identifying the way the raw dates it came from are, so it stays.
     assert rows[0]["cohort_id"] == "C00001"
-    assert "patient_id" not in rows[0]
-    assert rows[0]["file_path"] == "/data/a.ply"
+    for key in ("patient_id", "file_name", "file_path", "date_of_birth", "date_of_intervention"):
+        assert key not in rows[0]
+    assert rows[0]["age_imaging"] == "18"
     assert rows[0]["depth_mm"] == row["depth_mm"]
 
 
 def test_upsert_cohort_xlsx_writes_local_id_mapping_file(tmp_path):
     cohort_path = tmp_path / "cohort.xlsx"
     row = _metrics_row(
-        "cranium", {"file_name": "a.ply", "file_path": "/data/a.ply", "patient_id": "MRN-1"},
+        "cranium",
+        {
+            "file_name": "a.ply", "file_path": "/data/a.ply", "patient_id": "MRN-1",
+            "date_of_birth": "2020-01-01", "date_of_intervention": "2021-06-01",
+        },
         _config(), _craniometrics(), None, None, None,
     )
 
@@ -295,6 +307,8 @@ def test_upsert_cohort_xlsx_writes_local_id_mapping_file(tmp_path):
     assert mapping_rows[0]["cohort_id"] == "C00001"
     assert mapping_rows[0]["patient_id"] == "MRN-1"
     assert mapping_rows[0]["file_path"] == "/data/a.ply"
+    assert mapping_rows[0]["date_of_birth"] == "2020-01-01"
+    assert mapping_rows[0]["date_of_intervention"] == "2021-06-01"
 
 
 def test_upsert_cohort_xlsx_appends_a_genuinely_new_row(tmp_path):
@@ -307,11 +321,16 @@ def test_upsert_cohort_xlsx_appends_a_genuinely_new_row(tmp_path):
 
     rows = _read_cohort(cohort_path)
     assert len(rows) == 2
-    assert rows[0]["file_path"] == "/data/a.ply"
-    assert rows[1]["file_path"] == "/data/b.ply"
-    # each distinct file gets its own, sequential cohort_id
+    # each distinct file gets its own, sequential cohort_id, in upload
+    # order - file_path itself isn't a cohort-file column at all (see
+    # _COHORT_XLSX_EXCLUDED_COLUMNS), only the id-mapping file still ties a
+    # cohort_id back to which file it was
     assert rows[0]["cohort_id"] == "C00001"
     assert rows[1]["cohort_id"] == "C00002"
+    mapping_rows = _read_mapping(cohort_path)
+    assert {r["cohort_id"]: r["file_path"] for r in mapping_rows} == {
+        "C00001": "/data/a.ply", "C00002": "/data/b.ply",
+    }
 
 
 def test_upsert_cohort_xlsx_replaces_row_with_matching_file_path_instead_of_duplicating(tmp_path):
@@ -349,12 +368,16 @@ def test_upsert_cohort_xlsx_falls_back_to_file_name_when_file_path_blank(tmp_pat
 
 def test_upsert_cohort_xlsx_unions_columns_from_an_older_narrower_schema(tmp_path):
     cohort_path = tmp_path / "cohort.xlsx"
-    # simulate an older cohort file with a column today's schema no longer
-    # writes (e.g. a since-removed metric) plus a normal row
+    # simulate an older cohort file - written back when this file still
+    # carried file_path directly (before that became id-mapping-only, see
+    # _COHORT_XLSX_EXCLUDED_COLUMNS), plus a column today's schema no
+    # longer writes at all (e.g. a since-removed metric) - no matching
+    # id-mapping file exists yet, on purpose (an old/hand-migrated file is
+    # exactly the case that has none).
     wb = Workbook()
     ws = wb.active
-    ws.append(["file_path", "file_name", "an_old_removed_column"])
-    ws.append(["/data/old.ply", "old.ply", "legacy-value"])
+    ws.append(["cohort_id", "file_path", "an_old_removed_column"])
+    ws.append(["C00001", "/data/old.ply", "legacy-value"])
     wb.save(cohort_path)
 
     new_row = _metrics_row("cranium", {"file_name": "b.ply", "file_path": "/data/b.ply"}, _config(), _craniometrics(), None, None, None)
@@ -367,14 +390,18 @@ def test_upsert_cohort_xlsx_unions_columns_from_an_older_narrower_schema(tmp_pat
     assert "depth_mm" in header
 
     rows = _read_cohort(cohort_path)
-    old_row = next(r for r in rows if r["file_path"] == "/data/old.ply")
+    old_row = next(r for r in rows if r["cohort_id"] == "C00001")
     assert old_row["an_old_removed_column"] == "legacy-value"
     assert old_row["depth_mm"] == ""  # new column, blank on the untouched old row
 
-    new_row_out = next(r for r in rows if r["file_path"] == "/data/b.ply")
+    # the new row's cohort_id starts from the highest id already IN THE
+    # COHORT FILE (C00001), not just the empty id-mapping file - C00002,
+    # not a collision - see _upsert_cohort_xlsx's own comment on why both
+    # files' existing ids are considered.
+    new_row_out = next(r for r in rows if r["cohort_id"] == "C00002")
     assert new_row_out["an_old_removed_column"] == ""  # old column, blank on the new row
     assert new_row_out["depth_mm"] == "59.12"
-    assert new_row_out["cohort_id"] == "C00001"
+    assert new_row_out.get("file_path", "") == ""  # never written for a row from today's schema
 
 
 # --- PDF figure layout ---------------------------------------------------
