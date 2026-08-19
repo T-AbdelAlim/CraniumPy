@@ -7,7 +7,7 @@
 
 const SHORT_COLUMN_LABELS = {
   age_imaging: "age",
-  age_surgery_months: "surgeryage",
+  age_intervention_months: "interventionage",
 };
 
 function sanitizeSegment(value) {

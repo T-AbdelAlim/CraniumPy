@@ -1056,13 +1056,14 @@ def test_save_analysis_cohort_xlsx_create_append_and_replace(client, landmarks_p
     mesh_a = _open_run_and_save("patient_a.ply", cohort_path, {"sex": "male", "patient_id": "MRN-A"})
     rows = _read_xlsx_rows(cohort_path.read_bytes())
     assert len(rows) == 1
-    assert rows[0]["file_path"] == str(mesh_a)
     assert rows[0]["sex"] == "male"
-    # the shared cohort file gets a cohort_id instead of the locally
-    # meaningful patient_id, which never appears in it - see the id-mapping
-    # assertions below for where it does end up
+    # the shared cohort file gets a cohort_id instead of every
+    # patient-identifying field (patient_id, file_name/file_path,
+    # date_of_birth/date_of_intervention) - none of them ever appear in
+    # it, see the id-mapping assertions below for where they do end up
     assert rows[0]["cohort_id"] == "C00001"
-    assert "patient_id" not in rows[0]
+    for key in ("patient_id", "file_name", "file_path", "date_of_birth", "date_of_intervention"):
+        assert key not in rows[0]
 
     mapping_rows = _read_xlsx_rows(_id_mapping_path(cohort_path).read_bytes())
     assert len(mapping_rows) == 1
@@ -1074,17 +1075,21 @@ def test_save_analysis_cohort_xlsx_create_append_and_replace(client, landmarks_p
     mesh_b = _open_run_and_save("patient_b.ply", cohort_path, {"sex": "female", "patient_id": "MRN-B"})
     rows = _read_xlsx_rows(cohort_path.read_bytes())
     assert len(rows) == 2
-    assert {r["file_path"] for r in rows} == {str(mesh_a), str(mesh_b)}
     assert {r["cohort_id"] for r in rows} == {"C00001", "C00002"}
+    mapping_rows = _read_xlsx_rows(_id_mapping_path(cohort_path).read_bytes())
+    assert {r["cohort_id"]: r["file_path"] for r in mapping_rows} == {
+        "C00001": str(mesh_a), "C00002": str(mesh_b),
+    }
 
     # re-exporting the SAME file_path updates the row in place, no
-    # duplicate, and reuses rather than reassigns its cohort_id
+    # duplicate, and reuses rather than reassigns its cohort_id - matched
+    # via the id-mapping file's own file_path column, since the cohort
+    # file itself no longer carries one to match on directly
     _open_run_and_save("patient_a.ply", cohort_path, {"sex": "male", "treatment": "helmet", "patient_id": "MRN-A"})
     rows = _read_xlsx_rows(cohort_path.read_bytes())
     assert len(rows) == 2
-    updated = next(r for r in rows if r["file_path"] == str(mesh_a))
+    updated = next(r for r in rows if r["cohort_id"] == "C00001")
     assert updated["treatment"] == "helmet"
-    assert updated["cohort_id"] == "C00001"
 
 
 def test_save_analysis_cohort_xlsx_records_nicp_mesh_path(client, landmarks_payload, tmp_path):

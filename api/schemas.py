@@ -169,26 +169,39 @@ class PatientMetadata(BaseModel):
     sidebar form before exporting - see api/results_bundle.py's
     _metrics_row. plain optional strings, no numeric/date coercion, so
     "still included but empty when unfilled" is trivial everywhere (form,
-    wire format, CSV cell) with no null-handling branches. age_imaging is
-    entered in months, same unit as age_surgery_months - this app's
-    cephalometrics are validated for pediatric heads."""
+    wire format, CSV cell) with no null-handling branches. age_imaging and
+    age_intervention_months are both in months (this app's cephalometrics
+    are validated for pediatric heads) and are auto-computed client-side
+    from date_of_birth whenever both it and the relevant date are given
+    (see PatientMetadataForm.jsx) - still plain editable strings here,
+    since a caller with no date_of_birth on file can still type an age
+    directly."""
 
     file_name: str = ""
     file_path: str = ""
     patient_id: str = ""
+    date_of_birth: str = ""
     diagnosis: str = ""
     sex: str = ""
     date_imaging: str = ""
     age_imaging: str = ""
-    # "pre-op" or "post_op_{n}", n a free-text follow-up marker the user
-    # fills in themselves (e.g. "6w", "6mo", "1y") - see
-    # PatientMetadataForm.jsx's timing selector, which builds this single
-    # string from a type dropdown + the free-text value rather than
-    # splitting it into two columns, so a cohort spreadsheet can stratify
-    # on one column instead of two.
+    # "t0" (initial image) or "t1".."t9" (a follow-up image, its sequence
+    # number picked from a fixed dropdown - see PatientMetadataForm.jsx's
+    # timing selector), or "" (unspecified) - a single flat string, same
+    # "one column, not two" reasoning surgical_status just below explains
+    # for itself.
     image_timing: str = ""
+    # "pre-op"/"post-op"/"no_surgery" - whether surgery had already happened
+    # at the time THIS image was taken, orthogonal to image_timing above
+    # (which just says which image in the sequence this is). the frontend
+    # treats this as required once image_timing is non-blank (see
+    # PatientMetadataForm.jsx), but it's still a plain optional string here
+    # like every other field - nothing server-side actually depends on it
+    # being filled in.
+    surgical_status: str = ""
     treatment: str = ""
-    age_surgery_months: str = ""
+    date_of_intervention: str = ""
+    age_intervention_months: str = ""
     free_variable: str = ""
 
 
@@ -551,3 +564,107 @@ class CohortExportRequest(BaseModel):
 
     sheets: list[CohortExportSheet] = Field(min_length=1)
     filename: str = "cohort_export.xlsx"
+
+
+# --- longitudinal / follow-up workspace -------------------------------
+
+
+class LongitudinalMeshRef(BaseModel):
+    """points at one already-in-memory server-side mesh - either a live
+    patient session's own pipeline stage, or a previously-completed direct
+    patient-to-patient fit's result (see LongitudinalNicpFitResponse.fit_id).
+    exactly one of session_id/fit_id should be set. stage="original" is the
+    Longitudinal workspace's "already registered" fast path - a file the
+    user picked that's already the output of a prior Patients session (an
+    _rg/_rg_C/_rg_F/_rg_{C|F}N.ply), uploaded as a fresh session's raw mesh
+    with no /align or /clip needed since it's already in this app's
+    canonical registered frame."""
+
+    session_id: str | None = None
+    stage: Literal["original", "clipped", "result", "nicp_result"] = "nicp_result"
+    fit_id: str | None = None
+
+
+class LongitudinalNicpFitRequest(BaseModel):
+    """direct patient-to-patient NICP fit - source_ref's mesh becomes the
+    deforming template, target_ref's mesh is what it's fit onto. unlike
+    NicpConfig (which fits a session's mesh onto a shipped/custom
+    template), there's no template file here - the "template" IS one of
+    the two sessions' own meshes, so the two end up in the SOURCE mesh's
+    topology, vertex-correspondent with each other. same alpha/gamma/
+    dist_threshold/inner_iters knobs as NicpConfig, for the same reason
+    (they reconstruct nicp()'s own stiffness schedule)."""
+
+    source_ref: LongitudinalMeshRef
+    target_ref: LongitudinalMeshRef
+    alpha_start: float = 200.0
+    alpha_end: float = 1.0
+    alpha_steps: int = 20
+    gamma: float = 1.0
+    dist_threshold: float = 10.0
+    inner_iters: int = 3
+
+
+class LongitudinalNicpFitResponse(BaseModel):
+    """fit_id is a short-lived handle for the async job this kicks off -
+    poll GET /api/longitudinal/nicp-fit/{fit_id}/status, then fetch the
+    result via GET .../mesh once status is "done", or reference it in a
+    later LongitudinalMeshRef (fit_id=...) for /diff or /report."""
+
+    fit_id: str
+
+
+class LongitudinalFitStatusResponse(BaseModel):
+    status: Literal["running", "done", "error"]
+    error: str | None = None
+    progress: ProgressInfo | None = None
+
+
+class LongitudinalDiffRequest(BaseModel):
+    mesh_a: LongitudinalMeshRef
+    mesh_b: LongitudinalMeshRef
+
+
+class LongitudinalDiffResponse(BaseModel):
+    """signed per-vertex displacement (mm) of mesh_b from mesh_a, projected
+    onto mesh_a's own vertex normals - same sign convention as
+    AsymmetryResponse.heatmap (positive = mesh_b sits outward of mesh_a),
+    see craniumpy_core.cohort.reference_diff. both refs must resolve to
+    the same template topology (same vertex count/face connectivity) -
+    comes back as a 400 otherwise, not a silently meaningless comparison."""
+
+    heatmap: list[float]
+    vertex_count: int
+
+
+class LongitudinalMeasureRequest(BaseModel):
+    """runs the same measurement suite the Patients workspace's Analysis
+    tab shows directly on an already-registered mesh, with NO landmark
+    picking or session /run needed - see
+    craniumpy_core.cohort.measure_mean_shape, which works by assuming the
+    mesh sits at registration.rigid.REFERENCE_TRIANGLE/
+    FACE_REFERENCE_TRIANGLE (true for any mesh that went through this
+    app's normal rigid registration, live session or NICP-fitted alike).
+    response is CohortMeanShapeMeasurementsResponse - the same shape the
+    Cohort workspace's own "measure this arbitrary mesh" endpoint already
+    returns, reused as-is rather than a second near-identical schema."""
+
+    ref: LongitudinalMeshRef
+    target: Literal["cranium", "face"]
+
+
+class LongitudinalReportRequest(BaseModel):
+    """a two-timepoint comparison PDF - see
+    api/results_bundle.longitudinal_comparison_report_pdf. include_diff
+    requires mesh_a/mesh_b to be the same template topology (same
+    reasoning as LongitudinalDiffRequest); set it False for two
+    independently-registered (not yet NICP-fit) meshes, which still
+    support a side-by-side measurements comparison, just no per-vertex
+    change page."""
+
+    mesh_a: LongitudinalMeshRef
+    mesh_b: LongitudinalMeshRef
+    target: Literal["cranium", "face"]
+    label_a: str = "Baseline"
+    label_b: str = "Follow-up"
+    include_diff: bool = True

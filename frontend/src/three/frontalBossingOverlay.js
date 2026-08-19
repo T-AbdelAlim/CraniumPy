@@ -8,15 +8,17 @@ import * as THREE from "three";
 // see App.jsx's analysis overlay effect and
 // craniumpy_core.craniometrics.frontal_bossing.
 
-const PROFILE_COLOR = 0x999999;
-const ANGLE_COLOR = 0xea580c;
-const REFERENCE_COLOR = 0xb0b0b0;
+// default palette - overridable per call (see addFrontalBossingOverlay's
+// colors param) so the Longitudinal workspace can draw two timepoints'
+// profiles in two distinct, legend-matched palettes in the same viewer.
+const DEFAULT_FRONTAL_BOSSING_COLORS = { profile: 0x999999, angle: 0xea580c, reference: 0xb0b0b0 };
 
 function toVec3(p) {
   return new THREE.Vector3(p.x, p.y, p.z);
 }
 
-export function addFrontalBossingOverlay({ sceneBag, frontalBossing, markerRadius }) {
+export function addFrontalBossingOverlay({ sceneBag, frontalBossing, markerRadius, colors }) {
+  const c = { ...DEFAULT_FRONTAL_BOSSING_COLORS, ...colors };
   const group = new THREE.Group();
   const sellion = toVec3(frontalBossing.sellion);
   const frontalPoint = toVec3(frontalBossing.frontal_point);
@@ -24,7 +26,7 @@ export function addFrontalBossingOverlay({ sceneBag, frontalBossing, markerRadiu
   if (frontalBossing.profile && frontalBossing.profile.length > 1) {
     const profilePoints = frontalBossing.profile.map(toVec3);
     const geo = new THREE.BufferGeometry().setFromPoints(profilePoints);
-    group.add(new THREE.Line(geo, new THREE.LineBasicMaterial({ color: PROFILE_COLOR, linewidth: 1 })));
+    group.add(new THREE.Line(geo, new THREE.LineBasicMaterial({ color: c.profile, linewidth: 1 })));
   }
 
   // the horizontal reference the angle was measured against, drawn from
@@ -42,18 +44,18 @@ export function addFrontalBossingOverlay({ sceneBag, frontalBossing, markerRadiu
   const refGeo = new THREE.BufferGeometry().setFromPoints([sellion, horizontalEnd]);
   const refLine = new THREE.Line(
     refGeo,
-    new THREE.LineDashedMaterial({ color: REFERENCE_COLOR, dashSize: 3, gapSize: 2, linewidth: 1 })
+    new THREE.LineDashedMaterial({ color: c.reference, dashSize: 3, gapSize: 2, linewidth: 1 })
   );
   refLine.computeLineDistances();
   group.add(refLine);
 
   const angleGeo = new THREE.BufferGeometry().setFromPoints([sellion, frontalPoint]);
-  group.add(new THREE.Line(angleGeo, new THREE.LineBasicMaterial({ color: ANGLE_COLOR, linewidth: 2 })));
+  group.add(new THREE.Line(angleGeo, new THREE.LineBasicMaterial({ color: c.angle, linewidth: 2 })));
 
   for (const p of [sellion, frontalPoint]) {
     const marker = new THREE.Mesh(
       new THREE.SphereGeometry(markerRadius, 12, 12),
-      new THREE.MeshBasicMaterial({ color: ANGLE_COLOR })
+      new THREE.MeshBasicMaterial({ color: c.angle })
     );
     marker.position.copy(p);
     group.add(marker);

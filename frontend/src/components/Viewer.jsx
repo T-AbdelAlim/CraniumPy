@@ -11,6 +11,7 @@ import { addMetopicOverlay, removeMetopicOverlay } from "../three/metopicOverlay
 import { addFrontalBossingOverlay, removeFrontalBossingOverlay } from "../three/frontalBossingOverlay.js";
 import { addNodesOverlay, removeNodesOverlay, resyncNodesGeometry } from "../three/nicpFitVisualization.js";
 import { addSpreadBandRibbon, removeSpreadBandRibbon } from "../three/spreadBandOverlay.js";
+import { addCorrespondenceMarkers, removeCorrespondenceMarkers } from "../three/correspondenceMarkers.js";
 
 // deforming-template color during a live NICP fit - matches the --hc red
 // token already used elsewhere in this app, so "moving/deforming" reads as
@@ -65,6 +66,10 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
   // three/spreadBandOverlay.js), keyed by caller-chosen id so the three
   // bands can be shown/hidden independently of each other.
   const spreadBandsRef = useRef({});
+  // Longitudinal workspace's "check correspondence" markers (see
+  // three/correspondenceMarkers.js) - a single group, since only one
+  // mesh's own sample points ever show at once per Viewer instance.
+  const correspondenceMarkersRef = useRef(null);
   const draggingNameRef = useRef(null);
   const onPickRef = useRef(onPick);
   const onDragRef = useRef(onDrag);
@@ -143,6 +148,7 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
         removeFrontalBossingOverlay(sceneBagRef.current, frontalBossingOverlayRef.current);
         if (nicpPreviewRef.current) sceneBagRef.current.scene.remove(nicpPreviewRef.current);
         for (const band of Object.values(spreadBandsRef.current)) removeSpreadBandRibbon(sceneBagRef.current, band);
+        removeCorrespondenceMarkers(sceneBagRef.current, correspondenceMarkersRef.current);
       }
       removeNodesOverlay(nicpPreviewNodesRef.current);
       removeNodesOverlay(mainMeshNodesRef.current);
@@ -237,12 +243,14 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
         removeFrontalBossingOverlay(sceneBagRef.current, frontalBossingOverlayRef.current);
         if (nicpPreviewRef.current) sceneBagRef.current.scene.remove(nicpPreviewRef.current);
         for (const band of Object.values(spreadBandsRef.current)) removeSpreadBandRibbon(sceneBagRef.current, band);
+        removeCorrespondenceMarkers(sceneBagRef.current, correspondenceMarkersRef.current);
       }
       templateOverlayRef.current = null;
       measurementsOverlayRef.current = null;
       metopicOverlayRef.current = null;
       frontalBossingOverlayRef.current = null;
       spreadBandsRef.current = {};
+      correspondenceMarkersRef.current = null;
       removeNodesOverlay(nicpPreviewNodesRef.current);
       nicpPreviewNodesRef.current = null;
       removeNodesOverlay(mainMeshNodesRef.current);
@@ -374,7 +382,7 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
     // the mesh so a line running along the far side of the surface doesn't
     // just disappear into it - the user's own opacity slider (App.jsx's
     // analysisMeshOpacity) takes over immediately after via setMeshOpacity.
-    showMeasurementsOverlay({ hcPolygon, frontOpt, occOpt, lhOpt, rhOpt }) {
+    showMeasurementsOverlay({ hcPolygon, frontOpt, occOpt, lhOpt, rhOpt, colors }) {
       const sceneBag = sceneBagRef.current;
       if (!sceneBag) return;
       removeMeasurementsOverlay(sceneBag, measurementsOverlayRef.current);
@@ -385,6 +393,7 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
         occOpt,
         lhOpt,
         rhOpt,
+        colors,
         markerRadius: meshStateRef.current.markerRadius * 1.2,
       });
       applyOpacityState(meshStateRef, ANALYSIS_DEFAULT_MESH_OPACITY);
@@ -430,13 +439,14 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
     // mutually exclusive with the heatmap above (see App.jsx's
     // analysisViewMode). same dim-the-mesh treatment as the other two
     // overlays, so the contour/regions read clearly against the surface.
-    showMetopicOverlay(metopic) {
+    showMetopicOverlay(metopic, colors) {
       const sceneBag = sceneBagRef.current;
       if (!sceneBag) return;
       removeMetopicOverlay(sceneBag, metopicOverlayRef.current);
       metopicOverlayRef.current = addMetopicOverlay({
         sceneBag,
         metopic,
+        colors,
         markerRadius: meshStateRef.current.markerRadius * 1.2,
       });
       applyOpacityState(meshStateRef, ANALYSIS_DEFAULT_MESH_OPACITY);
@@ -454,13 +464,14 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
     // alongside the HC/BPD/OFD overlay on a cranial target, or alongside
     // the heatmap/metopic overlay on a facial one. doesn't touch mesh
     // opacity itself - whichever of those already dimmed the mesh owns that.
-    showFrontalBossingOverlay(frontalBossing) {
+    showFrontalBossingOverlay(frontalBossing, colors) {
       const sceneBag = sceneBagRef.current;
       if (!sceneBag) return;
       removeFrontalBossingOverlay(sceneBag, frontalBossingOverlayRef.current);
       frontalBossingOverlayRef.current = addFrontalBossingOverlay({
         sceneBag,
         frontalBossing,
+        colors,
         markerRadius: meshStateRef.current.markerRadius * 1.2,
       });
     },
@@ -500,6 +511,59 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
     // top of it.
     setMeshOpacity(value) {
       applyOpacityState(meshStateRef, value);
+    },
+    // the Longitudinal workspace's camera-link feature (see
+    // workspaces/longitudinal/lib/useLinkedCameras.js) - exposes the raw
+    // live OrbitControls instance rather than a wrapped API, so the linking
+    // hook can attach/detach its own 'change' listeners externally; this
+    // component itself stays unaware that linking exists at all.
+    getControls() {
+      return sceneBagRef.current?.controls ?? null;
+    },
+    getCameraState() {
+      const sceneBag = sceneBagRef.current;
+      if (!sceneBag) return null;
+      return { position: sceneBag.camera.position.toArray(), target: sceneBag.controls.target.toArray() };
+    },
+    setCameraState({ position, target }) {
+      const sceneBag = sceneBagRef.current;
+      if (!sceneBag) return;
+      sceneBag.camera.position.fromArray(position);
+      sceneBag.controls.target.fromArray(target);
+      sceneBag.controls.update();
+    },
+    // the currently-displayed mesh's own vertex positions, as a flat
+    // Float32Array (x0,y0,z0,x1,y1,z1,...) - the Longitudinal workspace's
+    // "check correspondence" feature (see CorrespondenceTab.jsx) reads
+    // this straight off whatever displayMesh already loaded, rather than
+    // fetching+parsing the same GLB a second time just to get its
+    // vertices. null if nothing's displayed yet. assumes a single-mesh
+    // GLB (mesh_to_glb always produces one), same as every other
+    // per-vertex overlay in this file.
+    getVertexPositions() {
+      const object = meshStateRef.current.object;
+      if (!object) return null;
+      let positions = null;
+      object.traverse((child) => {
+        if (!positions && child.isMesh) positions = child.geometry.attributes.position.array;
+      });
+      return positions;
+    },
+    // N colored sphere markers at given 3D points, on the currently
+    // displayed mesh - see three/correspondenceMarkers.js.
+    showCorrespondenceMarkers(points, colors) {
+      const sceneBag = sceneBagRef.current;
+      if (!sceneBag) return;
+      removeCorrespondenceMarkers(sceneBag, correspondenceMarkersRef.current);
+      correspondenceMarkersRef.current = addCorrespondenceMarkers({
+        sceneBag, points, colors, markerRadius: meshStateRef.current.markerRadius * 1.5,
+      });
+    },
+    hideCorrespondenceMarkers() {
+      const sceneBag = sceneBagRef.current;
+      if (!sceneBag) return;
+      removeCorrespondenceMarkers(sceneBag, correspondenceMarkersRef.current);
+      correspondenceMarkersRef.current = null;
     },
   }));
 
