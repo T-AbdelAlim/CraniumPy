@@ -10,7 +10,9 @@ import json
 import os
 import platform
 import subprocess
+import sys
 import threading
+from pathlib import Path
 
 import uvicorn
 import webview
@@ -19,6 +21,19 @@ from api.main import app
 
 HOST = "127.0.0.1"
 PORT = 8734
+
+# same frozen-exe-vs-source-tree split as craniumpy_core.template_registry's
+# TEMPLATES_DIR - without an explicit icon, pywebview's WinForms backend
+# falls back to extracting whatever icon is embedded in sys.executable (see
+# site-packages/webview/platforms/winforms.py) - the CraniumSuite icon for
+# the packaged exe (PyInstaller embeds it as a native resource - see
+# craniumpy.spec's own EXE(icon=...)), but plain python.exe's own icon when
+# running from source (`python -m desktop.app`), which is the "no logo in
+# the taskbar/title bar" symptom. passing this explicitly fixes both.
+if getattr(sys, "frozen", False):
+    ICON_PATH = Path(sys._MEIPASS) / "CraniumPy_logo.ico"
+else:
+    ICON_PATH = Path(__file__).resolve().parent.parent / "resources" / "CraniumPy_logo.ico"
 
 _server: uvicorn.Server | None = None
 
@@ -163,7 +178,30 @@ def _register_native_drop(window: webview.Window) -> None:
     window.dom.body.events.drop += on_drop
 
 
+def _set_windows_app_user_model_id() -> None:
+    """Windows keys a window's TASKBAR icon/grouping off the process's own
+    "Application User Model ID", not Form.Icon (see ICON_PATH's own comment
+    - that fixes the title bar, this is the separate thing the taskbar
+    actually needs). a python.exe-launched process has no AppUserModelID of
+    its own by default, so Windows falls back to grouping/icon-ing it under
+    python.exe itself - the exact "still shows the python symbol in the
+    taskbar" symptom even once Form.Icon is set correctly. claiming a
+    distinct id, before any window exists, is the standard fix for this
+    (the same one tkinter/PyQt apps need) - Windows-only, and a no-op if it
+    somehow fails (an unbranded taskbar icon is a cosmetic issue, not worth
+    crashing startup over)."""
+    if platform.system() != "Windows":
+        return
+    import ctypes
+
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("CranioSuite.CranioSuite.1")
+    except (AttributeError, OSError):
+        pass
+
+
 def main() -> None:
+    _set_windows_app_user_model_id()
     server_thread = threading.Thread(target=_run_server, daemon=True)
     server_thread.start()
 
@@ -176,7 +214,7 @@ def main() -> None:
     window = webview.create_window("CranioSuite", f"http://{HOST}:{PORT}", width=1280, height=800, js_api=api)
     api._window = window
     window.events.loaded += lambda: _register_native_drop(window)
-    webview.start()
+    webview.start(icon=str(ICON_PATH) if ICON_PATH.is_file() else None)
 
     # webview.start() returns once the window closes, but the server thread
     # was still running uvicorn's asyncio loop with open sockets/file handles
