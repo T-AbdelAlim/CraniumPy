@@ -38,7 +38,7 @@ export default function CompareTab({ slots, onSlotsChange, linkCameras, onLinkCa
 
       const m = slot.measurements;
       if (overlayMode === "asymmetry") {
-        viewer.showHeatmap(m.asymmetry.heatmap);
+        viewer.showHeatmap(m.asymmetry.heatmap, { dim: false });
         return;
       }
       if (m.craniometrics) {

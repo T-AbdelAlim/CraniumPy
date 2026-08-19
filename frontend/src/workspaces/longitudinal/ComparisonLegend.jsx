@@ -9,7 +9,7 @@ export default function ComparisonLegend({ slots }) {
       {slots.map((slot, i) => (
         <div key={slot.id} className="longitudinal-legend-row">
           <span className="viewer-legend-swatch" style={{ background: slot.color }} />
-          <span>{slot.label || `Timepoint ${i + 1}`}</span>
+          <span>{slot.label || `Timepoint ${i}`}</span>
         </div>
       ))}
     </div>
