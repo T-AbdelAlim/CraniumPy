@@ -46,6 +46,16 @@ hiddenimports = [
 
 icon_path = REPO_ROOT / "resources" / "CraniumPy_logo.ico"
 
+if icon_path.is_file():
+    # EXE(icon=...) below embeds this as the exe's own native resource
+    # (what Explorer/the taskbar show for the exe file itself), but that's
+    # not the same as a file desktop/app.py can point pywebview's own
+    # window-icon setting at (see its own ICON_PATH comment) - bundling it
+    # as data too, at sys._MEIPASS's root, is what lets that explicit call
+    # work the same way whether frozen or run from source, instead of
+    # relying on pywebview's own implicit sys.executable-icon fallback.
+    datas.append((str(icon_path), "."))
+
 a = Analysis(
     [str(REPO_ROOT / "desktop" / "app.py")],
     pathex=[str(REPO_ROOT), str(REPO_ROOT / "src")],
