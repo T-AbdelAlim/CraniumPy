@@ -474,6 +474,25 @@ class CohortMeanShapeResponse(BaseModel):
     heatmap: list[float]
 
 
+class ExcludedMeshOut(BaseModel):
+    path: str
+    reason: str
+
+
+class CohortMeanShapeQcResponse(BaseModel):
+    """same shape as CohortMeanShapeResponse (and cached under the same
+    result_id space - every existing /mean-shape/{id}/... endpoint works
+    against a QC-computed result unchanged), plus which input meshes got
+    left out of the average and why - see
+    craniumpy_core.cohort.mean_shape_with_outliers."""
+
+    result_id: str
+    vertex_count: int
+    source_count: int
+    heatmap: list[float]
+    excluded: list[ExcludedMeshOut]
+
+
 class CohortReferenceDiffResponse(BaseModel):
     """signed per-vertex displacement (mm) of an already-computed mean
     shape (see CohortMeanShapeResponse.result_id) from a shipped reference
@@ -543,28 +562,6 @@ class CohortSpreadBandResponse(BaseModel):
     outer: list[LandmarkPoint]
     closed: bool
     source_count: int
-
-
-class CohortReportRequest(BaseModel):
-    """generates a PDF report for a cohort mean shape - see
-    api/results_bundle.py's mean_shape_report_pdf. mesh_paths/target are
-    the same group the /mean-shape call for this group already used.
-    group_label is free text describing the group (e.g. "trigonocephaly,
-    pre-op, surgical" - built client-side from the active filters, same as
-    the mesh-download filename - see frontend/src/workspaces/cohort/lib/
-    naming.js), shown on the report's own title page since there's no
-    single patient/file name to put there instead. include_spread_bands
-    toggles the real patient-to-patient spread visualizations the report
-    can show - the sagittal/frontal-bossing band always, plus the HC-ring
-    band (cranium target) or the metopic band (face target), whichever
-    applies - optional since each one costs a real (if fast) extra
-    measurement pass over every mesh in the group, on top of what the
-    report needs anyway."""
-
-    mesh_paths: list[str] = Field(min_length=1)
-    target: str
-    group_label: str = "cohort"
-    include_spread_bands: bool = True
 
 
 class CohortExportSheet(BaseModel):
@@ -719,8 +716,20 @@ class FacialMeasurementPreviewRequest(BaseModel):
 
 
 class FacialMeasurementPreviewResponse(BaseModel):
+    """render_paths/render_faces are purely visual overlay geometry (see
+    api/routers/facial.py's _render_geometry) - a geodesic surface path for
+    Linear/Angular, or the enclosed region's own triangle positions (a flat
+    list, every 3 points one triangle) for Area - always traced along the
+    mesh surface regardless of a Linear measurement's own straight/geodesic
+    VALUE toggle, since a straight chord between two points on a curved face
+    reads as floating off the surface. missing for a measurement whose path
+    couldn't be traced (a disconnected mesh) - the frontend falls back to a
+    plain straight connector between the raw landmark points in that case."""
+
     values: dict[str, float | None]
     value_errors: dict[str, str]
+    render_paths: dict[str, list[LandmarkPoint]] = Field(default_factory=dict)
+    render_faces: dict[str, list[LandmarkPoint]] = Field(default_factory=dict)
 
 
 class FacialListMeshesRequest(BaseModel):
@@ -757,6 +766,11 @@ class FacialBatchFileResult(BaseModel):
     landmark_points: dict[str, LandmarkPoint] = Field(default_factory=dict)
     values: dict[str, float | None] = Field(default_factory=dict)
     value_errors: dict[str, str] = Field(default_factory=dict)
+    # see FacialMeasurementPreviewResponse's own docstring - same purely
+    # visual overlay geometry, computed fresh per file since it depends on
+    # this mesh's own vertex positions.
+    render_paths: dict[str, list[LandmarkPoint]] = Field(default_factory=dict)
+    render_faces: dict[str, list[LandmarkPoint]] = Field(default_factory=dict)
 
 
 class FacialBatchResponse(BaseModel):
@@ -780,6 +794,10 @@ class FacialCorrectionResponse(BaseModel):
     landmark_point: LandmarkPoint  # the snapped correction, echoed back
     values: dict[str, float | None]
     value_errors: dict[str, str]
+    # same overlay geometry as FacialMeasurementPreviewResponse, only for
+    # the affected measurements (same set of ids as `values` above).
+    render_paths: dict[str, list[LandmarkPoint]] = Field(default_factory=dict)
+    render_faces: dict[str, list[LandmarkPoint]] = Field(default_factory=dict)
 
 
 # --- Facial Anthropometrics <-> Cohort integration --------------------------

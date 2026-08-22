@@ -140,6 +140,92 @@ def mean_shape(mesh_paths: list[Path]) -> MeanShapeResult:
     return MeanShapeResult(mesh=mean_mesh, variability=variability, source_count=len(meshes))
 
 
+@dataclass
+class ExcludedMesh:
+    """one mesh mean_shape_with_outliers left out of the average, and why -
+    surfaced back to the caller (see api/routers/cohort.py's /mean-shape-qc)
+    so a freeform group of meshes (the Mean Shape workspace's own picker,
+    unlike a cohort group that's already known to share one template) never
+    silently drops a file without the user finding out."""
+
+    path: str
+    reason: str
+
+
+def mean_shape_with_outliers(mesh_paths: list[Path]) -> tuple[MeanShapeResult, list[ExcludedMesh]]:
+    """same vertex-by-vertex average as mean_shape, but never aborts on a
+    topology mismatch - excludes the offending mesh instead and reports why,
+    for a freeform group of meshes with no pre-designated reference template
+    (unlike mean_shape's own meshes[0]-is-reference assumption, which is
+    fine when every input is already known-good, e.g. a cohort group already
+    keyed by nicp_template).
+
+    the REFERENCE topology here is whichever one the MAJORITY of the
+    successfully-loaded meshes actually share (grouped by a cheap signature:
+    vertex count + a hash of the face array) - not simply the first file.
+    trusting meshes[0] the way mean_shape does would mean a single bad first
+    file incorrectly excludes every genuinely-good one; majority vote is
+    robust to that, and correctly identifies the true minority as the
+    outliers. ties (two equally-sized topology groups) resolve to whichever
+    group was encountered first while loading - deterministic, but not
+    meaningful beyond that; a real tie is already an ambiguous input the
+    caller should look at directly.
+
+    a mesh that fails to even load (corrupt file, wrong format) is reported
+    as excluded too, rather than raising and aborting every other mesh's
+    chance to be averaged - same "one bad file never aborts the whole batch"
+    principle api/routers/facial.py's own batch processing already follows.
+
+    raises ValueError only if literally nothing could be averaged (every
+    mesh failed to load, or no majority group could be formed at all)."""
+    if not mesh_paths:
+        raise ValueError("no mesh paths given")
+
+    loaded: list[tuple[Path, trimesh.Trimesh]] = []
+    excluded: list[ExcludedMesh] = []
+    for path in mesh_paths:
+        try:
+            loaded.append((path, load_mesh(path)))
+        except Exception as exc:  # noqa: BLE001 - any load failure excludes this one file, nothing more
+            excluded.append(ExcludedMesh(path=str(path), reason=f"could not load: {exc}"))
+
+    if not loaded:
+        raise ValueError("no mesh could be loaded")
+
+    def _signature(mesh: trimesh.Trimesh) -> tuple[int, int]:
+        return len(mesh.vertices), hash(np.asarray(mesh.faces).tobytes())
+
+    signatures = [_signature(mesh) for _, mesh in loaded]
+    groups: dict[tuple[int, int], list[int]] = {}
+    for i, sig in enumerate(signatures):
+        groups.setdefault(sig, []).append(i)
+    majority_sig = max(groups, key=lambda sig: len(groups[sig]))
+    majority_vertex_count = majority_sig[0]
+
+    kept_meshes: list[trimesh.Trimesh] = []
+    reference: trimesh.Trimesh | None = None
+    for (path, mesh), sig in zip(loaded, signatures):
+        if sig == majority_sig:
+            kept_meshes.append(mesh)
+            if reference is None:
+                reference = mesh
+            continue
+        if sig[0] != majority_vertex_count:
+            reason = f"{sig[0]} vertices vs {majority_vertex_count} in the majority group"
+        else:
+            reason = "different face connectivity than the majority group despite matching vertex count"
+        excluded.append(ExcludedMesh(path=str(path), reason=reason))
+
+    if not kept_meshes:
+        raise ValueError("no majority topology group could be formed - every loaded mesh has a different topology")
+
+    stacked = np.stack([np.asarray(m.vertices) for m in kept_meshes])
+    mean_vertices = stacked.mean(axis=0)
+    variability = np.linalg.norm(stacked - mean_vertices, axis=2).mean(axis=0)
+    mean_mesh = trimesh.Trimesh(vertices=mean_vertices, faces=reference.faces, process=False)
+    return MeanShapeResult(mesh=mean_mesh, variability=variability, source_count=len(kept_meshes)), excluded
+
+
 def reference_diff(mean_mesh: trimesh.Trimesh, reference_mesh: trimesh.Trimesh) -> np.ndarray:
     """signed per-vertex distance (mm) of mean_mesh from reference_mesh,
     projected onto the reference surface's own vertex normals - positive

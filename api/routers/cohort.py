@@ -30,7 +30,7 @@ from craniumpy_core.facial_cohort_link import resolve_cohort_ids_by_filename
 from craniumpy_core.facial_measurements_io import load_measurement_export_xlsx
 from craniumpy_core.io import mesh_to_glb
 from craniumpy_core.template_registry import load_shipped_template
-from api.results_bundle import _id_mapping_path, _read_xlsx_rows, list_cohort_patients, mean_shape_report_pdf
+from api.results_bundle import _id_mapping_path, _read_xlsx_rows, list_cohort_patients
 from api.routers._group_measurements import group_measurements_response
 from api.schemas import (
     CohortDataResponse,
@@ -38,16 +38,17 @@ from api.schemas import (
     CohortExportSheet,
     CohortLoadRequest,
     CohortMeanShapeMeasurementsResponse,
+    CohortMeanShapeQcResponse,
     CohortMeanShapeRequest,
     CohortMeanShapeResponse,
     CohortPatientsResponse,
     CohortReferenceDiffResponse,
-    CohortReportRequest,
     CohortSagittalBandRequest,
     CohortSagittalBandResponse,
     CohortSpreadBandResponse,
     CohortStatsTestRequest,
     CohortStatsTestResponse,
+    ExcludedMeshOut,
     FacialMeasurementsLoadRequest,
     FacialMeasurementsLoadResponse,
     LandmarkPoint,
@@ -226,6 +227,30 @@ def compute_mean_shape(request: CohortMeanShapeRequest) -> CohortMeanShapeRespon
     )
 
 
+@router.post("/mean-shape-qc", response_model=CohortMeanShapeQcResponse)
+def compute_mean_shape_with_outliers(request: CohortMeanShapeRequest) -> CohortMeanShapeQcResponse:
+    """the Mean Shape workspace's own "compute" call - a freeform group of
+    meshes with no pre-designated reference template, unlike the strict
+    /mean-shape above (built for an already-known-good cohort group). never
+    400s over one bad path: a missing/corrupt/mismatched-topology mesh is
+    excluded and reported rather than aborting every other mesh's chance to
+    be averaged - see craniumpy_core.cohort.mean_shape_with_outliers."""
+    paths = [Path(p) for p in request.mesh_paths]
+    try:
+        result, excluded = cohort.mean_shape_with_outliers(paths)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    result_id = _cache_mean_shape(result)
+    return CohortMeanShapeQcResponse(
+        result_id=result_id,
+        vertex_count=len(result.mesh.vertices),
+        source_count=result.source_count,
+        heatmap=result.variability.tolist(),
+        excluded=[ExcludedMeshOut(path=e.path, reason=e.reason) for e in excluded],
+    )
+
+
 @router.get("/mean-shape/{result_id}/mesh")
 def get_mean_shape_mesh(result_id: str):
     result = _mean_shape_cache.get(result_id)
@@ -381,55 +406,6 @@ def compute_metopic_band(request: CohortSagittalBandRequest) -> CohortSpreadBand
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _spread_band_response(band)
-
-
-@router.post("/report")
-def generate_mean_shape_report(request: CohortReportRequest):
-    """the same multi-page PDF layout a real patient's own export produces
-    (see api/results_bundle.mean_shape_report_pdf), for this group's mean
-    shape instead - computes the mean, its measurements, and (optionally)
-    every spread band that applies to this target, all in this one call,
-    rather than requiring the caller to have already computed a cached
-    /mean-shape result (a report is a one-shot download, not something
-    that needs to stay around for later requests the way a viewer's own
-    mean-shape result does). the sagittal/frontal-bossing band always
-    applies (both targets have a forehead); the HC-ring band only for a
-    cranium target, the metopic band only for a face target - same
-    craniometrics-vs-metopic split measure_mean_shape itself follows."""
-    if request.target not in ("cranium", "face"):
-        raise HTTPException(status_code=400, detail=f"target must be 'cranium' or 'face', got {request.target!r}")
-    paths = [Path(p) for p in request.mesh_paths]
-    missing = [str(p) for p in paths if not p.is_file()]
-    if missing:
-        raise HTTPException(status_code=400, detail=f"mesh file(s) not found: {', '.join(missing)}")
-
-    try:
-        result = cohort.mean_shape(paths)
-        measurements = cohort.measure_mean_shape(result.mesh, request.target)
-        sagittal = cohort.sagittal_midline_band(paths, request.target) if request.include_spread_bands else None
-        hc_ring = (
-            cohort.hc_ring_band(paths, request.target)
-            if request.include_spread_bands and request.target == "cranium"
-            else None
-        )
-        metopic = (
-            cohort.metopic_band(paths, request.target)
-            if request.include_spread_bands and request.target == "face"
-            else None
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    pdf_bytes = mean_shape_report_pdf(
-        result.mesh, request.target, request.group_label, result.source_count, measurements,
-        sagittal_band=sagittal, hc_ring_band=hc_ring, metopic_band=metopic,
-    )
-    safe_name = _sanitize_filename(f"{request.group_label}_report", extension=".pdf", default="mean_shape_report")
-    return Response(
-        content=pdf_bytes,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
-    )
 
 
 _EXPORT_HEADER_FILL = PatternFill(start_color="2F6FED", end_color="2F6FED", fill_type="solid")

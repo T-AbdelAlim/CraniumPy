@@ -1,6 +1,54 @@
 import { useState } from "react";
 import { LANDMARK_LABELS, LANDMARK_DESCRIPTIONS, activeLandmarkNames } from "../../lib/landmarks.js";
 import SaveFolderControl from "../../components/SaveFolderControl.jsx";
+import InfoTooltip from "../../components/InfoTooltip.jsx";
+import { MEASUREMENT_EXPLAINERS } from "../../lib/measurementExplainers.js";
+
+// plain monochrome silhouettes (currentColor, so they theme with
+// light/dark automatically) - deliberately not a real render/screenshot of
+// a clipped mesh, to stay consistent with this app's own dependency-light
+// approach (no image-asset pipeline for a decorative icon).
+function CranialVaultIcon() {
+  return (
+    <svg viewBox="0 0 48 48" width="32" height="32" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <path d="M8 34 Q8 10 24 8 Q40 10 40 34" strokeLinecap="round" />
+      <line x1="8" y1="34" x2="40" y2="34" />
+    </svg>
+  );
+}
+
+function FaceIcon() {
+  return (
+    <svg viewBox="0 0 48 48" width="32" height="32" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <ellipse cx="24" cy="24" rx="14" ry="18" />
+      <line x1="24" y1="10" x2="24" y2="38" strokeDasharray="2 3" />
+      <circle cx="18" cy="20" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="30" cy="20" r="1.5" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+// plain-language "what can I measure here" text for each region's hover
+// icon, built from the same explainer copy the Analysis workspace's own
+// InfoTooltips already use (frontend/src/lib/measurementExplainers.js) -
+// one source of truth for what a metric means, reused instead of writing
+// new copy.
+const CRANIUM_METRICS_TEXT = [
+  MEASUREMENT_EXPLAINERS.depthMm,
+  MEASUREMENT_EXPLAINERS.breadthMm,
+  MEASUREMENT_EXPLAINERS.cephalicIndex,
+  MEASUREMENT_EXPLAINERS.circumferenceCm,
+  MEASUREMENT_EXPLAINERS.cranialAsymmetryIndex,
+  MEASUREMENT_EXPLAINERS.frontalBossingAngle,
+].join(" ");
+
+const FACE_METRICS_TEXT = [
+  MEASUREMENT_EXPLAINERS.facialAsymmetryIndex,
+  MEASUREMENT_EXPLAINERS.frontalAngleDeg,
+  MEASUREMENT_EXPLAINERS.ridgeProtrusion,
+  MEASUREMENT_EXPLAINERS.temporalHollowing,
+  MEASUREMENT_EXPLAINERS.parabolicDeviationIndex,
+].join(" ");
 
 export default function PreprocessingPanel({
   target,
@@ -94,20 +142,34 @@ export default function PreprocessingPanel({
   return (
     <section>
       <p className="target-picker-header">interested in:</p>
-      <label className="checkbox target-option">
-        <input type="radio" name="target" checked={target === "cranium"} onChange={() => onTargetChange("cranium")} />
-        <span>
-          Cranial Vault
-          <small>cephalometrics, symmetry, forehead shape</small>
-        </span>
-      </label>
-      <label className="checkbox target-option">
-        <input type="radio" name="target" checked={target === "face"} onChange={() => onTargetChange("face")} />
-        <span>
-          Face &amp; Forehead
-          <small>facial symmetry, forehead shape</small>
-        </span>
-      </label>
+      <div className="target-card-row">
+        <label className={target === "cranium" ? "target-card active" : "target-card"}>
+          <input
+            type="radio"
+            name="target"
+            checked={target === "cranium"}
+            onChange={() => onTargetChange("cranium")}
+            className="visually-hidden"
+          />
+          <CranialVaultIcon />
+          <span className="target-card-title">Cranial Vault</span>
+          <span className="target-card-teaser">OFD, BPD, cephalic index, HC...</span>
+          <InfoTooltip text={CRANIUM_METRICS_TEXT} />
+        </label>
+        <label className={target === "face" ? "target-card active" : "target-card"}>
+          <input
+            type="radio"
+            name="target"
+            checked={target === "face"}
+            onChange={() => onTargetChange("face")}
+            className="visually-hidden"
+          />
+          <FaceIcon />
+          <span className="target-card-title">Face &amp; Forehead</span>
+          <span className="target-card-teaser">Facial asymmetry, forehead shape...</span>
+          <InfoTooltip text={FACE_METRICS_TEXT} />
+        </label>
+      </div>
 
       <p className="hint">
         <strong>ctrl/cmd-click</strong> to place a point, <strong>alt-drag</strong> to move one. Pick in this order:

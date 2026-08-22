@@ -10,7 +10,12 @@ const SHORT_COLUMN_LABELS = {
   age_intervention_months: "interventionage",
 };
 
-function sanitizeSegment(value) {
+// exported for the Mean Shape workspace's own export-filename subscript
+// field (frontend/src/workspaces/meanshape/MeanShapeWorkspace.jsx) - same
+// slugging rules, since that workspace has no `filters` to build a name
+// from and needs the same "make whatever the user typed filename-safe"
+// logic this file already has.
+export function sanitizeSegment(value) {
   return String(value)
     .toLowerCase()
     .trim()
@@ -39,10 +44,10 @@ export function buildMeanShapeFilename(filters, templateName) {
 
 // same active-filter summary as buildMeanShapeFilename, but as a plain
 // human-readable comma-joined phrase (e.g. "trigonocephaly, pre-op,
-// surgical") rather than a sanitized filename segment - used for the mean
-// shape PDF report's own title page and its downloaded filename (see
-// api/cohort.js's downloadMeanShapeReport), where actual punctuation/case
-// reads better than a filename-safe slug.
+// surgical") rather than a sanitized filename segment - shown directly in
+// MeanShapeTab.jsx as "will average N patients matching: ..." before the
+// user commits to computing, where actual punctuation/case reads better
+// than a filename-safe slug.
 export function buildGroupLabel(filters, templateName) {
   const segments = [];
   for (const filter of filters || []) {

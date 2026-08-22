@@ -83,6 +83,30 @@ export function meanShapeMeshUrl(resultId) {
   return `/api/cohort/mean-shape/${resultId}/mesh`;
 }
 
+// the Mean Shape workspace's own "compute" call - a freeform group of
+// meshes with no pre-designated reference template, unlike computeMeanShape
+// above (built for an already-known-good cohort group). never throws over
+// one bad path - a missing/corrupt/mismatched-topology mesh comes back in
+// the response's own `excluded` list instead (see
+// craniumpy_core.cohort.mean_shape_with_outliers), only throwing if nothing
+// at all could be averaged.
+export async function computeMeanShapeWithOutliers(meshPaths) {
+  const response = await fetch("/api/cohort/mean-shape-qc", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mesh_paths: meshPaths }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  const data = await response.json();
+  return {
+    resultId: data.result_id,
+    vertexCount: data.vertex_count,
+    sourceCount: data.source_count,
+    heatmap: data.heatmap,
+    excluded: data.excluded, // [{path, reason}]
+  };
+}
+
 // signed displacement (mm) of an already-computed mean shape from a
 // shipped reference template (see craniumpy_core.cohort.reference_diff) -
 // template must match the mean shape's own topology (same nicp_template
@@ -159,21 +183,6 @@ export async function downloadPost(url, body, fallbackFilename) {
   link.download = filename;
   link.click();
   URL.revokeObjectURL(blobUrl);
-}
-
-// downloads the mean-shape PDF report - see api/results_bundle.py's
-// mean_shape_report_pdf. groupLabel is shown on the report's own title
-// page and used to name the file (see lib/naming.js for the same
-// filename-building the mesh download uses); includeSpreadBands toggles
-// every spread visualization the report can show - the sagittal/frontal-
-// bossing band always, plus the HC-ring band (cranium) or metopic band
-// (face), whichever applies (see schemas.CohortReportRequest).
-export async function downloadMeanShapeReport(meshPaths, target, groupLabel, includeSpreadBands) {
-  await downloadPost(
-    "/api/cohort/report",
-    { mesh_paths: meshPaths, target, group_label: groupLabel, include_spread_bands: includeSpreadBands },
-    "mean_shape_report.pdf",
-  );
 }
 
 // +/-1 SD ribbon (real 3D points) around the group's HC ring - see

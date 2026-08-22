@@ -1069,10 +1069,10 @@ LABEL_VALUE_X = 0.46
 
 # guaranteed blank space at the physical bottom of a metric-fields page - a
 # fixed 8pt explainer size (see _draw_metric_fields) can genuinely run a
-# long enough group (metopic's own 7 fields, especially with a spread-band
-# caption tacked on - see mean_shape_report_pdf) right off the page with
-# nothing to stop it otherwise, since text_y itself never gets checked
-# against the page's own physical bottom edge.
+# long enough group (metopic's own 7 fields, especially with extra caption
+# lines tacked on) right off the page with nothing to stop it otherwise,
+# since text_y itself never gets checked against the page's own physical
+# bottom edge.
 TEXT_BOTTOM_MARGIN_PT = 20.0
 
 
@@ -1108,11 +1108,10 @@ def _draw_metric_fields(
     """one metric group's text block: a bold label:value line per field
     that actually has a value, each followed by its wrapped one-line-per-
     sentence-ish explainer (see METRIC_EXPLAINERS), then any extra plain
-    caption lines drawn after all of them (the spread-band notes
-    mean_shape_report_pdf adds - e.g. "Shaded band on the figure above:
-    ..."). returns the y position after the last line, same convention as
-    _draw_line, for a caller that wants to keep drawing below it (none do
-    right now, but nothing here assumes otherwise).
+    caption lines drawn after all of them (e.g. "Shaded band on the figure
+    above: ..."). returns the y position after the last line, same
+    convention as _draw_line, for a caller that wants to keep drawing below
+    it (none do right now, but nothing here assumes otherwise).
 
     the explainer/caption font size shrinks (never grows past the normal
     8pt) just enough to keep the WHOLE block above TEXT_BOTTOM_MARGIN_PT
@@ -1236,126 +1235,6 @@ def _report_pdf(
     return buf.getvalue()
 
 
-def mean_shape_report_pdf(
-    mesh: trimesh.Trimesh,
-    target: str,
-    group_label: str,
-    source_count: int,
-    measurements: GroupMeasurements,
-    sagittal_band: SagittalMidlineBand | None = None,
-    hc_ring_band: SpreadBand | None = None,
-    metopic_band: SpreadBand | None = None,
-) -> bytes:
-    """same multi-page layout as _report_pdf (a title page, then one page
-    per metric group that actually applies) - built for a cohort MEAN
-    shape (see craniumpy_core.cohort.measure_mean_shape) instead of one
-    patient. measurements carries the exact same CranioMeasurements/
-    AsymmetryResult/MetopicResult/FrontalBossingResult dataclasses a real
-    patient's own report is drawn from, so every _draw_* figure function
-    below applies to a mean shape completely unchanged - the only real
-    difference from _report_pdf is the title page (a group description
-    instead of one patient's metadata) and the three optional spread bands.
-
-    group_label is free text describing what this group actually is (e.g.
-    "trigonocephaly, pre-op, surgical" - the same kind of string the
-    frontend's naming.js builds for the mesh-download filename), since
-    there's no single patient/file name to put in its place.
-
-    sagittal_band/hc_ring_band/metopic_band (optional - see
-    craniumpy_core.cohort's sagittal_midline_band/hc_ring_band/
-    metopic_band), when given, each add a +/-1 SD shaded band to their own
-    page - the frontal_bossing, craniometrics, and metopic pages
-    respectively. every number in this report still describes the group's
-    MEAN shape; these bands are the only real patient-to-patient spread
-    shown, each measured by re-running the relevant piece of the single-
-    patient measurement pipeline (a slice search, a forehead contour...)
-    against every individual mesh in the group, not derived from the mean
-    shape's own surface (which has no spread of its own left to show)."""
-    row = _metrics_row(
-        target, {}, {"com_translation": True, "nicp": None},
-        measurements.craniometrics, measurements.asymmetry, measurements.metopic, measurements.frontal_bossing,
-    )
-
-    is_cranial_asymmetry = measurements.asymmetry is not None and target == "cranium"
-    asymmetry_view = "top" if is_cranial_asymmetry else "frontal"
-    asymmetry_label = "cranial" if is_cranial_asymmetry else "facial"
-    asymmetry_group = "cranial_asymmetry" if is_cranial_asymmetry else "asymmetry"
-    asymmetry_sagittal_group = "cranial_asymmetry_sagittal" if is_cranial_asymmetry else "asymmetry_sagittal"
-
-    draw_figure: dict[str, Callable[[Figure, tuple[float, float, float, float]], None]] = {}
-    if measurements.craniometrics is not None:
-        draw_figure["craniometrics"] = lambda fig, rect: _draw_measurements(
-            fig, rect, mesh, measurements.craniometrics, spread_band=hc_ring_band
-        )
-    if measurements.asymmetry is not None:
-        draw_figure[asymmetry_group] = lambda fig, rect: _draw_asymmetry(
-            fig, rect, mesh, measurements.asymmetry, label=asymmetry_label, view=asymmetry_view
-        )
-        draw_figure[asymmetry_sagittal_group] = lambda fig, rect: _draw_asymmetry(
-            fig, rect, mesh, measurements.asymmetry, label=asymmetry_label, view="sagittal"
-        )
-    if measurements.metopic is not None:
-        draw_figure["metopic"] = lambda fig, rect: _draw_metopic(fig, rect, measurements.metopic, spread_band=metopic_band)
-    if measurements.frontal_bossing is not None:
-        draw_figure["frontal_bossing"] = lambda fig, rect: _draw_frontal_bossing(
-            fig, rect, measurements.frontal_bossing, sagittal_band=sagittal_band
-        )
-
-    buf = io.BytesIO()
-    with PdfPages(buf) as pdf:
-        title_page = Figure(figsize=(PAGE_W_IN, PAGE_H_IN))
-        FigureCanvasAgg(title_page)
-        title_page.text(0.5, 0.92, "CraniumPy v2.0 Cohort Mean Shape Report", ha="center", fontsize=20, weight="bold")
-        title_page.text(
-            0.5, 0.885,
-            f"{'Cranial' if target == 'cranium' else 'Facial'} mean shape - {group_label}",
-            ha="center", fontsize=11, color="#666666",
-        )
-
-        info_lines = [
-            ("Group", group_label),
-            ("Target", "Cranium" if target == "cranium" else "Face"),
-            ("Patients averaged", str(source_count)),
-        ]
-        y = 0.80
-        for label, value in info_lines:
-            title_page.text(TEXT_X, y, f"{label}:", va="top", fontsize=10, weight="bold")
-            for line in _wrap(value or "-", width=54):
-                y = _draw_line(title_page, y, line, fontsize=10, x=LABEL_VALUE_X)
-        y -= _pt_to_frac(BLOCK_GAP_PT)
-        y = _draw_line(
-            title_page, y,
-            "Every number in this report describes the AVERAGE shape of this group, not any single real patient.",
-            fontsize=9, color="#999999",
-        )
-        _draw_line(
-            title_page, y, f"Generated {datetime.now(timezone.utc).strftime('%Y-%m-%d')}", fontsize=8, color="#999999",
-        )
-        pdf.savefig(title_page)
-
-        for group, fields in _PDF_METRIC_FIELDS.items():
-            draw = draw_figure.get(group)
-            if draw is None:
-                continue
-
-            page = Figure(figsize=(PAGE_W_IN, PAGE_H_IN))
-            FigureCanvasAgg(page)
-            draw(page, (0.04, 0.46, 0.92, 0.50))
-
-            extra_captions = []
-            if group == "frontal_bossing" and sagittal_band is not None:
-                extra_captions.append("Shaded band on the figure above: +/-1 SD sagittal depth across the group.")
-            if group == "craniometrics" and hc_ring_band is not None:
-                extra_captions.append("Shaded ring on the figure above: +/-1 SD head-circumference radius across the group.")
-            if group == "metopic" and metopic_band is not None:
-                extra_captions.append("Shaded band on the figure above: +/-1 SD forehead depth across the group.")
-
-            _draw_metric_fields(page, 0.42, fields, row, extra_captions=extra_captions)
-            pdf.savefig(page)
-
-    return buf.getvalue()
-
-
 def longitudinal_comparison_report_pdf(
     mesh_a: trimesh.Trimesh,
     mesh_b: trimesh.Trimesh,
@@ -1378,9 +1257,9 @@ def longitudinal_comparison_report_pdf(
     - not a real asymmetry measurement, just the same "signed mm
     displacement, diverging colormap" shape).
 
-    each section reuses the exact same full-page-width rect
-    mean_shape_report_pdf's own pages already use, rather than splitting
-    the page in half for both timepoints at once - every _draw_* figure
+    each section reuses the exact same full-page-width rect _report_pdf's
+    own pages already use, rather than splitting the page in half for both
+    timepoints at once - every _draw_* figure
     function's title/legend/colorbar text is sized in fixed points, not
     scaled to the rect it's given, so halving the page width just runs
     that text into the other half instead of shrinking to fit. two

@@ -9,7 +9,9 @@ import ResizablePane from "./ResizablePane.jsx";
 // (custom point-to-point measurements batch-extracted across many
 // NICP-registered meshes - see workspaces/facial/FacialWorkspace.jsx), and
 // "Cohort" (batch/cohort analysis across already-exported patients - see
-// workspaces/cohort/CohortWorkspace.jsx). no routing here either -
+// workspaces/cohort/CohortWorkspace.jsx), and "Mean Shape" (a freeform,
+// non-cohort-driven mean-shape tool across any picked set of same-template
+// meshes - see workspaces/meanshape/MeanShapeWorkspace.jsx). no routing here either -
 // workspace switching is local tab state until patient persistence gives
 // routes something real to key on (:patientId). a bottom jobs bar slots
 // into this grid once an async job (register, analyze) actually exists to
@@ -69,6 +71,13 @@ export default function Shell({
               onClick={() => onAppModeChange("cohort")}
             >
               Cohort
+            </button>
+            <button
+              type="button"
+              className={appMode === "meanshape" ? "shell-nav-item active" : "shell-nav-item"}
+              onClick={() => onAppModeChange("meanshape")}
+            >
+              Mean Shape
             </button>
           </div>
           {metadataForm && <div className="shell-nav-bottom">{metadataForm}</div>}

@@ -210,7 +210,7 @@ export default function MorphControl({ onT, morphViewerRef, fullscreenRef }) {
         </button>
       )}
       {fullscreenRef && (
-        <button type="button" className="button-subtle" onClick={handleToggleFullscreen}>
+        <button type="button" className="button-subtle" onClick={handleToggleFullscreen} disabled={exporting}>
           {isFullscreen ? "exit fullscreen" : "fullscreen"}
         </button>
       )}
