@@ -26,9 +26,11 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 from scipy import stats as scipy_stats
 
 from craniumpy_core import cohort
+from craniumpy_core.facial_cohort_link import resolve_cohort_ids_by_filename
+from craniumpy_core.facial_measurements_io import load_measurement_export_xlsx
 from craniumpy_core.io import mesh_to_glb
 from craniumpy_core.template_registry import load_shipped_template
-from api.results_bundle import list_cohort_patients, mean_shape_report_pdf
+from api.results_bundle import _id_mapping_path, _read_xlsx_rows, list_cohort_patients, mean_shape_report_pdf
 from api.routers._group_measurements import group_measurements_response
 from api.schemas import (
     CohortDataResponse,
@@ -46,6 +48,8 @@ from api.schemas import (
     CohortSpreadBandResponse,
     CohortStatsTestRequest,
     CohortStatsTestResponse,
+    FacialMeasurementsLoadRequest,
+    FacialMeasurementsLoadResponse,
     LandmarkPoint,
 )
 
@@ -96,6 +100,46 @@ def get_cohort_patients(request: CohortLoadRequest) -> CohortPatientsResponse:
     id-mapping file that way."""
     path = Path(request.path)
     return CohortPatientsResponse(patients=list_cohort_patients(path))
+
+
+@router.post("/facial-measurements/load", response_model=FacialMeasurementsLoadResponse)
+def load_facial_measurements(request: FacialMeasurementsLoadRequest) -> FacialMeasurementsLoadResponse:
+    """attaches a Facial Anthropometrics batch export (api/routers/facial.py's
+    export_batch) to this cohort as a lazily-joined dataset - never merged
+    into the cohort file itself. Reads the export's own "measurements" file
+    (identifier column = source mesh filename) and resolves each filename to
+    a cohort_id via this cohort's own id-mapping file (the same one
+    get_cohort_patients above reads), by basename - matches
+    resolve_cohort_ids_by_filename's own "never silently drop or first-match-
+    win" contract: unmatched/ambiguous filenames come back alongside the
+    matched rows so the frontend can warn before committing the merge,
+    instead of a second round trip to check first."""
+    cohort_path = Path(request.cohort_path)
+    measurement_path = Path(request.measurement_file_path)
+    if not measurement_path.is_file():
+        raise HTTPException(status_code=400, detail=f"file not found: {request.measurement_file_path}")
+    try:
+        columns, rows, legend_rows = load_measurement_export_xlsx(measurement_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _, mapping_rows = _read_xlsx_rows(_id_mapping_path(cohort_path))
+    filenames = [r.get("identifier", "") for r in rows if r.get("identifier")]
+    match = resolve_cohort_ids_by_filename(mapping_rows, filenames)
+    measurement_columns = [c for c in columns if c != "identifier"]
+    rows_by_cohort_id: dict[str, dict[str, str]] = {}
+    for row in rows:
+        filename = row.get("identifier", "")
+        cohort_id = match.matched.get(filename)
+        if not cohort_id:
+            continue
+        rows_by_cohort_id[cohort_id] = {c: row.get(c, "") for c in measurement_columns}
+    return FacialMeasurementsLoadResponse(
+        columns=measurement_columns,
+        rows_by_cohort_id=rows_by_cohort_id,
+        legend=legend_rows,
+        unmatched=match.unmatched,
+        ambiguous=match.ambiguous,
+    )
 
 
 @router.get("/demo", response_model=CohortDataResponse)
@@ -417,67 +461,82 @@ def _sheet_name(title: str, index: int, used: set[str]) -> str:
     return name
 
 
+def _write_generic_sheet(ws, sheet: CohortExportSheet, table_name: str) -> None:
+    """writes one CohortExportSheet's columns/rows into an already-created
+    worksheet - bold white-on-blue header, frozen header row, banded rows
+    (openpyxl's own TableStyleMedium2, same table style api/results_bundle.py's
+    own cohort/summary spreadsheets already use), and a best-effort numeric
+    column format: a column gets real numeric cells (2-decimal format) only
+    when EVERY non-blank cell in it parses as a float, never a mix - the
+    same "a patient_id like 0042 must keep its leading zero" reasoning
+    api/results_bundle.py's own _NUMERIC_ROW_KEYS follows, just determined
+    at export time instead of from a fixed known column list (an export
+    sheet can be any columns the caller picked - the Stratify tab's own
+    descriptive-stats sheet, for instance, has no column that also appears
+    in a patient export). table_name must be unique within the workbook
+    (openpyxl's own Table requirement) - callers writing more than one
+    sheet into the same workbook need a distinct name per sheet.
+
+    factored out of _build_export_xlsx so api/routers/facial.py's own
+    workbook builder (a legend sheet needs real per-cell color fills, which
+    this generic string-cell shape can't express, so it can't just reuse
+    _build_export_xlsx wholesale) can still share this per-sheet styling
+    for its own plain data sheets, rather than a second copy of it."""
+    columns, rows = sheet.columns, sheet.rows
+    if not columns:
+        return
+
+    numeric_columns = {
+        col
+        for col in columns
+        if any(row.get(col, "") != "" for row in rows)
+        and all(row.get(col, "") == "" or _looks_numeric(row.get(col, "")) for row in rows)
+    }
+
+    ws.append(columns)
+    for cell in ws[1]:
+        cell.font = _EXPORT_HEADER_FONT
+        cell.fill = _EXPORT_HEADER_FILL
+    ws.freeze_panes = "A2"
+
+    display_values: list[list[str]] = []
+    for row in rows:
+        cells = []
+        for name in columns:
+            value = row.get(name, "")
+            if name in numeric_columns and value != "":
+                cells.append(float(value))
+            elif name in numeric_columns:
+                cells.append(None)
+            else:
+                cells.append(value)
+        ws.append(cells)
+        display_values.append([str(c) if c is not None else "" for c in cells])
+
+    for j, name in enumerate(columns, start=1):
+        if name in numeric_columns:
+            for cell in ws[get_column_letter(j)][1:]:
+                cell.number_format = "0.00"
+        widest = max([len(name)] + [len(values[j - 1]) for values in display_values])
+        ws.column_dimensions[get_column_letter(j)].width = min(max(widest + 2, 10), 40)
+
+    if rows:
+        last_col = get_column_letter(len(columns))
+        table = Table(displayName=table_name, ref=f"A1:{last_col}{len(rows) + 1}")
+        table.tableStyleInfo = TableStyleInfo(name="TableStyleMedium2", showRowStripes=True, showColumnStripes=False)
+        ws.add_table(table)
+
+
 def _build_export_xlsx(sheets: list[CohortExportSheet]) -> bytes:
-    """one worksheet per sheet - bold white-on-blue header, frozen header
-    row, banded rows (openpyxl's own TableStyleMedium2, same table style
-    api/results_bundle.py's own cohort/summary spreadsheets already use),
-    and a best-effort numeric column format: a column gets real numeric
-    cells (2-decimal format) only when EVERY non-blank cell in it parses
-    as a float, never a mix - the same "a patient_id like 0042 must keep
-    its leading zero" reasoning api/results_bundle.py's own
-    _NUMERIC_ROW_KEYS follows, just determined at export time instead of
-    from a fixed known column list (an export sheet can be any columns the
-    caller picked - the Stratify tab's own descriptive-stats sheet, for
-    instance, has no column that also appears in a patient export)."""
+    """one worksheet per sheet, via _write_generic_sheet - see that
+    function for the actual styling."""
     wb = Workbook()
     wb.remove(wb.active)
     used_names: set[str] = set()
 
     for i, sheet in enumerate(sheets):
         ws = wb.create_sheet(_sheet_name(sheet.title, i, used_names))
-        columns, rows = sheet.columns, sheet.rows
-        if not columns:
-            continue
-
-        numeric_columns = {
-            col
-            for col in columns
-            if any(row.get(col, "") != "" for row in rows)
-            and all(row.get(col, "") == "" or _looks_numeric(row.get(col, "")) for row in rows)
-        }
-
-        ws.append(columns)
-        for cell in ws[1]:
-            cell.font = _EXPORT_HEADER_FONT
-            cell.fill = _EXPORT_HEADER_FILL
-        ws.freeze_panes = "A2"
-
-        display_values: list[list[str]] = []
-        for row in rows:
-            cells = []
-            for name in columns:
-                value = row.get(name, "")
-                if name in numeric_columns and value != "":
-                    cells.append(float(value))
-                elif name in numeric_columns:
-                    cells.append(None)
-                else:
-                    cells.append(value)
-            ws.append(cells)
-            display_values.append([str(c) if c is not None else "" for c in cells])
-
-        for j, name in enumerate(columns, start=1):
-            if name in numeric_columns:
-                for cell in ws[get_column_letter(j)][1:]:
-                    cell.number_format = "0.00"
-            widest = max([len(name)] + [len(values[j - 1]) for values in display_values])
-            ws.column_dimensions[get_column_letter(j)].width = min(max(widest + 2, 10), 40)
-
-        if rows:
-            last_col = get_column_letter(len(columns))
-            table = Table(displayName=f"export_table_{i}", ref=f"A1:{last_col}{len(rows) + 1}")
-            table.tableStyleInfo = TableStyleInfo(name="TableStyleMedium2", showRowStripes=True, showColumnStripes=False)
-            ws.add_table(table)
+        _write_generic_sheet(ws, sheet, f"export_table_{i}")
 
     buf = io.BytesIO()
     wb.save(buf)

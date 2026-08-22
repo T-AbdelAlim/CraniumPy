@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { loadCohortFile, loadDemoCohort, uploadCohortFile } from "../../api/cohort.js";
+import { loadCohortFile, loadDemoCohort, loadFacialMeasurements, uploadCohortFile } from "../../api/cohort.js";
 import { isDesktopApp, pickExcelFileNative } from "../../lib/desktop.js";
 import { parseFormula, formulaColumns, evaluateFormula } from "./lib/safeFormula.js";
 import { applyFilters } from "./lib/stats.js";
 import FilterBar from "./FilterBar.jsx";
+import CustomMeasurementsPanel from "./CustomMeasurementsPanel.jsx";
+import UnmatchedFilenamesDialog from "./UnmatchedFilenamesDialog.jsx";
 import OverviewTab from "./tabs/OverviewTab.jsx";
 import TableTab from "./tabs/TableTab.jsx";
 import MetricsTab from "./tabs/MetricsTab.jsx";
@@ -48,15 +50,38 @@ export default function CohortWorkspace({ onSnapshotChange, initialSnapshot }) {
   const [loadStatus, setLoadStatus] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // the loaded cohort file's own real path (desktop only - a browser
+  // upload/the shipped demo never has one) - needed to find this cohort's
+  // id-mapping file when attaching custom measurements below (see
+  // CustomMeasurementsPanel.jsx/api/routers/cohort.py's
+  // load_facial_measurements, which joins by filename against that file).
+  const [cohortPath, setCohortPath] = useState(() => initialSnapshot?.cohortPath ?? null);
+
+  // a Facial Anthropometrics batch export attached to this cohort, kept
+  // fully separate from columns/rows/derivedColumns (never merged into the
+  // core cohort table - see rowsWithAttached below and the plan's own
+  // "keep the custom measurement dataset separate ... in memory and on
+  // disk wherever possible"). { columns, rowsByCohortId, legend,
+  // sourceFileName } | null.
+  const [attachedMeasurements, setAttachedMeasurements] = useState(() => initialSnapshot?.attachedMeasurements ?? null);
+  const [measurementsStatus, setMeasurementsStatus] = useState("");
+  // a load whose match came back with unmatched/ambiguous filenames,
+  // held here until the user confirms via UnmatchedFilenamesDialog -
+  // never committed to attachedMeasurements silently.
+  const [pendingMeasurements, setPendingMeasurements] = useState(null);
+
   // reports this workspace's own lightweight, JSON-safe state up to
   // App.jsx on every change - all plain loaded data (no 3D/GPU objects),
   // cheap to keep current continuously rather than only capturing it right
   // before a switch away.
   useEffect(() => {
-    onSnapshotChange?.({ columns, rows, derivedColumns, filters, activeTab });
-  }, [columns, rows, derivedColumns, filters, activeTab, onSnapshotChange]);
+    onSnapshotChange?.({ columns, rows, derivedColumns, filters, activeTab, cohortPath, attachedMeasurements });
+  }, [columns, rows, derivedColumns, filters, activeTab, cohortPath, attachedMeasurements, onSnapshotChange]);
 
-  const allColumns = useMemo(() => [...columns, ...derivedColumns.map((d) => d.name)], [columns, derivedColumns]);
+  const allColumns = useMemo(
+    () => [...columns, ...derivedColumns.map((d) => d.name), ...(attachedMeasurements?.columns ?? [])],
+    [columns, derivedColumns, attachedMeasurements],
+  );
 
   // every row with its custom-metric columns computed in, as plain numbers
   // (or "" when the formula couldn't be evaluated for that row - missing
@@ -80,10 +105,24 @@ export default function CohortWorkspace({ onSnapshotChange, initialSnapshot }) {
     });
   }, [rows, derivedColumns]);
 
+  // non-destructively folds the attached measurement columns into each
+  // row by cohort_id - an O(rows.length) hash lookup per row (rowsByCohortId
+  // was already built once, server-side, on attach), not a repeated join;
+  // modeled on rowsWithDerived's own spread pattern just above, keyed by an
+  // external id instead of computed in-row. a row whose cohort_id has no
+  // attached measurement (or no attachment loaded at all) is untouched.
+  const rowsWithAttached = useMemo(() => {
+    if (!attachedMeasurements) return rowsWithDerived;
+    return rowsWithDerived.map((row) => ({
+      ...row,
+      ...(attachedMeasurements.rowsByCohortId[row.cohort_id] ?? {}),
+    }));
+  }, [rowsWithDerived, attachedMeasurements]);
+
   // the working subset every tab actually sees - see FilterBar's own
   // comment for why this lives here (one filter bar for the whole
   // workspace) rather than per-tab.
-  const filteredRows = useMemo(() => applyFilters(rowsWithDerived, filters), [rowsWithDerived, filters]);
+  const filteredRows = useMemo(() => applyFilters(rowsWithAttached, filters), [rowsWithAttached, filters]);
 
   function applyLoaded({ columns: newColumns, rows: newRows }) {
     setColumns(newColumns);
@@ -92,6 +131,10 @@ export default function CohortWorkspace({ onSnapshotChange, initialSnapshot }) {
     setFilters([]);
     setActiveTab("overview");
     setLoadStatus("");
+    setCohortPath(null);
+    setAttachedMeasurements(null);
+    setMeasurementsStatus("");
+    setPendingMeasurements(null);
   }
 
   // desktop: native file dialog, loads straight from the real path.
@@ -114,6 +157,7 @@ export default function CohortWorkspace({ onSnapshotChange, initialSnapshot }) {
         return;
       }
       applyLoaded(await loadCohortFile(path));
+      setCohortPath(path);
     } catch (err) {
       setLoadStatus(`failed to load: ${err.message}`);
     } finally {
@@ -148,6 +192,10 @@ export default function CohortWorkspace({ onSnapshotChange, initialSnapshot }) {
     setFilters([]);
     setActiveTab("overview");
     setLoadStatus("");
+    setCohortPath(null);
+    setAttachedMeasurements(null);
+    setMeasurementsStatus("");
+    setPendingMeasurements(null);
   }
 
   async function handleLoadDemo() {
@@ -182,6 +230,50 @@ export default function CohortWorkspace({ onSnapshotChange, initialSnapshot }) {
 
   function handleRemoveMetric(name) {
     setDerivedColumns((prev) => prev.filter((d) => d.name !== name));
+  }
+
+  // CustomMeasurementsPanel's file pick callback - runs the filename ->
+  // cohort_id join server-side (api/routers/cohort.py's
+  // load_facial_measurements) and either commits straight away (every
+  // filename matched cleanly) or holds the result for
+  // UnmatchedFilenamesDialog to confirm - never silently drops or
+  // first-match-wins an unmatched/ambiguous filename.
+  async function handleMeasurementsPicked(path, errorMsg) {
+    if (errorMsg) {
+      setMeasurementsStatus(errorMsg);
+      return;
+    }
+    if (!path || !cohortPath) return;
+    setMeasurementsStatus("matching measurements to patients...");
+    try {
+      const result = await loadFacialMeasurements(cohortPath, path);
+      const sourceFileName = path.split(/[\\/]/).pop();
+      const hasIssues = result.unmatched.length > 0 || Object.keys(result.ambiguous).length > 0;
+      if (hasIssues) {
+        setPendingMeasurements({ ...result, sourceFileName });
+        setMeasurementsStatus("");
+      } else {
+        setAttachedMeasurements({ ...result, sourceFileName });
+        setMeasurementsStatus("");
+      }
+    } catch (err) {
+      setMeasurementsStatus(`failed to attach measurements: ${err.message}`);
+    }
+  }
+
+  function handleConfirmPendingMeasurements() {
+    if (!pendingMeasurements) return;
+    setAttachedMeasurements(pendingMeasurements);
+    setPendingMeasurements(null);
+  }
+
+  function handleCancelPendingMeasurements() {
+    setPendingMeasurements(null);
+  }
+
+  function handleDetachMeasurements() {
+    setAttachedMeasurements(null);
+    setMeasurementsStatus("");
   }
 
   if (rows.length === 0) {
@@ -230,8 +322,15 @@ export default function CohortWorkspace({ onSnapshotChange, initialSnapshot }) {
           load a different cohort...
         </button>
       </div>
+      <CustomMeasurementsPanel
+        cohortPath={cohortPath}
+        attachedMeasurements={attachedMeasurements}
+        status={measurementsStatus}
+        onPick={handleMeasurementsPicked}
+        onDetach={handleDetachMeasurements}
+      />
       <FilterBar
-        rows={rowsWithDerived}
+        rows={rowsWithAttached}
         columns={allColumns}
         filters={filters}
         onFiltersChange={setFilters}
@@ -240,7 +339,9 @@ export default function CohortWorkspace({ onSnapshotChange, initialSnapshot }) {
       <div className="cohort-ws-content">
         {loadStatus && <p className="status-line">{loadStatus}</p>}
         {activeTab === "overview" && <OverviewTab rows={filteredRows} columns={allColumns} />}
-        {activeTab === "table" && <TableTab rows={filteredRows} columns={allColumns} />}
+        {activeTab === "table" && (
+          <TableTab rows={filteredRows} columns={allColumns} attachedColumnNames={attachedMeasurements?.columns ?? []} />
+        )}
         {activeTab === "metrics" && (
           <MetricsTab
             columns={columns}
@@ -253,6 +354,15 @@ export default function CohortWorkspace({ onSnapshotChange, initialSnapshot }) {
         {activeTab === "plots" && <PlotsTab rows={filteredRows} columns={allColumns} />}
         {activeTab === "meanshape" && <MeanShapeTab rows={filteredRows} filters={filters} />}
       </div>
+      {pendingMeasurements && (
+        <UnmatchedFilenamesDialog
+          matchedCount={Object.keys(pendingMeasurements.rowsByCohortId).length}
+          unmatched={pendingMeasurements.unmatched}
+          ambiguous={pendingMeasurements.ambiguous}
+          onConfirm={handleConfirmPendingMeasurements}
+          onCancel={handleCancelPendingMeasurements}
+        />
+      )}
     </div>
   );
 }

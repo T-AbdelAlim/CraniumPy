@@ -12,6 +12,7 @@ import { addFrontalBossingOverlay, removeFrontalBossingOverlay } from "../three/
 import { addNodesOverlay, removeNodesOverlay, resyncNodesGeometry } from "../three/nicpFitVisualization.js";
 import { addSpreadBandRibbon, removeSpreadBandRibbon } from "../three/spreadBandOverlay.js";
 import { addCorrespondenceMarkers, removeCorrespondenceMarkers } from "../three/correspondenceMarkers.js";
+import { addFacialMeasurementLines, removeFacialMeasurementLines } from "../three/facialMeasurementOverlay.js";
 
 // deforming-template color during a live NICP fit - matches the --hc red
 // token already used elsewhere in this app, so "moving/deforming" reads as
@@ -70,6 +71,11 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
   // three/correspondenceMarkers.js) - a single group, since only one
   // mesh's own sample points ever show at once per Viewer instance.
   const correspondenceMarkersRef = useRef(null);
+  // Facial Anthropometrics workspace's own measurement connecting lines
+  // (see three/facialMeasurementOverlay.js) - one group for every
+  // measurement's lines together, redrawn as a whole on every change
+  // (cheap - a handful of short line segments, not a heavy mesh op).
+  const facialMeasurementLinesRef = useRef(null);
   const draggingNameRef = useRef(null);
   const onPickRef = useRef(onPick);
   const onDragRef = useRef(onDrag);
@@ -149,6 +155,7 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
         if (nicpPreviewRef.current) sceneBagRef.current.scene.remove(nicpPreviewRef.current);
         for (const band of Object.values(spreadBandsRef.current)) removeSpreadBandRibbon(sceneBagRef.current, band);
         removeCorrespondenceMarkers(sceneBagRef.current, correspondenceMarkersRef.current);
+        removeFacialMeasurementLines(sceneBagRef.current, facialMeasurementLinesRef.current);
       }
       removeNodesOverlay(nicpPreviewNodesRef.current);
       removeNodesOverlay(mainMeshNodesRef.current);
@@ -244,6 +251,7 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
         if (nicpPreviewRef.current) sceneBagRef.current.scene.remove(nicpPreviewRef.current);
         for (const band of Object.values(spreadBandsRef.current)) removeSpreadBandRibbon(sceneBagRef.current, band);
         removeCorrespondenceMarkers(sceneBagRef.current, correspondenceMarkersRef.current);
+        removeFacialMeasurementLines(sceneBagRef.current, facialMeasurementLinesRef.current);
       }
       templateOverlayRef.current = null;
       measurementsOverlayRef.current = null;
@@ -251,6 +259,7 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
       frontalBossingOverlayRef.current = null;
       spreadBandsRef.current = {};
       correspondenceMarkersRef.current = null;
+      facialMeasurementLinesRef.current = null;
       removeNodesOverlay(nicpPreviewNodesRef.current);
       nicpPreviewNodesRef.current = null;
       removeNodesOverlay(mainMeshNodesRef.current);
@@ -572,6 +581,24 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
       if (!sceneBag) return;
       removeCorrespondenceMarkers(sceneBag, correspondenceMarkersRef.current);
       correspondenceMarkersRef.current = null;
+    },
+    // Facial Anthropometrics workspace's own measurement connecting lines
+    // (see three/facialMeasurementOverlay.js) - segments is
+    // [{points: [{x,y,z},...], color, closed}], one entry per measurement.
+    // always redraws the whole group rather than diffing - cheap (a
+    // handful of short line segments), and simpler than tracking which
+    // measurement's line actually needs to change.
+    showFacialMeasurementLines(segments) {
+      const sceneBag = sceneBagRef.current;
+      if (!sceneBag) return;
+      removeFacialMeasurementLines(sceneBag, facialMeasurementLinesRef.current);
+      facialMeasurementLinesRef.current = addFacialMeasurementLines(sceneBag, segments);
+    },
+    hideFacialMeasurementLines() {
+      const sceneBag = sceneBagRef.current;
+      if (!sceneBag) return;
+      removeFacialMeasurementLines(sceneBag, facialMeasurementLinesRef.current);
+      facialMeasurementLinesRef.current = null;
     },
   }));
 

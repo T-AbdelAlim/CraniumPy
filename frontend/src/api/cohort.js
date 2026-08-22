@@ -132,14 +132,17 @@ export async function computeSagittalBand(meshPaths, target) {
 }
 
 // shared by any POST endpoint that returns a downloadable file rather than
-// JSON (the mean-shape PDF report, the cohort xlsx export) - fetches the
-// blob, then triggers a save through a throwaway <a download> click, the
-// standard way to save a POST response client-side (a plain GET url like
-// meanShapeDownloadUrl's can just be handed to window.location.href
-// instead, but a POST body has nowhere to go in a URL). fallbackFilename
-// is only used if the response didn't carry its own Content-Disposition
-// name (every endpoint that actually uses this always does, in practice).
-async function downloadPost(url, body, fallbackFilename) {
+// JSON (the mean-shape PDF report, the cohort xlsx export, the Facial
+// Anthropometrics workspace's own batch export - see api/facial.js) -
+// fetches the blob, then triggers a save through a throwaway <a download>
+// click, the standard way to save a POST response client-side (a plain GET
+// url like meanShapeDownloadUrl's can just be handed to
+// window.location.href instead, but a POST body has nowhere to go in a
+// URL). fallbackFilename is only used if the response didn't carry its own
+// Content-Disposition name (every endpoint that actually uses this always
+// does, in practice). exported (not cohort-specific despite living here)
+// rather than duplicated - this is the one place that logic lives.
+export async function downloadPost(url, body, fallbackFilename) {
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -204,4 +207,28 @@ export async function computeMetopicBand(meshPaths, target) {
 // (colored header, banded rows, frozen header, auto-numeric columns).
 export async function downloadCohortExportXlsx(sheets, filename) {
   await downloadPost("/api/cohort/export-xlsx", { sheets, filename }, "cohort_export.xlsx");
+}
+
+// attaches a Facial Anthropometrics batch export (frontend/src/api/facial.js's
+// downloadFacialBatchExport, api/routers/facial.py's export_batch) to this
+// cohort as a lazily-joined dataset, matched by mesh filename - never merged
+// into the cohort file itself (see api/routers/cohort.py's
+// load_facial_measurements). unmatched/ambiguous filenames come back
+// alongside the matched rows so the caller can warn before committing the
+// merge, rather than a separate "check first" round trip.
+export async function loadFacialMeasurements(cohortPath, measurementFilePath) {
+  const response = await fetch("/api/cohort/facial-measurements/load", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ cohort_path: cohortPath, measurement_file_path: measurementFilePath }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  const data = await response.json();
+  return {
+    columns: data.columns,
+    rowsByCohortId: data.rows_by_cohort_id,
+    legend: data.legend,
+    unmatched: data.unmatched,
+    ambiguous: data.ambiguous,
+  };
 }

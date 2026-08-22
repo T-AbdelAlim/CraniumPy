@@ -7,7 +7,7 @@ import { downloadCohortExportXlsx } from "../../../api/cohort.js";
 // every cell in a row, case-insensitively - simplest thing that actually
 // helps ("show me the metopic patients", "find P00042") without a
 // per-column filter UI this cohort size doesn't warrant.
-export default function TableTab({ rows, columns }) {
+export default function TableTab({ rows, columns, attachedColumnNames = [] }) {
   const [filterText, setFilterText] = useState("");
   const [sortColumn, setSortColumn] = useState(null);
   const [sortDir, setSortDir] = useState(1);
@@ -46,9 +46,19 @@ export default function TableTab({ rows, columns }) {
     try {
       // exports exactly what's currently shown (filtered + sorted), not
       // the full unfiltered table - "export what I'm looking at" is the
-      // useful default here.
-      const exportRows = sorted.map((row) => Object.fromEntries(columns.map((c) => [c, String(row[c] ?? "")])));
-      await downloadCohortExportXlsx([{ title: "cohort data", columns, rows: exportRows }], "cohort_table.xlsx");
+      // useful default here. attached Facial Anthropometrics columns (see
+      // CohortWorkspace.jsx's attachedMeasurements) go to their own sheet
+      // rather than folding into "cohort data" - keeps the primary cohort
+      // sheet's own column set unchanged and avoids duplicating a
+      // potentially large attached dataset into every export.
+      const buildRows = (cols) => sorted.map((row) => Object.fromEntries(cols.map((c) => [c, String(row[c] ?? "")])));
+      const coreColumns = columns.filter((c) => !attachedColumnNames.includes(c));
+      const sheets = [{ title: "cohort data", columns: coreColumns, rows: buildRows(coreColumns) }];
+      if (attachedColumnNames.length > 0) {
+        const measurementColumns = ["cohort_id", ...attachedColumnNames];
+        sheets.push({ title: "custom measurements", columns: measurementColumns, rows: buildRows(measurementColumns) });
+      }
+      await downloadCohortExportXlsx(sheets, "cohort_table.xlsx");
       setExportStatus("");
     } catch (err) {
       setExportStatus(`export failed: ${err.message}`);
