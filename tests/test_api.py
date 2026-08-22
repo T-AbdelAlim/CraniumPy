@@ -1343,6 +1343,39 @@ def test_cohort_mean_shape_missing_file_is_a_400(client, tmp_path):
     assert response.status_code == 400
 
 
+def test_cohort_mean_shape_qc_averages_the_majority_and_reports_the_rest(client, tmp_path):
+    good_paths = [tmp_path / f"good{i}.ply" for i in range(3)]
+    for i, p in enumerate(good_paths):
+        _write_tetrahedron(p, offset=(float(i), 0.0, 0.0))
+    box_path = tmp_path / "box.ply"
+    trimesh.creation.box().export(box_path)
+    missing_path = tmp_path / "nope.ply"
+
+    response = client.post(
+        "/api/cohort/mean-shape-qc",
+        json={"mesh_paths": [*(str(p) for p in good_paths), str(box_path), str(missing_path)]},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["source_count"] == 3
+    excluded_by_path = {e["path"]: e["reason"] for e in body["excluded"]}
+    assert str(box_path) in excluded_by_path
+    assert "vertices" in excluded_by_path[str(box_path)]
+    assert str(missing_path) in excluded_by_path
+    assert "could not load" in excluded_by_path[str(missing_path)]
+
+    # the cached result works through every existing /mean-shape/{id}/...
+    # endpoint unchanged, same as a strict /mean-shape result.
+    mesh_response = client.get(f"/api/cohort/mean-shape/{body['result_id']}/mesh")
+    assert mesh_response.status_code == 200
+
+
+def test_cohort_mean_shape_qc_400s_when_nothing_could_be_averaged(client, tmp_path):
+    response = client.post("/api/cohort/mean-shape-qc", json={"mesh_paths": [str(tmp_path / "nope.ply")]})
+    assert response.status_code == 400
+
+
 def test_cohort_mean_shape_reference_diff_matches_the_template_exactly(client):
     # averaging two identical copies of the same shipped template gives
     # back that template's own vertices exactly (no floating-point drift -
@@ -1452,84 +1485,6 @@ def test_cohort_export_xlsx_deduplicates_sheet_names(client):
     assert response.status_code == 200, response.text
     wb = load_workbook(BytesIO(response.content))
     assert wb.sheetnames == ["data", "data (2)"]
-
-
-def test_cohort_report_cranium_target(client):
-    from craniumpy_core.cohort import load_demo_cohort
-
-    _columns, rows = load_demo_cohort()
-    mesh_paths = [r["nicp_mesh_path"] for r in rows if r["nicp_template"] == "clipped_template_xy_com"][:6]
-
-    response = client.post(
-        "/api/cohort/report",
-        json={
-            "mesh_paths": mesh_paths, "target": "cranium", "group_label": "scaphocephaly, pre-op",
-            "include_spread_bands": True,
-        },
-    )
-
-    assert response.status_code == 200, response.text
-    assert response.headers["content-type"] == "application/pdf"
-    assert response.headers["content-disposition"] == 'attachment; filename="scaphocephaly-pre-op_report.pdf"'
-    assert response.content[:4] == b"%PDF"
-
-
-def test_cohort_report_face_target_without_spread_bands(client):
-    from craniumpy_core.cohort import load_demo_cohort
-
-    _columns, rows = load_demo_cohort()
-    mesh_paths = [r["nicp_mesh_path"] for r in rows if r["nicp_template"] == "template_face"][:6]
-
-    response = client.post(
-        "/api/cohort/report",
-        json={"mesh_paths": mesh_paths, "target": "face", "group_label": "trigonocephaly", "include_spread_bands": False},
-    )
-
-    assert response.status_code == 200, response.text
-    assert response.content[:4] == b"%PDF"
-
-
-def test_cohort_report_face_target_with_spread_bands_includes_metopic_band(client):
-    # a face-target report with spread bands on should compute the metopic
-    # band too (not just sagittal) - a bigger PDF than the same report with
-    # bands off is a simple, robust way to check the extra page's content
-    # actually got drawn without parsing PDF internals.
-    from craniumpy_core.cohort import load_demo_cohort
-
-    _columns, rows = load_demo_cohort()
-    mesh_paths = [r["nicp_mesh_path"] for r in rows if r["nicp_template"] == "template_face"][:6]
-
-    with_bands = client.post(
-        "/api/cohort/report",
-        json={"mesh_paths": mesh_paths, "target": "face", "group_label": "trigonocephaly", "include_spread_bands": True},
-    )
-    without_bands = client.post(
-        "/api/cohort/report",
-        json={"mesh_paths": mesh_paths, "target": "face", "group_label": "trigonocephaly", "include_spread_bands": False},
-    )
-
-    assert with_bands.status_code == 200, with_bands.text
-    assert without_bands.status_code == 200, without_bands.text
-    assert len(with_bands.content) != len(without_bands.content)
-
-
-def test_cohort_report_invalid_target_is_a_400(client, tmp_path):
-    path_a = tmp_path / "a.ply"
-    path_b = tmp_path / "b.ply"
-    _write_tetrahedron(path_a, offset=(-1.0, 0.0, 0.0))
-    _write_tetrahedron(path_b, offset=(1.0, 0.0, 0.0))
-
-    response = client.post(
-        "/api/cohort/report", json={"mesh_paths": [str(path_a), str(path_b)], "target": "nonsense"}
-    )
-    assert response.status_code == 400
-
-
-def test_cohort_report_missing_file_is_a_400(client, tmp_path):
-    response = client.post(
-        "/api/cohort/report", json={"mesh_paths": [str(tmp_path / "nope.ply")], "target": "cranium"}
-    )
-    assert response.status_code == 400
 
 
 def test_cohort_mean_shape_download_serves_a_named_ply(client, tmp_path):

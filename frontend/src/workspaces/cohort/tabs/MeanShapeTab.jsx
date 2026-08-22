@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Viewer from "../../../components/Viewer.jsx";
-import { computeHcRingBand, computeMeanShape, computeMeanShapeMeasurements, computeMetopicBand, computeReferenceDiff, computeSagittalBand, downloadMeanShapeReport, meanShapeDownloadUrl, meanShapeMeshUrl } from "../../../api/cohort.js";
+import { computeHcRingBand, computeMeanShape, computeMeanShapeMeasurements, computeMetopicBand, computeReferenceDiff, computeSagittalBand, meanShapeDownloadUrl, meanShapeMeshUrl } from "../../../api/cohort.js";
 import { fetchShippedTemplates } from "../../../api/sessions.js";
 import { heatmapMax, heatmapMaxAbs } from "../../../three/measurementsLayer.js";
 import InfoTooltip from "../../../components/InfoTooltip.jsx";
@@ -101,9 +101,6 @@ export default function MeanShapeTab({ rows, filters }) {
   const [hcRingBand, setHcRingBand] = useState(null); // {mean, inner, outer, closed, source_count}
   const [metopicBandData, setMetopicBandData] = useState(null);
   const [spreadBandStatus, setSpreadBandStatus] = useState("");
-  const [reportIncludeBand, setReportIncludeBand] = useState(true);
-  const [generatingReport, setGeneratingReport] = useState(false);
-  const [reportStatus, setReportStatus] = useState("");
 
   const eligibleRows = groups[selectedTemplate] || [];
 
@@ -306,21 +303,6 @@ export default function MeanShapeTab({ rows, filters }) {
     if (view !== "asymmetry" && showSpreadBandsOverlay) refreshSpreadBands(true);
   }
 
-  async function handleGenerateReport() {
-    setGeneratingReport(true);
-    setReportStatus("generating report...");
-    try {
-      const meshPaths = eligibleRows.map((row) => row.nicp_mesh_path);
-      const groupLabel = buildGroupLabel(filters, selectedTemplate);
-      await downloadMeanShapeReport(meshPaths, result.target, groupLabel, reportIncludeBand);
-      setReportStatus("");
-    } catch (err) {
-      setReportStatus(`failed: ${err.message}`);
-    } finally {
-      setGeneratingReport(false);
-    }
-  }
-
   if (templateNames.length === 0) {
     return (
       <p className="hint">
@@ -356,6 +338,12 @@ export default function MeanShapeTab({ rows, filters }) {
         ))}
       </select>
 
+      {eligibleRows.length > 0 && (
+        <p className="hint">
+          Will average {eligibleRows.length} patient{eligibleRows.length === 1 ? "" : "s"} matching:{" "}
+          <strong>{buildGroupLabel(filters, selectedTemplate)}</strong>
+        </p>
+      )}
       <button type="button" onClick={handleCompute} disabled={computing || eligibleRows.length === 0}>
         compute mean shape
       </button>
@@ -374,14 +362,6 @@ export default function MeanShapeTab({ rows, filters }) {
           >
             download mesh (.ply)
           </button>
-          <label className="checkbox">
-            <input type="checkbox" checked={reportIncludeBand} onChange={(e) => setReportIncludeBand(e.target.checked)} />
-            include spread bands in report
-          </label>
-          <button type="button" className="button-subtle" onClick={handleGenerateReport} disabled={generatingReport}>
-            generate report (PDF)
-          </button>
-          {reportStatus && <p className="status-line">{reportStatus}</p>}
         </>
       )}
 

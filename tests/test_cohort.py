@@ -18,6 +18,7 @@ from craniumpy_core.cohort import (
     load_cohort_xlsx,
     load_demo_cohort,
     mean_shape,
+    mean_shape_with_outliers,
     measure_mean_shape,
     metopic_band,
     reference_diff,
@@ -144,6 +145,72 @@ def test_mean_shape_rejects_mismatched_face_connectivity(tmp_path):
 def test_mean_shape_rejects_empty_input():
     with pytest.raises(ValueError):
         mean_shape([])
+
+
+# --- mean_shape_with_outliers ----------------------------------------------
+
+
+def test_mean_shape_with_outliers_averages_the_majority_and_excludes_the_rest(tmp_path):
+    # 3 good tetrahedra (majority) + 1 mismatched-vertex-count box + 1
+    # mismatched-face-connectivity tetrahedron - the majority group should
+    # be averaged, the other two excluded with distinct reasons.
+    good_paths = [
+        _write_mesh(_tetrahedron(np.array([float(i), 0.0, 0.0])), tmp_path / f"good{i}.ply") for i in range(3)
+    ]
+    box_path = _write_mesh(trimesh.creation.box(), tmp_path / "box.ply")
+    bad_faces = trimesh.Trimesh(
+        vertices=_tetrahedron(np.zeros(3)).vertices,
+        faces=np.array([[0, 1, 2], [0, 1, 3], [0, 2, 3], [2, 1, 3]]),
+        process=False,
+    )
+    bad_faces_path = _write_mesh(bad_faces, tmp_path / "bad_faces.ply")
+
+    result, excluded = mean_shape_with_outliers([*good_paths, box_path, bad_faces_path])
+
+    assert result.source_count == 3
+    assert len(result.mesh.vertices) == 4
+    excluded_by_path = {e.path: e.reason for e in excluded}
+    assert str(box_path) in excluded_by_path
+    assert "vertices" in excluded_by_path[str(box_path)]
+    assert str(bad_faces_path) in excluded_by_path
+    assert "face connectivity" in excluded_by_path[str(bad_faces_path)]
+
+
+def test_mean_shape_with_outliers_excludes_a_file_that_fails_to_load(tmp_path):
+    good_paths = [
+        _write_mesh(_tetrahedron(np.array([float(i), 0.0, 0.0])), tmp_path / f"good{i}.ply") for i in range(2)
+    ]
+    corrupt_path = tmp_path / "corrupt.ply"
+    corrupt_path.write_text("not a real mesh file")
+
+    result, excluded = mean_shape_with_outliers([*good_paths, corrupt_path])
+
+    assert result.source_count == 2
+    assert len(excluded) == 1
+    assert excluded[0].path == str(corrupt_path)
+    assert "could not load" in excluded[0].reason
+
+
+def test_mean_shape_with_outliers_of_identical_meshes_excludes_nothing(tmp_path):
+    paths = [_write_mesh(_tetrahedron(np.zeros(3)), tmp_path / f"m{i}.ply") for i in range(3)]
+
+    result, excluded = mean_shape_with_outliers(paths)
+
+    assert result.source_count == 3
+    assert excluded == []
+
+
+def test_mean_shape_with_outliers_rejects_empty_input():
+    with pytest.raises(ValueError):
+        mean_shape_with_outliers([])
+
+
+def test_mean_shape_with_outliers_rejects_when_nothing_could_be_averaged(tmp_path):
+    corrupt_path = tmp_path / "corrupt.ply"
+    corrupt_path.write_text("not a real mesh file")
+
+    with pytest.raises(ValueError, match="no mesh could be loaded"):
+        mean_shape_with_outliers([corrupt_path])
 
 
 # --- reference_diff -------------------------------------------------------

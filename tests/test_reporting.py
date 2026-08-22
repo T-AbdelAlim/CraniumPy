@@ -609,9 +609,9 @@ def test_metopic_figure_xlabel_legend_caption_dont_overlap():
 
 def test_draw_metric_fields_keeps_text_above_the_bottom_margin_even_with_a_long_group():
     # metopic has more fields (and longer explainers) than any other group -
-    # combined with an extra spread-band caption (see mean_shape_report_pdf),
-    # this is the exact combination that used to run text off the physical
-    # bottom of the page (see TEXT_BOTTOM_MARGIN_PT's own docstring).
+    # combined with an extra caption line, this is the exact combination
+    # that used to run text off the physical bottom of the page (see
+    # TEXT_BOTTOM_MARGIN_PT's own docstring).
     fields = _PDF_METRIC_FIELDS["metopic"]
     row = {key: "1.23" for key, _label, _unit in fields}
     caption = "Shaded band on the figure above: +/-1 SD forehead depth across the group."

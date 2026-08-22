@@ -164,6 +164,20 @@ def test_preview_linear_measurement_straight_and_geodesic(client, tmp_path):
     assert body["values"]["m2"] == pytest.approx(3.0)
     assert body["value_errors"] == {}
 
+    # render_paths traces the mesh surface for BOTH straight and geodesic
+    # Linear measurements (see api/routers/facial.py's _render_geometry) -
+    # the overlay always hugs the surface regardless of the value's own
+    # straight/geodesic toggle. row 0 of a flat grid is a straight run of
+    # mesh edges, so the surface trace is the full 4-vertex row, not just
+    # the 2 endpoints.
+    for mid in ("m1", "m2"):
+        path = body["render_paths"][mid]
+        assert len(path) == 4
+        assert [p["x"] for p in path] == [0.0, 1.0, 2.0, 3.0]
+        assert path[0] == points["p1"]
+        assert path[-1] == points["p2"]
+    assert body["render_faces"] == {}
+
 
 def test_preview_angular_measurement(client, tmp_path):
     vertices = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
@@ -180,7 +194,13 @@ def test_preview_angular_measurement(client, tmp_path):
         json={"template_id": template_id, "points": points, "measurements": measurements},
     )
     assert response.status_code == 200, response.text
-    assert response.json()["values"]["m1"] == pytest.approx(90.0)
+    body = response.json()
+    assert body["values"]["m1"] == pytest.approx(90.0)
+
+    # the two legs (vertex -> p1, vertex -> p3) chained into one continuous
+    # a -> vertex -> c surface trace - see _render_geometry's own comment.
+    render_path = body["render_paths"]["m1"]
+    assert render_path == [points["p1"], points["p2"], points["p3"]]
 
 
 def test_preview_area_measurement(client, tmp_path):
@@ -198,7 +218,18 @@ def test_preview_area_measurement(client, tmp_path):
         json={"template_id": template_id, "points": points, "measurements": measurements},
     )
     assert response.status_code == 200, response.text
-    assert response.json()["values"]["m1"] == pytest.approx(9.0)
+    body = response.json()
+    assert body["values"]["m1"] == pytest.approx(9.0)
+
+    # a closed geodesic boundary loop (first == last point) plus the
+    # enclosed region's own triangle soup, for the workspace's "shade the
+    # measured patch of surface" overlay.
+    loop = body["render_paths"]["m1"]
+    assert len(loop) > 4  # traces every mesh edge along the boundary, not just the 4 corners
+    assert loop[0] == loop[-1]
+    faces = body["render_faces"]["m1"]
+    assert len(faces) % 3 == 0
+    assert len(faces) > 0
 
 
 def test_preview_measurement_wrong_point_count_is_a_per_measurement_error_not_a_500(client, tmp_path):
@@ -282,6 +313,12 @@ def test_start_batch_processes_files_independently_without_aborting(client, tmp_
     results_by_name = {r["filename"]: r for r in body["results"]}
     assert results_by_name["patient_good.ply"]["status"] == "ok"
     assert results_by_name["patient_good.ply"]["values"]["m1"] == pytest.approx(3.0)
+    # render geometry is computed fresh per file (this mesh's own z-offset
+    # vertex positions, not the template's) - not just echoed from the
+    # template's own preview.
+    good_path = results_by_name["patient_good.ply"]["render_paths"]["m1"]
+    assert len(good_path) == 4
+    assert all(p["z"] == pytest.approx(1.0) for p in good_path)
     assert results_by_name["patient_bad_topology.ply"]["status"] == "error"
     assert results_by_name["patient_bad_topology.ply"]["error"]
 
@@ -357,6 +394,9 @@ def test_correct_landmark_updates_only_the_affected_measurement_for_that_one_fil
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["values"]["m1"] == pytest.approx(2.0)  # 1 grid step closer to p2 now
+    # render geometry is recomputed against the corrected point too, not
+    # left stale from before the correction.
+    assert len(body["render_paths"]["m1"]) == 3
 
     # patient_b's own stored result must be untouched by a correction on patient_a
     export = client.post(f"/api/facial/batch/{batch_id}/export")

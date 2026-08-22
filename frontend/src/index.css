@@ -395,24 +395,65 @@ label.checkbox:has(input:disabled) {
   margin: 0.6rem 0 0.4rem;
 }
 
-label.checkbox.target-option {
-  align-items: flex-start;
-  margin-bottom: 0.5rem;
+/* two big clickable cards (each a <label> around a visually-hidden radio,
+   so keyboard/AT behavior is unchanged) rather than a plain radio pair -
+   the "more active/prominent" region picker (see PreprocessingPanel.jsx). */
+.target-card-row {
+  display: flex;
+  gap: 0.6rem;
+  margin-bottom: 0.6rem;
 }
 
-.target-option input {
-  margin-top: 0.2rem;
-}
-
-.target-option span {
+.target-card {
+  position: relative;
+  flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 0.1rem;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.75rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+  cursor: pointer;
+  text-align: center;
 }
 
-.target-option small {
+.target-card:hover {
+  border-color: var(--text-secondary);
+}
+
+.target-card.active {
+  border-color: var(--primary);
+  background: var(--bg-surface);
+}
+
+.target-card-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.target-card-teaser {
   font-size: 0.7rem;
   color: var(--text-muted);
+}
+
+.target-card .info-tooltip {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.5rem;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .toggle-row {
@@ -1293,22 +1334,41 @@ select {
 }
 
 /* fullscreen targets the WHOLE tab (see MorphingTab.jsx's fullscreenRef),
-   not just the canvas, so every control stays visible/usable - center and
-   scale everything to fit the screen instead of the normal narrow column. */
+   not just the canvas, so every control stays visible/usable - fill the
+   real screen edge-to-edge (the normal small-panel view below keeps its
+   own fixed max-width/square aspect - see that comment above - only the
+   fullscreen overrides here relax it). the resize plumbing (useThreeScene.js's
+   ResizeObserver -> scene.js's resize() -> camera.aspect) already fully
+   supports a non-square canvas, so there's no technical reason fullscreen
+   needs to stay square - it was capped to a small min(90vw,90vh) square
+   before, which is the "much smaller screen" regression this restores. */
 .longitudinal-morphing-tab:fullscreen {
   background: var(--bg-primary, #111);
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  align-items: stretch;
+  justify-content: flex-start;
   width: 100vw;
   height: 100vh;
-  overflow: auto;
-  padding: 1rem;
+  overflow: hidden;
+  padding: 0.5rem;
 }
 
 .longitudinal-morphing-tab:fullscreen .longitudinal-morphing-viewer {
-  max-width: min(90vw, 90vh);
+  max-width: none;
+  width: 100%;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  min-height: 0;
+}
+
+.longitudinal-morphing-tab:fullscreen .longitudinal-morphing-viewer-canvas {
+  aspect-ratio: unset;
+  flex: 1;
+  width: 100%;
+  min-height: 0;
 }
 
 .longitudinal-morphing-viewer-canvas {
@@ -1627,6 +1687,22 @@ select {
   color: var(--hc, #d1453d);
 }
 
+.facial-batch-failures-summary {
+  margin-bottom: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--hc, #d1453d);
+  border-radius: 6px;
+  background: var(--bg-subtle);
+}
+
+.facial-batch-failures-summary ul {
+  margin: 0.3rem 0 0;
+  padding-left: 1.1rem;
+  max-height: 140px;
+  overflow-y: auto;
+  font-size: 0.85rem;
+}
+
 .facial-export-panel {
   margin-top: 1rem;
   padding-top: 0.75rem;
@@ -1674,4 +1750,65 @@ select {
   overflow-y: auto;
   font-size: 0.82rem;
   font-variant-numeric: tabular-nums;
+}
+
+/* Mean Shape workspace (workspaces/meanshape/MeanShapeWorkspace.jsx) - same
+   two-column viewer+sidebar layout .facial-define-layout already
+   establishes. */
+.meanshape-ws {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(260px, 1fr);
+  gap: 1rem;
+  padding: 1rem;
+  align-items: start;
+}
+
+.meanshape-ws-viewer {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-subtle);
+}
+
+.meanshape-ws-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.meanshape-ws-picked-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 180px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.meanshape-ws-picked-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.meanshape-ws-excluded {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--hc, #d1453d);
+  border-radius: 6px;
+  background: var(--bg-subtle);
+}
+
+.meanshape-ws-excluded ul {
+  margin: 0.3rem 0 0;
+  padding-left: 1.1rem;
+  max-height: 140px;
+  overflow-y: auto;
+  font-size: 0.85rem;
 }

@@ -15,6 +15,8 @@ function toCamelResult(r) {
     landmarkPoints: r.landmark_points,
     values: r.values,
     valueErrors: r.value_errors,
+    renderPaths: r.render_paths,
+    renderFaces: r.render_faces,
   };
 }
 
@@ -62,7 +64,7 @@ export async function previewFacialMeasurements(templateId, points, measurements
   });
   if (!response.ok) throw new Error(await response.text());
   const data = await response.json();
-  return { values: data.values, valueErrors: data.value_errors };
+  return { values: data.values, valueErrors: data.value_errors, renderPaths: data.render_paths, renderFaces: data.render_faces };
 }
 
 // a picked folder only ever comes back as a path (see
@@ -127,7 +129,13 @@ export async function correctFacialLandmark(batchId, filename, pointId, point) {
   });
   if (!response.ok) throw new Error(await response.text());
   const data = await response.json();
-  return { landmarkPoint: data.landmark_point, values: data.values, valueErrors: data.value_errors };
+  return {
+    landmarkPoint: data.landmark_point,
+    values: data.values,
+    valueErrors: data.value_errors,
+    renderPaths: data.render_paths,
+    renderFaces: data.render_faces,
+  };
 }
 
 // the batch's own Excel export (identifiers/names/abbreviations/types/

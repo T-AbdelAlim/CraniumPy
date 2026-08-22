@@ -3,14 +3,29 @@
 // LANDMARK_NAMES), a measurement here can reference any number of arbitrary
 // points, so identity has to be generated, not a constant list.
 
-export function nextPointId(existingIds) {
-  let n = existingIds.length + 1;
-  let id = `p${n}`;
-  while (existingIds.includes(id)) {
-    n += 1;
-    id = `p${n}`;
+// the highest "pN" numeric suffix already in use among `points` (0 if
+// there are none) - used to SEED a synchronous, monotonically-incrementing
+// counter (see FacialWorkspace.jsx's nextPointIndexRef), not to generate an
+// id directly on every pick. an earlier version generated each id as
+// `nextPointId(Object.keys(points))` computed AFTER an async pick's network
+// round trip resolved - two picks fired within the same round-trip window
+// both read the same pre-await `points` and could compute the identical
+// id, silently collapsing two distinct landmarks into one (a Linear
+// measurement whose two point_ids were actually the same point, reporting
+// 0.00mm instead of erroring or staying distinct). seeding a plain counter
+// from this - by MAX index, not just Object.keys(points).length - matters
+// because a restored snapshot's points can have gaps (a measurement
+// removal only deletes the points it alone used - see
+// handleRemoveMeasurement - so "p2" can be gone while "p3" remains); a
+// length-based seed could then hand out "p3" again and collide with the
+// one still there.
+export function maxPointIndex(points) {
+  let max = 0;
+  for (const id of Object.keys(points)) {
+    const n = Number(id.slice(1));
+    if (Number.isFinite(n) && n > max) max = n;
   }
-  return id;
+  return max;
 }
 
 // deterministic, maximally-distinct hues via the golden-angle rotation
@@ -67,6 +82,23 @@ export function pointCountValid(type, count) {
   if (type === "angular") return count === 3;
   if (type === "area") return count >= 3;
   return false;
+}
+
+// folds a fresh {measurementId: geometry} response (render_paths or
+// render_faces from a preview/correction call) into a previously-held map,
+// for exactly the measurement ids that were just recomputed (affectedIds) -
+// a measurement absent from `updates` (its surface trace couldn't be
+// re-traced, e.g. dragged onto a disconnected part of the mesh) has its
+// stale entry explicitly cleared rather than left showing the old geometry,
+// the same "only affected measurements change, and they change completely"
+// contract handleDrag/handleCorrect already follow for values/valueErrors.
+export function mergeRenderGeometry(prev, affectedIds, updates) {
+  const next = { ...prev };
+  for (const id of affectedIds) {
+    if (id in updates) next[id] = updates[id];
+    else delete next[id];
+  }
+  return next;
 }
 
 export function pointCountHint(type) {

@@ -11,6 +11,7 @@ import StagedWorkspaceDialog from "./components/StagedWorkspaceDialog.jsx";
 import CohortWorkspace from "./workspaces/cohort/CohortWorkspace.jsx";
 import LongitudinalWorkspace from "./workspaces/longitudinal/LongitudinalWorkspace.jsx";
 import FacialWorkspace from "./workspaces/facial/FacialWorkspace.jsx";
+import MeanShapeWorkspace from "./workspaces/meanshape/MeanShapeWorkspace.jsx";
 import { listCohortPatients } from "./api/cohort.js";
 import {
   meshUrl,
@@ -198,6 +199,7 @@ function App() {
   const [longitudinalSnapshot, setLongitudinalSnapshot] = useState(null);
   const [cohortSnapshot, setCohortSnapshot] = useState(null);
   const [facialSnapshot, setFacialSnapshot] = useState(null);
+  const [meanShapeSnapshot, setMeanShapeSnapshot] = useState(null);
   // { mode, snapshot } while a restore prompt is up, else null. "patients"
   // has no real snapshot object (its state already lives in App.jsx, which
   // never unmounts on a switch - see appMode's own comment) - snapshot is
@@ -209,6 +211,7 @@ function App() {
   const [loadSnapshotIntoLongitudinal, setLoadSnapshotIntoLongitudinal] = useState(false);
   const [loadSnapshotIntoCohort, setLoadSnapshotIntoCohort] = useState(false);
   const [loadSnapshotIntoFacial, setLoadSnapshotIntoFacial] = useState(false);
+  const [loadSnapshotIntoMeanShape, setLoadSnapshotIntoMeanShape] = useState(false);
 
   function handleStageForLongitudinal(timepoint) {
     // re-staging an already-staged timepoint replaces it rather than
@@ -247,6 +250,7 @@ function App() {
       nextMode === "longitudinal" ? longitudinalSnapshot
       : nextMode === "cohort" ? cohortSnapshot
       : nextMode === "facial" ? facialSnapshot
+      : nextMode === "meanshape" ? meanShapeSnapshot
       : nextMode === "patients" && sessionId != null ? true // patients has no real snapshot object - its state already lives in App.jsx (see appMode's own comment)
       : null;
     // a workspace reports its own snapshot up on every state change,
@@ -258,6 +262,7 @@ function App() {
       nextMode === "longitudinal" ? snapshot?.slots?.some((s) => s.sessionId || s.ready)
       : nextMode === "cohort" ? snapshot?.rows?.length > 0
       : nextMode === "facial" ? snapshot?.measurements?.length > 0 || snapshot?.batchResults?.length > 0
+      : nextMode === "meanshape" ? snapshot?.meshPaths?.length > 0 || !!snapshot?.result
       : !!snapshot;
     if (hasSnapshot) {
       setPendingRestore({ mode: nextMode, snapshot });
@@ -273,6 +278,7 @@ function App() {
     if (mode === "longitudinal") setLoadSnapshotIntoLongitudinal(true);
     if (mode === "cohort") setLoadSnapshotIntoCohort(true);
     if (mode === "facial") setLoadSnapshotIntoFacial(true);
+    if (mode === "meanshape") setLoadSnapshotIntoMeanShape(true);
     setLoadStagedIntoLongitudinal(false);
     setAppMode(mode);
   }
@@ -291,6 +297,10 @@ function App() {
     if (mode === "facial") {
       setFacialSnapshot(null);
       setLoadSnapshotIntoFacial(false);
+    }
+    if (mode === "meanshape") {
+      setMeanShapeSnapshot(null);
+      setLoadSnapshotIntoMeanShape(false);
     }
     if (mode === "patients") {
       setSessionId(null);
@@ -530,6 +540,11 @@ function App() {
     setHasTexture(loadedHasTexture);
     setTextureEnabled(loadedHasTexture);
     setMeshRevision((n) => n + 1);
+    // jump straight to the region-of-interest picker (Preprocessing's own
+    // first control) instead of leaving the user on the Data tab having to
+    // find it themselves - same "auto-advance after an async action"
+    // pattern handleSkipPreprocessing already uses for Analysis.
+    setActiveWorkspace("preprocessing");
   }
 
   // dropped onto the viewer canvas (see Viewer.jsx's onFilesDropped) - an
@@ -1625,6 +1640,7 @@ function App() {
         pendingRestore.mode === "longitudinal" ? "Longitudinal"
         : pendingRestore.mode === "cohort" ? "Cohort"
         : pendingRestore.mode === "facial" ? "Facial Anthropometrics"
+        : pendingRestore.mode === "meanshape" ? "Mean Shape"
         : "Patients"
       } work from earlier in this session. Load it, or start clean?`}
       confirmLabel="load previous workspace"
@@ -1672,6 +1688,34 @@ function App() {
             <FacialWorkspace
               onSnapshotChange={setFacialSnapshot}
               initialSnapshot={loadSnapshotIntoFacial ? facialSnapshot : null}
+            />
+          }
+          inspectorTitle={null}
+          inspector={null}
+        />
+        {restoreDialog}
+        {showStagedPrompt && (
+          <StagedWorkspaceDialog
+            count={stagedLongitudinalMeshes.length}
+            onLoadStaged={handleLoadStagedWorkspace}
+            onLoadClean={handleLoadCleanWorkspace}
+          />
+        )}
+      </>
+    );
+  }
+
+  if (appMode === "meanshape") {
+    return (
+      <>
+        <Shell
+          appMode={appMode}
+          onAppModeChange={handleAppModeChange}
+          workspaces={[]}
+          workspace={
+            <MeanShapeWorkspace
+              onSnapshotChange={setMeanShapeSnapshot}
+              initialSnapshot={loadSnapshotIntoMeanShape ? meanShapeSnapshot : null}
             />
           }
           inspectorTitle={null}

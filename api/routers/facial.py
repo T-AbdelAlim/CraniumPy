@@ -42,6 +42,7 @@ from craniumpy_core.facial_measurements import (
     build_area_boundary,
     build_topology,
     compute_measurement,
+    geodesic_path_vertices,
     nearest_vertex_index,
 )
 from craniumpy_core.io import load_mesh, mesh_to_glb
@@ -190,6 +191,49 @@ def _measure_one(
     return compute_measurement(mesh, topology, m.type, vertex_indices, geodesic=m.geodesic, boundary=boundary)
 
 
+def _points_from_indices(mesh, indices) -> list[LandmarkPoint]:
+    verts = mesh.vertices[indices]
+    return [LandmarkPoint(x=float(p[0]), y=float(p[1]), z=float(p[2])) for p in verts]
+
+
+def _points_from_array(arr) -> list[LandmarkPoint]:
+    return [LandmarkPoint(x=float(p[0]), y=float(p[1]), z=float(p[2])) for p in arr]
+
+
+def _render_geometry(
+    mesh, topology, m: FacialMeasurementDef, vertex_index_by_point: dict[str, int], boundary: BoundaryTopology | None
+) -> tuple[list[LandmarkPoint] | None, list[LandmarkPoint] | None]:
+    """the VISUAL overlay geometry for one measurement - always traces along
+    the mesh surface, regardless of whether the measurement's own computed
+    VALUE is a straight or geodesic distance (a straight chord between two
+    points on a curved face reads as floating off the surface, so the line
+    the viewer draws always hugs the mesh even for a "straight distance"
+    Linear measurement - the number shown is still the real straight-line
+    value, this only changes what gets drawn). returns (path_points,
+    boundary_face_triangle_points) - Area only ever returns the second,
+    Linear/Angular only the first. (None, None) - never raised - if a path
+    can't be traced (a disconnected mesh): the frontend falls back to a
+    plain straight connector between the raw landmark points in that case,
+    same as it already does before this round trip returns."""
+    try:
+        if m.type == "linear":
+            a, b = (vertex_index_by_point[pid] for pid in m.point_ids)
+            return _points_from_indices(mesh, geodesic_path_vertices(mesh, topology, a, b)), None
+        if m.type == "angular":
+            a, vertex, c = (vertex_index_by_point[pid] for pid in m.point_ids)
+            leg_a = geodesic_path_vertices(mesh, topology, vertex, a)
+            leg_c = geodesic_path_vertices(mesh, topology, vertex, c)
+            path = list(reversed(leg_a)) + leg_c[1:]  # a -> vertex -> c, one continuous surface trace
+            return _points_from_indices(mesh, path), None
+        if m.type == "area" and boundary is not None:
+            loop_points = _points_from_indices(mesh, boundary.boundary_vertex_loop)
+            face_verts = mesh.vertices[mesh.faces[boundary.face_indices]].reshape(-1, 3)
+            return loop_points, _points_from_array(face_verts)
+    except ValueError:
+        pass
+    return None, None
+
+
 @router.post("/template/{template_id}/measurement/preview", response_model=FacialMeasurementPreviewResponse)
 def preview_measurements(template_id: str, request: FacialMeasurementPreviewRequest) -> FacialMeasurementPreviewResponse:
     """live values while still defining measurements - computed directly on
@@ -198,6 +242,8 @@ def preview_measurements(template_id: str, request: FacialMeasurementPreviewRequ
     mesh, topology = entry["mesh"], entry["topology"]
     values: dict[str, float | None] = {}
     errors: dict[str, str] = {}
+    render_paths: dict[str, list[LandmarkPoint]] = {}
+    render_faces: dict[str, list[LandmarkPoint]] = {}
 
     for m in request.measurements:
         try:
@@ -210,8 +256,14 @@ def preview_measurements(template_id: str, request: FacialMeasurementPreviewRequ
         except ValueError as exc:
             values[m.id] = None
             errors[m.id] = str(exc)
+            continue
+        path, faces = _render_geometry(mesh, topology, m, vertex_index_by_point, boundary)
+        if path is not None:
+            render_paths[m.id] = path
+        if faces is not None:
+            render_faces[m.id] = faces
 
-    return FacialMeasurementPreviewResponse(values=values, value_errors=errors)
+    return FacialMeasurementPreviewResponse(values=values, value_errors=errors, render_paths=render_paths, render_faces=render_faces)
 
 
 def _process_one_mesh(
@@ -246,6 +298,8 @@ def _process_one_mesh(
 
     values: dict[str, float | None] = {}
     value_errors: dict[str, str] = {}
+    render_paths: dict[str, list[LandmarkPoint]] = {}
+    render_faces: dict[str, list[LandmarkPoint]] = {}
     for m in measurements:
         if m.id in boundary_errors:
             values[m.id] = None
@@ -257,9 +311,21 @@ def _process_one_mesh(
         except (KeyError, ValueError) as exc:
             values[m.id] = None
             value_errors[m.id] = str(exc)
+            continue
+        path, faces = _render_geometry(mesh, topology, m, vertex_index_by_point, boundary)
+        if path is not None:
+            render_paths[m.id] = path
+        if faces is not None:
+            render_faces[m.id] = faces
 
     return FacialBatchFileResult(
-        filename=filename, status="ok", landmark_points=landmark_points, values=values, value_errors=value_errors
+        filename=filename,
+        status="ok",
+        landmark_points=landmark_points,
+        values=values,
+        value_errors=value_errors,
+        render_paths=render_paths,
+        render_faces=render_faces,
     )
 
 
@@ -360,10 +426,13 @@ def correct_landmark(batch_id: str, request: FacialCorrectionRequest) -> FacialC
     affected_ids = batch["measurements_by_point"].get(request.point_id, [])
     values: dict[str, float | None] = {}
     value_errors: dict[str, str] = {}
+    render_paths: dict[str, list[LandmarkPoint]] = {}
+    render_faces: dict[str, list[LandmarkPoint]] = {}
     for mid in affected_ids:
         m = batch["measurements"][mid]
         try:
             vertex_indices = [overrides.get(pid, batch["vertex_index_by_point"][pid]) for pid in m.point_ids]
+            vertex_index_by_point = dict(zip(m.point_ids, vertex_indices))
             boundary = None
             if m.type == "area":
                 # never the shared template-derived cache - this ONE mesh's
@@ -374,13 +443,28 @@ def correct_landmark(batch_id: str, request: FacialCorrectionRequest) -> FacialC
             values[mid] = value
             result.values[mid] = value
             result.value_errors.pop(mid, None)
+            path, faces = _render_geometry(mesh, topology, m, vertex_index_by_point, boundary)
+            if path is not None:
+                render_paths[mid] = path
+                result.render_paths[mid] = path
+            else:
+                result.render_paths.pop(mid, None)
+            if faces is not None:
+                render_faces[mid] = faces
+                result.render_faces[mid] = faces
+            else:
+                result.render_faces.pop(mid, None)
         except ValueError as exc:
             values[mid] = None
             value_errors[mid] = str(exc)
             result.values[mid] = None
             result.value_errors[mid] = str(exc)
+            result.render_paths.pop(mid, None)
+            result.render_faces.pop(mid, None)
 
-    return FacialCorrectionResponse(landmark_point=snapped_point, values=values, value_errors=value_errors)
+    return FacialCorrectionResponse(
+        landmark_point=snapped_point, values=values, value_errors=value_errors, render_paths=render_paths, render_faces=render_faces
+    )
 
 
 def _measurement_header(m: FacialMeasurementDef) -> str:
