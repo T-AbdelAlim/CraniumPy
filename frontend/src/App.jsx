@@ -29,6 +29,7 @@ import {
   saveMeshes,
   meshesBundleUrl,
   getResults,
+  measureRegistered,
   saveAnalysis,
   analysisBundleUrl,
   switchTarget,
@@ -144,6 +145,10 @@ function App() {
   // fresh upload (handleUploaded), regardless of which path produced it, so
   // a stale drop message can't linger over a mesh loaded by browsing instead.
   const [dropStatus, setDropStatus] = useState("");
+  // files dropped onto the main viewer while it already has a mesh loaded -
+  // held here until the "Replace current mesh?" confirm resolves (see
+  // handleFilesDroppedGate).
+  const [pendingDropFiles, setPendingDropFiles] = useState(null);
   const [selectionHasTexture, setSelectionHasTexture] = useState(false);
   const [wireframe, setWireframe] = useState(false);
   const [textureEnabled, setTextureEnabled] = useState(false);
@@ -161,17 +166,6 @@ function App() {
   // landmark/align state resets - which is exactly why a switch that would
   // actually lose something gets confirmed first, see handleAppModeChange.
   const [appMode, setAppMode] = useState("patients");
-  // whether the CURRENTLY active workspace has anything loaded worth
-  // confirming before it's thrown away - "patients" reads straight off
-  // sessionId (this file's own state), the other two report it up via
-  // their own onHasDataChange prop (see LongitudinalWorkspace.jsx/
-  // CohortWorkspace.jsx), since their loaded state lives entirely inside
-  // those components, not here.
-  const [longitudinalHasData, setLongitudinalHasData] = useState(false);
-  const [cohortWorkspaceHasData, setCohortWorkspaceHasData] = useState(false);
-  // set while a workspace switch is waiting on the confirm dialog below -
-  // the mode the user actually clicked, not yet committed to appMode.
-  const [pendingAppMode, setPendingAppMode] = useState(null);
   // meshes staged for Longitudinal from the Preprocessing panel's own
   // "stage for Longitudinal" control (see handleStageForLongitudinal) -
   // {sessionId, target, stage: "nicp_result", timepoint, label}. never
@@ -180,7 +174,7 @@ function App() {
   // next time.
   const [stagedLongitudinalMeshes, setStagedLongitudinalMeshes] = useState([]);
   // shown once a switch to "longitudinal" is about to actually commit (see
-  // commitAppModeSwitch) while stagedLongitudinalMeshes isn't empty - see
+  // handleAppModeChange) while stagedLongitudinalMeshes isn't empty - see
   // StagedWorkspaceDialog.jsx.
   const [showStagedPrompt, setShowStagedPrompt] = useState(false);
   // whether the NEXT mount of LongitudinalWorkspace should seed its slots
@@ -190,16 +184,39 @@ function App() {
   // afterward.
   const [loadStagedIntoLongitudinal, setLoadStagedIntoLongitudinal] = useState(false);
 
-  function activeWorkspaceHasData() {
-    if (appMode === "patients") return sessionId != null;
-    if (appMode === "longitudinal") return longitudinalHasData;
-    if (appMode === "cohort") return cohortWorkspaceHasData;
-    return false;
-  }
+  // one lightweight, JSON-safe snapshot per workspace, kept current by that
+  // workspace's own onSnapshotChange (see LongitudinalWorkspace.jsx/
+  // CohortWorkspace.jsx) - null until that workspace has been visited at
+  // least once. this is what replaced the old "switching workspaces clears
+  // the current one, are you sure?" confirm guard: nothing is ever actually
+  // discarded on a switch anymore, so there's nothing left to confirm -
+  // instead, RETURNING to a workspace that has one of these offers "load
+  // previous workspace" (seed the fresh remount from it) or "load clean
+  // workspace" (discard it, mount blank) via the same StagedWorkspaceDialog
+  // the Preprocessing->Longitudinal staging flow already uses.
+  const [longitudinalSnapshot, setLongitudinalSnapshot] = useState(null);
+  const [cohortSnapshot, setCohortSnapshot] = useState(null);
+  // { mode, snapshot } while a restore prompt is up, else null. "patients"
+  // has no real snapshot object (its state already lives in App.jsx, which
+  // never unmounts on a switch - see appMode's own comment) - snapshot is
+  // just `true` there, a sentinel meaning "there's a session to redisplay".
+  const [pendingRestore, setPendingRestore] = useState(null);
+  // whether the NEXT mount of LongitudinalWorkspace/CohortWorkspace should
+  // seed itself from longitudinalSnapshot/cohortSnapshot - same one-shot,
+  // read-once-at-mount pattern loadStagedIntoLongitudinal already uses.
+  const [loadSnapshotIntoLongitudinal, setLoadSnapshotIntoLongitudinal] = useState(false);
+  const [loadSnapshotIntoCohort, setLoadSnapshotIntoCohort] = useState(false);
 
   function handleStageForLongitudinal(timepoint) {
+    // re-staging an already-staged timepoint replaces it rather than
+    // appending a second entry - without this, staging t1 twice inflated
+    // stagedLongitudinalMeshes.length (shown directly as the
+    // StagedWorkspaceDialog count) past the number of distinct timepoints
+    // that actually end up as slots (buildInitialSlots already collapses
+    // duplicates by timepoint, last-write-wins - this just keeps the raw
+    // array's own length agreeing with that).
     setStagedLongitudinalMeshes((prev) => [
-      ...prev,
+      ...prev.filter((m) => m.timepoint !== timepoint),
       {
         sessionId,
         target,
@@ -210,44 +227,73 @@ function App() {
     ]);
   }
 
-  // the actual appMode commit, once any data-loss confirmation has already
-  // been cleared (see handleAppModeChange/confirmAppModeSwitch below) -
-  // switching INTO longitudinal with something staged detours through the
-  // staged-workspace prompt (StagedWorkspaceDialog) instead of committing
-  // immediately.
-  function commitAppModeSwitch(nextMode) {
+  // the Shell nav's own onAppModeChange - switching is always immediate now
+  // (nothing is ever discarded, see longitudinalSnapshot's own comment
+  // above), except for two detours that need a choice first: freshly staged
+  // meshes waiting for Longitudinal (takes priority - a staging action just
+  // taken moments ago is a stronger signal than a passive leftover
+  // snapshot), or a preserved snapshot from the last time the target
+  // workspace was visited.
+  function handleAppModeChange(nextMode) {
+    if (nextMode === appMode) return;
     if (nextMode === "longitudinal" && stagedLongitudinalMeshes.length > 0) {
       setShowStagedPrompt(true);
+      return;
+    }
+    const snapshot =
+      nextMode === "longitudinal" ? longitudinalSnapshot
+      : nextMode === "cohort" ? cohortSnapshot
+      : nextMode === "patients" && sessionId != null ? true // patients has no real snapshot object - its state already lives in App.jsx (see appMode's own comment)
+      : null;
+    // a workspace reports its own snapshot up on every state change,
+    // including the blank state right after a fresh mount/"load clean" -
+    // that's still a real (truthy) object, just an empty one, so the check
+    // has to look at whether it actually carries anything worth restoring,
+    // not just whether it exists at all.
+    const hasSnapshot =
+      nextMode === "longitudinal" ? snapshot?.slots?.some((s) => s.sessionId || s.ready)
+      : nextMode === "cohort" ? snapshot?.rows?.length > 0
+      : !!snapshot;
+    if (hasSnapshot) {
+      setPendingRestore({ mode: nextMode, snapshot });
       return;
     }
     setLoadStagedIntoLongitudinal(false);
     setAppMode(nextMode);
   }
 
-  // the Shell nav's own onAppModeChange - guards a switch AWAY from a
-  // workspace that still has something loaded behind a confirmation
-  // (see ConfirmDialog below), instead of just silently remounting into a
-  // blank workspace and losing it (see appMode's own comment above for why
-  // that remount happens at all). a re-click of the already-active mode,
-  // or switching while the current one is empty, commits immediately - the
-  // dialog is only for the case that would actually lose something.
-  function handleAppModeChange(nextMode) {
-    if (nextMode === appMode) return;
-    if (activeWorkspaceHasData()) {
-      setPendingAppMode(nextMode);
-      return;
-    }
-    commitAppModeSwitch(nextMode);
+  function handleRestorePrevious() {
+    const { mode } = pendingRestore;
+    setPendingRestore(null);
+    if (mode === "longitudinal") setLoadSnapshotIntoLongitudinal(true);
+    if (mode === "cohort") setLoadSnapshotIntoCohort(true);
+    setLoadStagedIntoLongitudinal(false);
+    setAppMode(mode);
   }
 
-  function confirmAppModeSwitch() {
-    const nextMode = pendingAppMode;
-    setPendingAppMode(null);
-    commitAppModeSwitch(nextMode);
+  function handleRestoreClean() {
+    const { mode } = pendingRestore;
+    setPendingRestore(null);
+    if (mode === "longitudinal") {
+      setLongitudinalSnapshot(null);
+      setLoadSnapshotIntoLongitudinal(false);
+    }
+    if (mode === "cohort") {
+      setCohortSnapshot(null);
+      setLoadSnapshotIntoCohort(false);
+    }
+    if (mode === "patients") {
+      setSessionId(null);
+      setPatientMetadata(BLANK_PATIENT_METADATA);
+      resetPreprocessingState();
+    }
+    setLoadStagedIntoLongitudinal(false);
+    setAppMode(mode);
   }
 
   function handleLoadStagedWorkspace() {
     setLoadStagedIntoLongitudinal(true);
+    setLoadSnapshotIntoLongitudinal(false);
     setShowStagedPrompt(false);
     setAppMode("longitudinal");
   }
@@ -258,8 +304,24 @@ function App() {
     setAppMode("longitudinal");
   }
 
-  function cancelAppModeSwitch() {
-    setPendingAppMode(null);
+  // re-displays the correct current-stage mesh into a freshly (re)mounted
+  // Viewer - unlike a target switch (handleTargetChange), nothing about the
+  // pipeline state itself changed here, only the Viewer instance: this
+  // component never unmounts across an appMode switch (see appMode's own
+  // comment), but <Viewer> only renders inside the "patients" JSX branch,
+  // so switching away and back always leaves a brand new, empty Viewer even
+  // though sessionId/pipelineRan/etc are all still exactly as they were.
+  // mirrors captureTargetSnapshot's own meshStage computation.
+  async function redisplayCurrentPatientMesh() {
+    if (sessionId == null) return;
+    const meshStage = pipelineRan ? "result" : alignSucceeded ? "registered" : "original";
+    const descriptor = showingNicpResult ? "nicp-result" : meshStage;
+    await viewerRef.current?.displayMesh(
+      showingNicpResult ? nicpResultMeshUrl(sessionId) : meshUrl(sessionId, meshStage),
+      { selectionHasTexture: showingNicpResult ? false : selectionHasTexture },
+    );
+    displayedMeshKeyRef.current = meshDisplayKey(sessionId, target, descriptor);
+    setMeshRevision((n) => n + 1);
   }
 
   const [target, setTarget] = useState("cranium");
@@ -284,6 +346,11 @@ function App() {
   const [adjustingInAlignedFrame, setAdjustingInAlignedFrame] = useState(false);
   const [registeredTransform, setRegisteredTransform] = useState(null);
   const [pipelineRan, setPipelineRan] = useState(false);
+  // true when analysisResults came from "skip preprocessing" (the uploaded
+  // mesh treated as already registered - see handleSkipPreprocessing) rather
+  // than a real /run - the results-fetch effect below skips re-fetching in
+  // that case, since there's nothing to re-fetch.
+  const [skipPreprocessingMode, setSkipPreprocessingMode] = useState(false);
   const [aligning, setAligning] = useState(false);
   const [alignStatus, setAlignStatus] = useState("");
 
@@ -312,7 +379,6 @@ function App() {
   const [nicpStatus, setNicpStatus] = useState("");
   const [nicpError, setNicpError] = useState(false);
   const nicpPollingRef = useRef(false);
-  const [savingMeshes, setSavingMeshes] = useState(false);
   const [saveMeshesStatus, setSaveMeshesStatus] = useState("");
   // desktop-only override for where save/export writes - null means the
   // default (next to the original mesh file, session.source_dir on the
@@ -394,7 +460,6 @@ function App() {
   // resetPreprocessingState or the target-switch snapshot machinery.
   const [exportMeasurements, setExportMeasurements] = useState(true);
   const [exportAsymmetry, setExportAsymmetry] = useState(true);
-  const [exportMeshes, setExportMeshes] = useState(true);
 
   // patient/visit metadata form (sidebar) - see PatientMetadataForm.jsx and
   // api/schemas.py's PatientMetadata. cohortMode/cohortPath deliberately
@@ -503,6 +568,26 @@ function App() {
     }
   }
 
+  // "replace current mesh?" gate in front of handleFilesDropped - dropping
+  // a file onto a viewer that already has something loaded used to replace
+  // it silently, on this viewer and every other one in the app alike (see
+  // TimepointSlot.jsx's own onFilesDropped for the Longitudinal Compare
+  // viewers). skips the gate entirely when there's nothing loaded yet, same
+  // as before.
+  function handleFilesDroppedGate(files) {
+    if (sessionId != null) {
+      setPendingDropFiles(files);
+      return;
+    }
+    handleFilesDropped(files);
+  }
+
+  function confirmReplaceMesh() {
+    const files = pendingDropFiles;
+    setPendingDropFiles(null);
+    handleFilesDropped(files);
+  }
+
   function handlePatientMetadataFieldChange(field, value) {
     setPatientMetadata((prev) => ({ ...prev, [field]: value }));
   }
@@ -585,7 +670,6 @@ function App() {
     setNicpError(false);
     setShowingNicpResult(false);
     setNicpResultReady(false);
-    setSavingMeshes(false);
     setSaveMeshesStatus("");
     setSaveDestDir(null);
     setLastSavedMeshesFolder(null);
@@ -595,6 +679,7 @@ function App() {
     setExportingAnalysis(false);
     setExportAnalysisStatus("");
     setExportCohortStatus("");
+    setSkipPreprocessingMode(false);
   }
 
   // desktop-only: opens the native folder dialog and remembers the choice
@@ -618,32 +703,28 @@ function App() {
     await openFolderNative(folder, (msg) => setSaveMeshesStatus(`Couldn't open the folder: ${msg}`));
   }
 
-  // desktop: writes straight next to the source file (or saveDestDir, if
-  // the user picked one via "change save folder..."); browser: downloads a
-  // zip. tries the desktop path first and falls back on exactly a 400 (no
-  // real source path for this session) - same pattern legacy's save-results
-  // button used (frontend_legacy/app.js:1473-1497).
-  async function handleSaveMeshes() {
-    setSavingMeshes(true);
-    if (isDesktopApp()) {
-      setSaveMeshesStatus("Saving...");
-      try {
-        const { saved_to: savedTo } = await saveMeshes(sessionId, saveDestDir);
-        setSaveMeshesStatus(`Saved to ${savedTo}`);
-        setLastSavedMeshesFolder(savedTo);
-        setSavingMeshes(false);
+  // called automatically after Align/Preprocess Mesh/NICP fit succeeds -
+  // desktop-only (writes straight next to the source file, or saveDestDir if
+  // the user picked one via "change save folder..."). a 400 (no real source
+  // path for this session - e.g. a plain browser upload) is a silent no-op
+  // here rather than falling back to a forced zip download: that fallback
+  // made sense for an explicit button click, but auto-triggering a browser
+  // download after every Align click would be a surprising side effect of
+  // something meant to be quiet/automatic.
+  async function autoSaveMeshes() {
+    if (!isDesktopApp()) return;
+    setSaveMeshesStatus("Saving...");
+    try {
+      const { saved_to: savedTo } = await saveMeshes(sessionId, saveDestDir);
+      setSaveMeshesStatus(`Saved to ${savedTo}`);
+      setLastSavedMeshesFolder(savedTo);
+    } catch (err) {
+      if (err.status === 400) {
+        setSaveMeshesStatus("");
         return;
-      } catch (err) {
-        if (err.status !== 400) {
-          setSaveMeshesStatus(`Save failed: ${err.message}`);
-          setSavingMeshes(false);
-          return;
-        }
       }
+      setSaveMeshesStatus(`Save failed: ${err.message}`);
     }
-    setSaveMeshesStatus("");
-    setSavingMeshes(false);
-    window.location.href = meshesBundleUrl(sessionId);
   }
 
   useEffect(() => {
@@ -834,7 +915,6 @@ function App() {
       nicpProgress,
       nicpStatus,
       nicpError,
-      savingMeshes,
       saveMeshesStatus,
       lastSavedMeshesFolder,
       analysisResults,
@@ -844,6 +924,7 @@ function App() {
       exportAnalysisStatus,
       exportCohortStatus,
       lastSavedAnalysisFolder,
+      skipPreprocessingMode,
     };
   }
 
@@ -864,7 +945,6 @@ function App() {
     setNicpError(snapshot.nicpError);
     setShowingNicpResult(snapshot.showingNicpResult);
     setNicpResultReady(snapshot.nicpResultReady);
-    setSavingMeshes(snapshot.savingMeshes);
     setSaveMeshesStatus(snapshot.saveMeshesStatus);
     setLastSavedMeshesFolder(snapshot.lastSavedMeshesFolder);
     setAnalysisResults(snapshot.analysisResults);
@@ -874,6 +954,7 @@ function App() {
     setExportAnalysisStatus(snapshot.exportAnalysisStatus);
     setExportCohortStatus(snapshot.exportCohortStatus);
     setLastSavedAnalysisFolder(snapshot.lastSavedAnalysisFolder);
+    setSkipPreprocessingMode(snapshot.skipPreprocessingMode);
   }
 
   // a target that's never been clipped/run this session - same "nothing
@@ -893,7 +974,6 @@ function App() {
     setNicpError(false);
     setShowingNicpResult(false);
     setNicpResultReady(false);
-    setSavingMeshes(false);
     setSaveMeshesStatus("");
     setLastSavedMeshesFolder(null);
     setAnalysisResults(null);
@@ -903,6 +983,7 @@ function App() {
     setExportAnalysisStatus("");
     setLastSavedAnalysisFolder(null);
     setExportCohortStatus("");
+    setSkipPreprocessingMode(false);
   }
 
   // snapshots the OLD target's scene, then either restores NEW target's own
@@ -1046,6 +1127,27 @@ function App() {
     setMeshRevision((n) => n + 1);
   }
 
+  // "preprocessing already performed" - treats the uploaded mesh (already
+  // an _rg_C/_rg_F/_rg_CN/_rg_FN file, say) as already fully registered, and
+  // jumps straight to Analysis with real numbers - no landmark picking, no
+  // /align+/clip+/run. see api/routers/mesh.py's measure_registered for why
+  // this reuses the Longitudinal workspace's own "already registered"
+  // measurement path rather than faking a full pipeline run.
+  async function handleSkipPreprocessing() {
+    setAnalysisStatus("Measuring...");
+    try {
+      const results = await measureRegistered(sessionId, target);
+      setAnalysisResults(results);
+      setAnalysisViewMode("metopic");
+      setAnalysisStatus("");
+      setPipelineRan(true);
+      setSkipPreprocessingMode(true);
+      setActiveWorkspace("analysis");
+    } catch (err) {
+      setAnalysisStatus(`Failed to measure: ${err.message}`);
+    }
+  }
+
   // targetOverride lets handleTargetChange trigger a quiet re-align against
   // the target it's switching TO before that target-change's own setTarget
   // call has actually committed - reading the target state directly here
@@ -1075,6 +1177,7 @@ function App() {
         setAdjustingInAlignedFrame(false);
         setLandmarksChangedSinceAlign(false);
         setAlignStatus("Rigid alignment: ✓");
+        await autoSaveMeshes();
       }
     } catch (err) {
       setAlignStatus(`Failed to start: ${err.message}`);
@@ -1144,6 +1247,7 @@ function App() {
         setMeshRevision((n) => n + 1);
         setRunProgress(100);
         setRunStatus("Run complete: ✓");
+        await autoSaveMeshes();
       }
     } catch (err) {
       setRunError(true);
@@ -1242,6 +1346,7 @@ function App() {
         // since there's now nothing left to redraw.
         setShowTemplateOverlay(false);
         viewerRef.current?.hideTemplateOverlay();
+        await autoSaveMeshes();
       }
     } catch (err) {
       setNicpError(true);
@@ -1301,6 +1406,10 @@ function App() {
       viewerRef.current?.hideFrontalBossingOverlay();
       return;
     }
+    // "skip preprocessing" already set analysisResults directly (see
+    // handleSkipPreprocessing) - there's no /run output to re-fetch here,
+    // and doing so anyway would just be a redundant round-trip.
+    if (skipPreprocessingMode) return;
     let cancelled = false;
     (async () => {
       setAnalysisStatus("Loading...");
@@ -1318,7 +1427,17 @@ function App() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeWorkspace, pipelineRan, sessionId, meshRevision]);
+  }, [activeWorkspace, pipelineRan, sessionId, meshRevision, skipPreprocessingMode]);
+
+  // fires on mount and every time appMode transitions back to "patients" -
+  // see redisplayCurrentPatientMesh's own comment for why a fresh Viewer
+  // needs this even though nothing about the session itself changed.
+  // no-ops on its own (sessionId == null) whenever there's nothing to show
+  // yet, or this is the very first mount and appMode isn't "patients" at all.
+  useEffect(() => {
+    if (appMode === "patients") redisplayCurrentPatientMesh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appMode]);
 
   // drives the live viewer overlay to match whatever's currently loaded and
   // selected (HC-line/BPD/OFD for cranial, heatmap or the metopic contour
@@ -1419,7 +1538,7 @@ function App() {
   async function handleExportAnalysis() {
     setExportingAnalysis(true);
     setExportCohortStatus("");
-    const exportSelection = { measurements: exportMeasurements, asymmetry: exportAsymmetry, meshes: exportMeshes };
+    const exportSelection = { measurements: exportMeasurements, asymmetry: exportAsymmetry, meshes: true };
     if (isDesktopApp()) {
       setExportAnalysisStatus("Exporting...");
       const targetCohortPath = cohortMode !== "none" ? cohortPath : null;
@@ -1484,6 +1603,23 @@ function App() {
   const onAnalysisTab = activeWorkspace === "analysis";
   const inspectorTitle = onPreprocessingTab ? "Preprocessing" : onAnalysisTab ? "Analysis" : "Data";
 
+  // shared by all 3 appMode branches below - "you have previous work in
+  // this workspace, pick it back up or start clean?" (see pendingRestore's
+  // own comment). same component the Preprocessing->Longitudinal staging
+  // prompt uses, just with its own title/message instead of that flow's
+  // hardcoded copy.
+  const restoreDialog = pendingRestore && (
+    <StagedWorkspaceDialog
+      title="Previous session found"
+      message={`You have previous ${
+        pendingRestore.mode === "longitudinal" ? "Longitudinal" : pendingRestore.mode === "cohort" ? "Cohort" : "Patients"
+      } work from earlier in this session. Load it, or start clean?`}
+      confirmLabel="load previous workspace"
+      onLoadStaged={handleRestorePrevious}
+      onLoadClean={handleRestoreClean}
+    />
+  );
+
   if (appMode === "cohort") {
     return (
       <>
@@ -1491,20 +1627,16 @@ function App() {
           appMode={appMode}
           onAppModeChange={handleAppModeChange}
           workspaces={[]}
-          workspace={<CohortWorkspace onHasDataChange={setCohortWorkspaceHasData} />}
+          workspace={
+            <CohortWorkspace
+              onSnapshotChange={setCohortSnapshot}
+              initialSnapshot={loadSnapshotIntoCohort ? cohortSnapshot : null}
+            />
+          }
           inspectorTitle={null}
           inspector={null}
         />
-        {pendingAppMode && (
-          <ConfirmDialog
-            title="Switch workspace?"
-            message="Switching workspaces clears the current workspace. Are you sure?"
-            confirmLabel="Switch anyway"
-            cancelLabel="Stay here"
-            onConfirm={confirmAppModeSwitch}
-            onCancel={cancelAppModeSwitch}
-          />
-        )}
+        {restoreDialog}
         {showStagedPrompt && (
           <StagedWorkspaceDialog
             count={stagedLongitudinalMeshes.length}
@@ -1525,23 +1657,15 @@ function App() {
           workspaces={[]}
           workspace={
             <LongitudinalWorkspace
-              onHasDataChange={setLongitudinalHasData}
+              onSnapshotChange={setLongitudinalSnapshot}
               initialStagedMeshes={loadStagedIntoLongitudinal ? stagedLongitudinalMeshes : []}
+              initialSnapshot={loadSnapshotIntoLongitudinal ? longitudinalSnapshot : null}
             />
           }
           inspectorTitle={null}
           inspector={null}
         />
-        {pendingAppMode && (
-          <ConfirmDialog
-            title="Switch workspace?"
-            message="Switching workspaces clears the current workspace. Are you sure?"
-            confirmLabel="Switch anyway"
-            cancelLabel="Stay here"
-            onConfirm={confirmAppModeSwitch}
-            onCancel={cancelAppModeSwitch}
-          />
-        )}
+        {restoreDialog}
         {showStagedPrompt && (
           <StagedWorkspaceDialog
             count={stagedLongitudinalMeshes.length}
@@ -1630,8 +1754,6 @@ function App() {
             useNicpMesh={showingNicpResult}
             onUseNicpMeshChange={handleUseNicpMeshChange}
             onStageForLongitudinal={handleStageForLongitudinal}
-            onSaveMeshes={handleSaveMeshes}
-            savingMeshes={savingMeshes}
             saveMeshesStatus={saveMeshesStatus}
             saveDestDir={saveDestDir}
             onChooseSaveFolder={handleChooseSaveFolder}
@@ -1656,8 +1778,6 @@ function App() {
             onExportMeasurementsChange={setExportMeasurements}
             exportAsymmetry={exportAsymmetry}
             onExportAsymmetryChange={setExportAsymmetry}
-            exportMeshes={exportMeshes}
-            onExportMeshesChange={setExportMeshes}
             isDesktop={isDesktopApp()}
             saveDestDir={saveDestDir}
             onChooseSaveFolder={handleChooseSaveFolder}
@@ -1668,6 +1788,11 @@ function App() {
         ) : (
           <>
             <UploadPanel onUploaded={handleUploaded} />
+            {sessionId != null && !pipelineRan && (
+              <button type="button" className="button-subtle" onClick={handleSkipPreprocessing}>
+                Preprocessing already performed - move to analysis
+              </button>
+            )}
             {sessionId != null && (
               <MeshViewToggles
                 wireframe={wireframe}
@@ -1690,7 +1815,7 @@ function App() {
             landmarkColors={LANDMARK_COLORS}
             onPick={onPreprocessingTab ? handlePick : undefined}
             onDrag={onPreprocessingTab ? handleDrag : undefined}
-            onFilesDropped={!onPreprocessingTab && !onAnalysisTab ? handleFilesDropped : undefined}
+            onFilesDropped={handleFilesDroppedGate}
           />
           {sessionId == null && !dropStatus && <p className="hint overlay">Upload a mesh to begin.</p>}
           {dropStatus && <p className="hint overlay">{dropStatus}</p>}
@@ -1735,14 +1860,15 @@ function App() {
         </>
       }
     />
-    {pendingAppMode && (
+    {restoreDialog}
+    {pendingDropFiles && (
       <ConfirmDialog
-        title="Switch workspace?"
-        message="Switching workspaces clears the current workspace. Are you sure?"
-        confirmLabel="Switch anyway"
-        cancelLabel="Stay here"
-        onConfirm={confirmAppModeSwitch}
-        onCancel={cancelAppModeSwitch}
+        title="Replace current mesh?"
+        message="Loading a new mesh here will replace the one currently loaded. Continue?"
+        confirmLabel="Replace"
+        cancelLabel="Cancel"
+        onConfirm={confirmReplaceMesh}
+        onCancel={() => setPendingDropFiles(null)}
       />
     )}
     {showStagedPrompt && (

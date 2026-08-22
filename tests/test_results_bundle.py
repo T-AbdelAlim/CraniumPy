@@ -68,7 +68,7 @@ def test_write_results_to_folder_uses_shortened_stem(tmp_path, sample_result):
         asymmetry=None,
         config={},
     )
-    assert results_dir == tmp_path / "CP_1016510_20210730_edited_C_3"
+    assert results_dir == tmp_path / "CP_C_1016510_20210730_edited"
     assert (results_dir / "1016510_20210730_edited_rg.ply").exists()
     assert (results_dir / "1016510_20210730_edited_rg_C.ply").exists()
     assert (results_dir / "1016510_20210730_edited_report_cranial.json").exists()
@@ -93,7 +93,7 @@ def test_build_results_bundle_uses_shortened_stem_too(sample_result):
     from io import BytesIO
 
     names = zipfile.ZipFile(BytesIO(zip_bytes)).namelist()
-    assert all(n.startswith("CP_1016510_20210730_edited_C_3/1016510_20210730_edited_") for n in names)
+    assert all(n.startswith("CP_C_1016510_20210730_edited/1016510_20210730_edited_") for n in names)
 
 
 def test_write_meshes_to_folder_writes_only_mesh_files(tmp_path, sample_result):
@@ -101,7 +101,7 @@ def test_write_meshes_to_folder_writes_only_mesh_files(tmp_path, sample_result):
     results_dir = write_meshes_to_folder(
         dest_dir=tmp_path, original_filename="scan.ply", registered_mesh=mesh, final_mesh=mesh, target="cranium", config={}
     )
-    assert results_dir == tmp_path / "CP_scan_C_3"
+    assert results_dir == tmp_path / "CP_C_scan" / "meshes"
     assert sorted(p.name for p in results_dir.iterdir()) == ["scan_rg.ply", "scan_rg_C.ply"]
 
 
@@ -110,7 +110,7 @@ def test_write_analysis_to_folder_creates_mesh_folder_if_missing(tmp_path, sampl
     # separately saving meshes should still produce a complete
     # mesh-folder-plus-analysis-subfolder, not just the analysis half.
     mesh, landmarks, craniometrics = sample_result
-    assert not (tmp_path / "CP_scan_C_3").exists()
+    assert not (tmp_path / "CP_C_scan").exists()
 
     analysis_dir = write_analysis_to_folder(
         dest_dir=tmp_path,
@@ -124,9 +124,10 @@ def test_write_analysis_to_folder_creates_mesh_folder_if_missing(tmp_path, sampl
         config={},
     )
 
-    mesh_dir = tmp_path / "CP_scan_C_3"
+    mesh_dir = tmp_path / "CP_C_scan"
     assert analysis_dir == mesh_dir / "analysis"
-    assert sorted(p.name for p in mesh_dir.iterdir()) == ["analysis", "scan_rg.ply", "scan_rg_C.ply"]
+    assert sorted(p.name for p in mesh_dir.iterdir()) == ["analysis", "meshes"]
+    assert sorted(p.name for p in (mesh_dir / "meshes").iterdir()) == ["scan_rg.ply", "scan_rg_C.ply"]
     assert sorted(p.name for p in analysis_dir.iterdir()) == [
         "scan_measurements.png",
         "scan_report_cranial.json",
@@ -166,7 +167,7 @@ def test_build_meshes_bundle_contains_only_mesh_files(sample_result):
         original_filename="scan.ply", registered_mesh=mesh, final_mesh=mesh, target="cranium", config={}
     )
     names = zipfile.ZipFile(BytesIO(zip_bytes)).namelist()
-    assert sorted(names) == ["CP_scan_C_3/scan_rg.ply", "CP_scan_C_3/scan_rg_C.ply"]
+    assert sorted(names) == ["CP_C_scan/meshes/scan_rg.ply", "CP_C_scan/meshes/scan_rg_C.ply"]
 
 
 def test_build_analysis_bundle_nests_analysis_under_mesh_folder(sample_result):
@@ -186,31 +187,31 @@ def test_build_analysis_bundle_nests_analysis_under_mesh_folder(sample_result):
     )
     names = set(zipfile.ZipFile(BytesIO(zip_bytes)).namelist())
     assert names == {
-        "CP_scan_C_3/scan_rg.ply",
-        "CP_scan_C_3/scan_rg_C.ply",
-        "CP_scan_C_3/analysis/scan_report_cranial.json",
-        "CP_scan_C_3/analysis/scan_measurements.png",
-        "CP_scan_C_3/analysis/scan_summary_cranial.xlsx",
-        "CP_scan_C_3/analysis/scan_report_cranial.pdf",
+        "CP_C_scan/meshes/scan_rg.ply",
+        "CP_C_scan/meshes/scan_rg_C.ply",
+        "CP_C_scan/analysis/scan_report_cranial.json",
+        "CP_C_scan/analysis/scan_measurements.png",
+        "CP_C_scan/analysis/scan_summary_cranial.xlsx",
+        "CP_C_scan/analysis/scan_report_cranial.pdf",
     }
 
 
 @pytest.mark.parametrize(
-    "config, expected_suffix",
+    "config, expected_folder",
     [
-        ({}, "C_3"),
-        ({"com_translation": True}, "C_3_CoM"),
-        ({"com_translation": False}, "C_3"),
-        ({"alt_frontal_landmark": {"x": 0.0, "y": -37.0, "z": 73.0}}, "C_4"),
-        ({"alt_frontal_landmark": {"x": 0.0, "y": -37.0, "z": 73.0}, "com_translation": True}, "C_4_CoM"),
-        ({"alt_frontal_landmark": None, "com_translation": True}, "C_3_CoM"),
+        ({}, "CP_C_scan"),
+        ({"com_translation": True}, "CP_C_scan_CoM"),
+        ({"com_translation": False}, "CP_C_scan"),
+        ({"alt_frontal_landmark": {"x": 0.0, "y": -37.0, "z": 73.0}}, "CP_C4_scan"),
+        ({"alt_frontal_landmark": {"x": 0.0, "y": -37.0, "z": 73.0}, "com_translation": True}, "CP_C4_scan_CoM"),
+        ({"alt_frontal_landmark": None, "com_translation": True}, "CP_C_scan_CoM"),
     ],
 )
-def test_results_folder_name_reflects_landmark_count_and_com(config, expected_suffix):
+def test_results_folder_name_reflects_landmark_count_and_com(config, expected_folder):
     folder = results_folder_name("scan.ply", "cranium", config)
-    assert folder == f"CP_scan_{expected_suffix}"
+    assert folder == expected_folder
 
 
 def test_results_folder_name_facial_target_uses_f_suffix():
     folder = results_folder_name("scan.ply", "face", {})
-    assert folder == "CP_scan_F_3"
+    assert folder == "CP_F_scan"

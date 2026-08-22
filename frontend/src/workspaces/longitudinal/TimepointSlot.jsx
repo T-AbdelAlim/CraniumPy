@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import UploadPanel from "../data/UploadPanel.jsx";
 import Viewer from "../../components/Viewer.jsx";
-import { meshUrl } from "../../api/sessions.js";
+import ConfirmDialog from "../../components/ConfirmDialog.jsx";
+import { meshUrl, uploadSession } from "../../api/sessions.js";
 import { measureMesh } from "../../api/longitudinal.js";
+import { hasMeshFile, primaryMeshFile } from "../../lib/meshFiles.js";
 import { detectNicpTargetFromFilename } from "./lib/detectTarget.js";
 import { stageMeshUrl } from "./lib/meshRef.js";
 
@@ -49,6 +51,10 @@ export default function TimepointSlot({ slot, onChange, viewerRef, colorIndex, c
   const [stage, setStage] = useState(slot.sessionId && !slot.ready ? "processing" : "upload"); // "upload" | "processing" | "ready"
   const [status, setStatus] = useState("");
   const [measurements, setMeasurements] = useState(null);
+  // files dropped onto this slot's own viewer while it already has a mesh
+  // loaded - held here until the "Replace current mesh?" confirm resolves
+  // (see handleFilesDropped/onFilesDropped below).
+  const [pendingDropFiles, setPendingDropFiles] = useState(null);
 
   // a staged mesh (sessionId already known, but not yet measured/displayed
   // in THIS viewer instance - a fresh TimepointSlot mount never has) -
@@ -94,6 +100,36 @@ export default function TimepointSlot({ slot, onChange, viewerRef, colorIndex, c
     await measureAndReport(sid, "original", effectiveTarget);
   }
 
+  // dropped straight onto this slot's own viewer - an alternative to the
+  // "Load pre-registered (NICP) file..." browse button above, same
+  // browser-bytes upload UploadPanel's own file input uses (no native-path
+  // resolution here, unlike App.jsx's main viewer - this workspace has no
+  // desktop-only "save straight back next to source" flow to preserve a
+  // real path for).
+  async function handleFilesDropped(files) {
+    const names = files.map((f) => f.name);
+    if (!hasMeshFile(names)) {
+      setStatus("No .ply/.obj/.stl found in the files you dropped");
+      return;
+    }
+    const { sessionId: sid } = await uploadSession(files);
+    await handleUploaded({ sessionId: sid, meshLabel: primaryMeshFile(names) ?? "" });
+  }
+
+  function onFilesDropped(files) {
+    if (slot.ready) {
+      setPendingDropFiles(files);
+      return;
+    }
+    handleFilesDropped(files);
+  }
+
+  function confirmReplaceMesh() {
+    const files = pendingDropFiles;
+    setPendingDropFiles(null);
+    handleFilesDropped(files);
+  }
+
   function handleReset() {
     setEntryStarted(false);
     setSessionId(null);
@@ -123,8 +159,25 @@ export default function TimepointSlot({ slot, onChange, viewerRef, colorIndex, c
       </div>
 
       <div className="longitudinal-slot-viewer">
-        <Viewer ref={viewerRef} wireframe={false} textureEnabled={false} landmarks={{}} landmarkColors={{}} />
+        <Viewer
+          ref={viewerRef}
+          wireframe={false}
+          textureEnabled={false}
+          landmarks={{}}
+          landmarkColors={{}}
+          onFilesDropped={onFilesDropped}
+        />
       </div>
+      {pendingDropFiles && (
+        <ConfirmDialog
+          title="Replace current mesh?"
+          message="Loading a new mesh here will replace the one currently loaded. Continue?"
+          confirmLabel="Replace"
+          cancelLabel="Cancel"
+          onConfirm={confirmReplaceMesh}
+          onCancel={() => setPendingDropFiles(null)}
+        />
+      )}
 
       <div className="longitudinal-slot-controls">
         {stage === "upload" && !entryStarted && (

@@ -32,21 +32,29 @@ const TABS = [
 // at the top, since every tab below reads from the same merged view of the
 // data - a metric added in the Custom metrics tab is immediately usable in
 // Stratify/Plots without any tab-to-tab plumbing.
-export default function CohortWorkspace({ onHasDataChange }) {
+export default function CohortWorkspace({ onSnapshotChange, initialSnapshot }) {
   const fileInputRef = useRef(null);
-  const [columns, setColumns] = useState([]);
-  const [rows, setRows] = useState([]);
-  const [derivedColumns, setDerivedColumns] = useState([]); // [{name, formula, ast}]
-  const [filters, setFilters] = useState([]); // [{column, values: string[]}]
-  const [activeTab, setActiveTab] = useState("overview");
+  // lazy initializers - seeded once from a preserved snapshot (see App.jsx's
+  // cohortSnapshot/handleRestorePrevious) when returning to this workspace,
+  // same as a fresh load otherwise. this component still fully unmounts on
+  // every appMode switch (see App.jsx's own comment on that tradeoff) - the
+  // snapshot is what lets "load previous workspace" reconstruct the same
+  // scene despite that, without needing to keep it mounted-but-hidden.
+  const [columns, setColumns] = useState(() => initialSnapshot?.columns ?? []);
+  const [rows, setRows] = useState(() => initialSnapshot?.rows ?? []);
+  const [derivedColumns, setDerivedColumns] = useState(() => initialSnapshot?.derivedColumns ?? []); // [{name, formula, ast}]
+  const [filters, setFilters] = useState(() => initialSnapshot?.filters ?? []); // [{column, values: string[]}]
+  const [activeTab, setActiveTab] = useState(() => initialSnapshot?.activeTab ?? "overview");
   const [loadStatus, setLoadStatus] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // reports "is there a cohort loaded that switching away would throw away"
-  // up to App.jsx's workspace-switch guard (see its own handleAppModeChange).
+  // reports this workspace's own lightweight, JSON-safe state up to
+  // App.jsx on every change - all plain loaded data (no 3D/GPU objects),
+  // cheap to keep current continuously rather than only capturing it right
+  // before a switch away.
   useEffect(() => {
-    onHasDataChange?.(rows.length > 0);
-  }, [rows, onHasDataChange]);
+    onSnapshotChange?.({ columns, rows, derivedColumns, filters, activeTab });
+  }, [columns, rows, derivedColumns, filters, activeTab, onSnapshotChange]);
 
   const allColumns = useMemo(() => [...columns, ...derivedColumns.map((d) => d.name)], [columns, derivedColumns]);
 

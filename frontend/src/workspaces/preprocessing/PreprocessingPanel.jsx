@@ -52,8 +52,6 @@ export default function PreprocessingPanel({
   useNicpMesh,
   onUseNicpMeshChange,
   onStageForLongitudinal,
-  onSaveMeshes,
-  savingMeshes,
   saveMeshesStatus,
   saveDestDir,
   onChooseSaveFolder,
@@ -336,9 +334,9 @@ export default function PreprocessingPanel({
             </>
           )}
 
-          <button type="button" onClick={onSaveMeshes} disabled={savingMeshes}>
-            save meshes
-          </button>
+          {/* meshes save automatically after Align/Preprocess Mesh/NICP fit
+              (see App.jsx's autoSaveMeshes) - this just shows where the last
+              one landed, and lets the destination be redirected. */}
           <p className="status-line">{saveMeshesStatus}</p>
           <SaveFolderControl
             isDesktop={isDesktop}

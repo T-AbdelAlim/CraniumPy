@@ -75,24 +75,42 @@ function buildInitialSlots(stagedMeshes) {
 // owns the slots array here, at the top, since both tabs read the same
 // data: CompareTab drives each slot's own load, MorphingTab picks which
 // ready slots to include in the morph chain.
-export default function LongitudinalWorkspace({ onHasDataChange, initialStagedMeshes }) {
-  // lazy initializer - runs once, at mount, matching this component's own
+export default function LongitudinalWorkspace({ onSnapshotChange, initialStagedMeshes, initialSnapshot }) {
+  // lazy initializers - run once, at mount, matching this component's own
   // full-remount-per-appMode-switch lifecycle (see App.jsx's appMode
-  // comment) - initialStagedMeshes changing after mount (it doesn't, in
-  // practice, but even if it did) is deliberately NOT reactive here.
-  const [slots, setSlots] = useState(() => buildInitialSlots(initialStagedMeshes));
-  const [activeTab, setActiveTab] = useState("compare");
-  const [linkCameras, setLinkCameras] = useState(true);
-  const [overlayMode, setOverlayMode] = useState("measurements");
+  // comment) - neither prop changing after mount (they don't, in practice)
+  // is deliberately reactive here. initialSnapshot (a preserved
+  // {slots, activeTab, linkCameras, overlayMode} from the last time this
+  // workspace was left - see App.jsx's longitudinalSnapshot/
+  // handleRestorePrevious) takes priority when given; App.jsx never passes
+  // both at once (a fresh staging prompt always wins over a passive
+  // leftover snapshot), but preferring it here is the safe order either
+  // way. a restored slot's own ready/measurements reset to false/null -
+  // same "seeded with just {sessionId, stage, target}, re-displayed and
+  // re-measured on mount" trick TimepointSlot.jsx already does for a
+  // staged slot, reused here instead of trying to resurrect the live
+  // Viewer scene/measurement blob itself.
+  const [slots, setSlots] = useState(() => {
+    if (initialSnapshot) return initialSnapshot.slots.map((s) => ({ ...s, ready: false, measurements: null }));
+    return buildInitialSlots(initialStagedMeshes);
+  });
+  const [activeTab, setActiveTab] = useState(() => initialSnapshot?.activeTab ?? "compare");
+  const [linkCameras, setLinkCameras] = useState(() => initialSnapshot?.linkCameras ?? true);
+  const [overlayMode, setOverlayMode] = useState(() => initialSnapshot?.overlayMode ?? "measurements");
 
-  // reports "is there anything here that switching away would throw away"
-  // up to App.jsx's workspace-switch guard (see its own handleAppModeChange)
-  // - any slot that's at least started uploading counts, not just a fully
-  // "ready" one, since even a half-finished registration is real in-progress
-  // work worth confirming before it's gone.
+  // reports this workspace's own lightweight, JSON-safe state up to
+  // App.jsx on every change - deliberately dropping measurements/ready
+  // (heavy/GPU-recomputable - see the mount initializer above for how a
+  // restore reconstructs them), keeping only what's needed to rebuild the
+  // scene from scratch.
   useEffect(() => {
-    onHasDataChange?.(slots.some((s) => s.sessionId || s.ready));
-  }, [slots, onHasDataChange]);
+    onSnapshotChange?.({
+      slots: slots.map(({ id, label, color, sessionId, stage, target }) => ({ id, label, color, sessionId, stage, target })),
+      activeTab,
+      linkCameras,
+      overlayMode,
+    });
+  }, [slots, activeTab, linkCameras, overlayMode, onSnapshotChange]);
 
   function handleAddSlot() {
     setSlots((prev) => (prev.length >= MAX_SLOTS ? prev : [...prev, makeEmptySlot(prev.length)]));

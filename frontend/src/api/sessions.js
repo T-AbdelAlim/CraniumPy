@@ -171,6 +171,21 @@ export async function getResults(sessionId) {
   return response.json();
 }
 
+// "skip preprocessing" - treats the uploaded mesh as already fully
+// registered/clipped/NICP'd, no landmark picking or /align+/clip+/run
+// needed (see api/routers/mesh.py's measure_registered). returns the exact
+// same shape getResults does - every downstream analysis/export flow works
+// unmodified from here on.
+export async function measureRegistered(sessionId, target) {
+  const response = await fetch(`/api/sessions/${sessionId}/measure-registered`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ target }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json();
+}
+
 // desktop: writes the report/figures (including the summary spreadsheet
 // and PDF report - see api/results_bundle._build_analysis_files) into the
 // mesh folder's analysis/ subfolder, creating the mesh folder (and its
