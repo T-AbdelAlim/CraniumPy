@@ -61,7 +61,7 @@ function extensionForMimeType(mimeType) {
 // engine, whether that's a real browser tab or the desktop app's own
 // pywebview/WebView2 window) - a GIF would need a whole extra JS encoder
 // dependency for a strictly worse result.
-export default function MorphControl({ onT, morphViewerRef }) {
+export default function MorphControl({ onT, morphViewerRef, fullscreenRef }) {
   const [t, setT] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [sweepSeconds, setSweepSeconds] = useState(DEFAULT_SWEEP_SECONDS);
@@ -86,18 +86,26 @@ export default function MorphControl({ onT, morphViewerRef }) {
   // button click - Escape (or the browser/OS's own fullscreen exit
   // control) leaves fullscreen without ever calling handleToggleFullscreen,
   // and the button's own label needs to reflect that either way.
+  //
+  // fullscreenRef points at MorphingTab.jsx's own outer wrapper (toolbars +
+  // this control + the canvas, all together) rather than anything inside
+  // LongitudinalMorphViewer - fullscreening just the viewer's internal
+  // canvas-only container used to take every control (including this
+  // button) out of view the moment fullscreen started, leaving only Escape
+  // as a way out. plain Fullscreen API here, nothing viewer-specific about
+  // it.
   useEffect(() => {
     function onFullscreenChange() {
-      setIsFullscreen(!!morphViewerRef?.current?.isFullscreenElement());
+      setIsFullscreen(document.fullscreenElement === fullscreenRef?.current);
     }
     document.addEventListener("fullscreenchange", onFullscreenChange);
     return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
-  }, [morphViewerRef]);
+  }, [fullscreenRef]);
 
   function handleToggleFullscreen() {
-    if (!morphViewerRef?.current) return;
-    if (morphViewerRef.current.isFullscreenElement()) morphViewerRef.current.exitFullscreen();
-    else morphViewerRef.current.requestFullscreen();
+    if (!fullscreenRef?.current) return;
+    if (document.fullscreenElement === fullscreenRef.current) document.exitFullscreen?.();
+    else fullscreenRef.current.requestFullscreen?.();
   }
 
   // read from the tick loop below via a ref, not the sweepSeconds state
@@ -198,15 +206,22 @@ export default function MorphControl({ onT, morphViewerRef }) {
       </label>
       {morphViewerRef && (
         <button type="button" className="button-subtle" onClick={handleExportVideo} disabled={exporting}>
-          {exporting ? "recording..." : "export video"}
+          export video
         </button>
       )}
-      {morphViewerRef && (
+      {fullscreenRef && (
         <button type="button" className="button-subtle" onClick={handleToggleFullscreen}>
           {isFullscreen ? "exit fullscreen" : "fullscreen"}
         </button>
       )}
-      {exportStatus && <span className="hint">{exportStatus}</span>}
+      {/* always rendered (visibility toggled via CSS, not conditional
+          mounting) so this reserves fixed layout space whether idle,
+          recording, or showing an error - a conditionally-mounted status
+          chip used to grow/shrink the whole toolbar row every time export
+          started or finished. */}
+      <span className={exportStatus ? "hint longitudinal-morph-export-status is-visible" : "hint longitudinal-morph-export-status"}>
+        {exportStatus}
+      </span>
     </div>
   );
 }

@@ -69,6 +69,16 @@ class RegisteredTransformResponse(BaseModel):
     translation: list[float]  # 3
 
 
+class MeasureAsRegisteredRequest(BaseModel):
+    """body for /measure-registered - the "skip preprocessing" shortcut.
+    the uploaded mesh is treated as already sitting in this app's canonical
+    registered frame (same assumption craniumpy_core.cohort.measure_mean_shape
+    already makes for the Longitudinal workspace's own "already registered"
+    fast path), with no landmark picking or /align+/clip+/run needed."""
+
+    target: Literal["cranium", "face"] = "cranium"
+
+
 class ClipRequest(BaseModel):
     """the "Clip" stage's request body - register + repair + clip +
     boundary cleanup, no resample. same fields AnalyzeRequest carried for

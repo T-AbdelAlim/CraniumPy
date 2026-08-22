@@ -1292,6 +1292,25 @@ select {
   margin: 1rem auto 0;
 }
 
+/* fullscreen targets the WHOLE tab (see MorphingTab.jsx's fullscreenRef),
+   not just the canvas, so every control stays visible/usable - center and
+   scale everything to fit the screen instead of the normal narrow column. */
+.longitudinal-morphing-tab:fullscreen {
+  background: var(--bg-primary, #111);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100vw;
+  height: 100vh;
+  overflow: auto;
+  padding: 1rem;
+}
+
+.longitudinal-morphing-tab:fullscreen .longitudinal-morphing-viewer {
+  max-width: min(90vw, 90vh);
+}
+
 .longitudinal-morphing-viewer-canvas {
   position: relative;
   width: 100%;
@@ -1337,6 +1356,19 @@ select {
 
 .longitudinal-morph-readout {
   white-space: nowrap;
+}
+
+/* fixed-width, always in the DOM (see MorphControl.jsx) - visibility, not
+   mount/unmount, so the "recording..."/error text never changes the
+   toolbar row's own width while exporting. */
+.longitudinal-morph-export-status {
+  min-width: 6rem;
+  white-space: nowrap;
+  visibility: hidden;
+}
+
+.longitudinal-morph-export-status.is-visible {
+  visibility: visible;
 }
 
 .longitudinal-morph-speed {

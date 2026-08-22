@@ -59,18 +59,17 @@ def stem_from_filename(filename: str) -> str:
 
 
 def results_folder_name(original_filename: str, target: str, config: dict) -> str:
-    """CP_{stem}_{C|F}_{3|4}[_CoM] - what actually went into this run, not
-    a generic "_results" suffix: landmark count (4 when an
-    alt_frontal_landmark was given, see pipeline.analyze_cranial) and
-    whether center-of-mass correction ran. two runs with different
-    settings on the same file land in different folders instead of one
-    overwriting the other, and the name tells you which is which without
-    opening report.json."""
+    """CP_{C|F}[4]_{stem}[_CoM] - what actually went into this run, not a
+    generic "_results" suffix: landmark count (a "4" folded into the target
+    letter when an alt_frontal_landmark was given, see
+    pipeline.analyze_cranial) and whether center-of-mass correction ran. two
+    runs with different settings on the same file land in different folders
+    instead of one overwriting the other, and the name tells you which is
+    which without opening report.json."""
     stem = stem_from_filename(original_filename)
-    target_suffix = "C" if target == "cranium" else "F"
-    landmark_count = 4 if config.get("alt_frontal_landmark") else 3
+    target_suffix = ("C" if target == "cranium" else "F") + ("4" if config.get("alt_frontal_landmark") else "")
     com_suffix = "_CoM" if config.get("com_translation") else ""
-    return f"CP_{stem}_{target_suffix}_{landmark_count}{com_suffix}"
+    return f"CP_{target_suffix}_{stem}{com_suffix}"
 
 
 # figures are drawn twice: once into a standalone Figure that gets saved as
@@ -614,7 +613,7 @@ def _nicp_mesh_path(results_dir: Path, original_filename: str, target: str, nicp
         return ""
     stem = stem_from_filename(original_filename)
     target_suffix = "C" if target == "cranium" else "F"
-    path = results_dir / f"{stem}_rg_{target_suffix}N.ply"
+    path = results_dir / "meshes" / f"{stem}_rg_{target_suffix}N.ply"
     return str(path.resolve()) if path.is_file() else ""
 
 
@@ -1691,9 +1690,10 @@ def build_meshes_bundle(
 ) -> bytes:
     """zip bytes for the mesh files (two, or three when a NICP fit exists -
     see _build_mesh_files) - the browser-download side of "save meshes"
-    (part 9)."""
+    (part 9). nested under {folder}/meshes/, matching write_meshes_to_folder's
+    own on-disk layout."""
     folder, files = _build_mesh_files(original_filename, registered_mesh, final_mesh, target, config, nicp_mesh)
-    return _zip_files({folder: files})
+    return _zip_files({f"{folder}/meshes": files})
 
 
 def write_meshes_to_folder(
@@ -1705,11 +1705,12 @@ def write_meshes_to_folder(
     config: dict,
     nicp_mesh: trimesh.Trimesh | None = None,
 ) -> Path:
-    """writes the mesh files (two, or three when a NICP fit exists) straight
-    into dest_dir/{folder} - the desktop side of "save meshes" (part 9).
-    returns the folder written."""
+    """writes the mesh files (two, or three when a NICP fit exists) into
+    dest_dir/{folder}/meshes/ - the desktop side of "save meshes" (part 9),
+    sibling to write_analysis_to_folder's own analysis/ subfolder. returns
+    the meshes/ folder written."""
     folder, files = _build_mesh_files(original_filename, registered_mesh, final_mesh, target, config, nicp_mesh)
-    results_dir = dest_dir / folder
+    results_dir = dest_dir / folder / "meshes"
     results_dir.mkdir(parents=True, exist_ok=True)
     for name, content in files.items():
         (results_dir / name).write_bytes(content)
@@ -1759,7 +1760,7 @@ def build_analysis_bundle(
     )
     files_by_prefix = {f"{folder}/analysis": analysis_files}
     if mesh_files:
-        files_by_prefix[folder] = mesh_files
+        files_by_prefix[f"{folder}/meshes"] = mesh_files
     return _zip_files(files_by_prefix)
 
 
@@ -1795,7 +1796,7 @@ def write_analysis_to_folder(
     the analysis folder written."""
     folder_name = results_folder_name(original_filename, target, config)
     results_dir = dest_dir / folder_name
-    if include_meshes and not results_dir.exists():
+    if include_meshes and not (results_dir / "meshes").exists():
         write_meshes_to_folder(dest_dir, original_filename, registered_mesh, final_mesh, target, config, nicp_mesh)
 
     analysis_dir = results_dir / "analysis"

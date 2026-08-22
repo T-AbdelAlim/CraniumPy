@@ -672,6 +672,60 @@ def test_results_before_analysis_returns_409(client):
     assert response.status_code == 409
 
 
+def test_measure_registered_skips_straight_to_results(client):
+    # "preprocessing already performed" - no /align, /clip, or /run at all,
+    # just the uploaded mesh treated as already registered.
+    session_id = _upload(client)
+    response = client.post(f"/api/sessions/{session_id}/measure-registered", json={"target": "cranium"})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["craniometrics"] is not None
+    assert body["asymmetry"] is not None
+    assert body["metopic"] is None  # cranium target never computes metopic, same as a real /run
+
+    # get_results now works too, without a separate poll - job_status was
+    # set straight to "done".
+    results_response = client.get(f"/api/sessions/{session_id}/results")
+    assert results_response.status_code == 200
+    assert results_response.json()["craniometrics"] is not None
+
+
+def test_measure_registered_face_target_computes_metopic(client):
+    session_id = _upload(client)
+    response = client.post(f"/api/sessions/{session_id}/measure-registered", json={"target": "face"})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["craniometrics"] is None  # face target never computes craniometrics
+    assert body["asymmetry"] is not None
+    assert body["metopic"] is not None
+
+
+def test_measure_registered_then_save_meshes_and_analysis(client, tmp_path):
+    import shutil
+
+    tmp_mesh = tmp_path / "patient.ply"
+    shutil.copy(TEMPLATE_PATH, tmp_mesh)
+    open_response = client.post("/api/sessions/from-paths", json={"paths": [str(tmp_mesh)]})
+    session_id = open_response.json()["session_id"]
+
+    response = client.post(f"/api/sessions/{session_id}/measure-registered", json={"target": "cranium"})
+    assert response.status_code == 200, response.text
+
+    save_meshes_response = client.post(f"/api/sessions/{session_id}/save/meshes")
+    assert save_meshes_response.status_code == 200, save_meshes_response.text
+    meshes_dir = Path(save_meshes_response.json()["saved_to"])
+    # plain CP_C_{stem}/ - no landmark-count/CoM suffix, since there's no
+    # real clip config behind a skipped-preprocessing session.
+    assert meshes_dir == tmp_path / "CP_C_patient" / "meshes"
+    assert any(n.endswith("_rg.ply") for n in (p.name for p in meshes_dir.iterdir()))
+
+    save_analysis_response = client.post(f"/api/sessions/{session_id}/save/analysis")
+    assert save_analysis_response.status_code == 200, save_analysis_response.text
+    analysis_dir = Path(save_analysis_response.json()["saved_to"])
+    assert analysis_dir == tmp_path / "CP_C_patient" / "analysis"
+    assert any(n.endswith("_report_cranial.json") for n in (p.name for p in analysis_dir.iterdir()))
+
+
 def test_clip_rejects_wrong_landmark_count(client):
     session_id = _upload(client)
     response = client.post(
@@ -694,7 +748,7 @@ def test_results_bundle_download(client, landmarks_payload):
     bundle = client.get(f"/api/sessions/{session_id}/bundle")
     assert bundle.status_code == 200
     assert bundle.headers["content-type"] == "application/zip"
-    assert "CP_template_xy_com_C_3_CoM.zip" in bundle.headers["content-disposition"]
+    assert "CP_C_template_xy_com_CoM.zip" in bundle.headers["content-disposition"]
 
     zf = zipfile.ZipFile(BytesIO(bundle.content))
     names = zf.namelist()
@@ -742,7 +796,7 @@ def test_save_results_to_source_folder(client, landmarks_payload, tmp_path):
     save_response = client.post(f"/api/sessions/{session_id}/save")
     assert save_response.status_code == 200, save_response.text
     saved_to = Path(save_response.json()["saved_to"])
-    assert saved_to == tmp_path / "CP_1016510_20210730_edited_C_3_CoM"
+    assert saved_to == tmp_path / "CP_C_1016510_20210730_edited_CoM"
     assert (saved_to / "1016510_20210730_edited_rg.ply").exists()
     assert (saved_to / "1016510_20210730_edited_rg_C.ply").exists()
     assert (saved_to / "1016510_20210730_edited_report_cranial.json").exists()
@@ -770,8 +824,8 @@ def test_save_results_dest_dir_override(client, landmarks_payload, tmp_path):
     save_response = client.post(f"/api/sessions/{session_id}/save", json={"dest_dir": str(override_dir)})
     assert save_response.status_code == 200, save_response.text
     saved_to = Path(save_response.json()["saved_to"])
-    assert saved_to == override_dir / "CP_1016510_20210730_edited_C_3_CoM"
-    assert not (source_dir / "CP_1016510_20210730_edited_C_3_CoM").exists()
+    assert saved_to == override_dir / "CP_C_1016510_20210730_edited_CoM"
+    assert not (source_dir / "CP_C_1016510_20210730_edited_CoM").exists()
 
 
 def test_save_results_dest_dir_not_a_real_folder_400s(client, landmarks_payload, tmp_path):

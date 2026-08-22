@@ -16,11 +16,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from trimesh.resolvers import ZipResolver
 
-from craniumpy_core import pipeline
+from craniumpy_core import cohort, pipeline
 from craniumpy_core.asymmetry import calculate_asymmetry
-from craniumpy_core.craniometrics import frontal_bossing
+from craniumpy_core.craniometrics import frontal_bossing, hc_slice_polygon
 from craniumpy_core.io import load_mesh, mesh_to_glb, strip_uninteresting_vertex_colors
 from craniumpy_core.metopic import analyze_forehead
+from craniumpy_core.registration.rigid import FACE_REFERENCE_TRIANGLE, REFERENCE_TRIANGLE
 from craniumpy_core.template_registry import SHIPPED_TEMPLATES, load_shipped_template
 from api.results_bundle import (
     build_analysis_bundle,
@@ -41,6 +42,7 @@ from api.schemas import (
     FrontalBossingResponse,
     HarmonizeConfig,
     LandmarkPoint,
+    MeasureAsRegisteredRequest,
     MetopicResponse,
     NicpConfig,
     OpenFromPathsRequest,
@@ -683,6 +685,79 @@ def get_status(session_id: str) -> StatusResponse:
         total=session.progress.get("total"),
     )
     return StatusResponse(status=session.job_status, error=session.job_error, progress=progress)
+
+
+@router.post("/{session_id}/measure-registered", response_model=ResultsResponse)
+def measure_registered(session_id: str, request: MeasureAsRegisteredRequest) -> ResultsResponse:
+    """"skip preprocessing" - treats the uploaded mesh itself as already
+    fully registered/clipped/NICP'd (no landmark picking, no /align+/clip+
+    /run), the same "already in this app's canonical registered frame"
+    shortcut the Longitudinal workspace's own /api/longitudinal/measure
+    already relies on (see craniumpy_core.cohort.measure_mean_shape) -
+    reused here instead of reimplemented, since building the *general*
+    single-patient measurement (pipeline.measure_cranial/measure_facial)
+    needs a full CranialClipResult with separate sellion-frame and
+    display-frame meshes/landmarks that a bare mesh with no clip history
+    simply doesn't have.
+
+    populates session.result in exactly the shape get_results already
+    expects, synchronously (measure_mean_shape is the same fast,
+    non-job call /api/longitudinal/measure already treats as
+    synchronous) - so every downstream endpoint (get_results,
+    /save/meshes, /save/analysis, /bundle/analysis) works completely
+    unmodified from here on, as if a normal /clip+/run had produced this
+    same session state."""
+    session = _get_session(session_id)
+    mesh = session.mesh
+    target = request.target
+    landmarks = REFERENCE_TRIANGLE if target == "cranium" else FACE_REFERENCE_TRIANGLE
+
+    gm = cohort.measure_mean_shape(mesh, target)
+
+    display_hc_polygon = None
+    display_bpd_ofd_points = None
+    if gm.craniometrics is not None:
+        display_hc_polygon = hc_slice_polygon(mesh, gm.craniometrics.slice_height)
+        display_bpd_ofd_points = (
+            gm.craniometrics.front_opt, gm.craniometrics.occ_opt, gm.craniometrics.lh_opt, gm.craniometrics.rh_opt,
+        )
+
+    analyze_request = AnalyzeRequest(
+        target=target,
+        landmarks=[LandmarkPoint(x=p[0], y=p[1], z=p[2]) for p in landmarks],
+        com_translation=False,
+    )
+
+    # no real clip/align history for a mesh that skipped preprocessing - no
+    # alt_frontal_landmark, no CoM recenter, so results_folder_name derives
+    # the plain CP_C_{stem}/CP_F_{stem} folder (correct: there's no
+    # landmark-derived config to reflect in the name).
+    session.aligned_mesh = mesh
+    session.result_mesh = mesh
+    session.sellion_result_mesh = None
+    session.nicp_result_mesh = None
+    session.last_nicp_config = None
+    session.last_clip_config = ClipRequest(target=target, landmarks=analyze_request.landmarks, com_translation=False)
+    session.active_target = target
+    session.hc_slice_height = gm.slice_height
+    session.result = {
+        "landmarks": landmarks,
+        "craniometrics": gm.craniometrics,
+        "asymmetry": gm.asymmetry,
+        "display_asymmetry": gm.asymmetry,
+        "metopic": gm.metopic,
+        "frontal_bossing": gm.frontal_bossing,
+        "display_frontal_bossing": gm.frontal_bossing,
+        "request": analyze_request,
+        "sellion_landmarks": None,
+        "display_hc_polygon": display_hc_polygon,
+        "display_bpd_ofd_points": display_bpd_ofd_points,
+        "used_alt_frontal": False,
+    }
+    session.job_status = "done"
+    session.job_error = None
+    session.report_progress("done", "")
+    return get_results(session_id)
 
 
 @router.get("/{session_id}/results", response_model=ResultsResponse)

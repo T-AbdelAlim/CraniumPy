@@ -153,6 +153,11 @@ const LongitudinalMorphViewer = forwardRef(function LongitudinalMorphViewer(_pro
         if (hA && hB) {
           const lerped = hA.map((v, i) => v + (hB[i] - v) * localT);
           applyHeatmap(state.object, lerped, state.heatmapMaxAbs);
+        } else if (hA || hB) {
+          // only one endpoint has a real value (e.g. "longitudinal timing"
+          // mode's first stage, which has no predecessor to diff against) -
+          // show that one un-lerped rather than blanking the whole leg.
+          applyHeatmap(state.object, hA || hB, state.heatmapMaxAbs);
         } else {
           removeHeatmap(state.object);
         }
@@ -310,20 +315,6 @@ const LongitudinalMorphViewer = forwardRef(function LongitudinalMorphViewer(_pro
         sceneBag.camera.position.fromArray(position);
         sceneBag.controls.target.fromArray(target);
         sceneBag.controls.update();
-      },
-      // fullscreen - the container div (canvas + legend + anything else
-      // overlaid on it), not just the bare canvas, so the legend/markers
-      // still show while fullscreen. standard Fullscreen API, works in both
-      // a real browser tab and the desktop app's own WebView2 window - no
-      // library needed.
-      requestFullscreen() {
-        containerRef.current?.requestFullscreen?.();
-      },
-      exitFullscreen() {
-        if (document.fullscreenElement) document.exitFullscreen?.();
-      },
-      isFullscreenElement() {
-        return document.fullscreenElement === containerRef.current;
       },
       // exports the morph animation as a video clip, captured straight off
       // this canvas via the browser's own MediaRecorder - no export library,

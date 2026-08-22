@@ -17,11 +17,16 @@ import { computeLongitudinalDiff } from "../../../api/longitudinal.js";
 // "template". option: for "fixed", the index into `stages` to use as the
 // reference; for "template", the shipped template name; ignored for
 // "longitudinal". returns an array parallel to `stages` - heatmaps[i] is
-// null wherever there's no meaningful reference for that stage (the fixed
-// reference's own slot, or stage 0 in "longitudinal" mode, which has no
-// predecessor). every diff fires in parallel (each pair is independent of
-// every other), not as a serial chain - the point of the whole exercise is
-// computing this once, up front, cheaply.
+// null only where there's genuinely no reference to diff against yet
+// (stage 0 in "longitudinal" mode, which has no predecessor - "fixed" mode
+// diffs the reference stage against itself for real, a legitimate
+// all-near-zero heatmap, rather than leaving it null: LongitudinalMorphViewer's
+// per-frame lerp needs BOTH leg endpoints non-null to render anything at
+// all, and with the common 2-timepoint case the reference is always one of
+// those two endpoints - see this repo's own notes on the "distance heatmap
+// never shows" bug). every diff fires in parallel (each pair is independent
+// of every other), not as a serial chain - the point of the whole exercise
+// is computing this once, up front, cheaply.
 export async function computeDistanceHeatmaps(stages, mode, option) {
   const heatmaps = new Array(stages.length).fill(null);
 
@@ -30,7 +35,6 @@ export async function computeDistanceHeatmaps(stages, mode, option) {
     if (!referenceRef) return heatmaps;
     await Promise.all(
       stages.map(async (s, i) => {
-        if (i === option) return;
         const diff = await computeLongitudinalDiff(referenceRef, s.ref);
         heatmaps[i] = diff.heatmap;
       }),

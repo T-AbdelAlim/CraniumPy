@@ -44,6 +44,11 @@ export default function MorphingTab({ slots }) {
   const morphViewerRef = useRef(null);
   const loadedKeyRef = useRef(null);
   const loadPromiseRef = useRef(null);
+  // fullscreens the WHOLE tab (toolbars + MorphControl + canvas together),
+  // not just the canvas - see MorphControl.jsx's own handleToggleFullscreen
+  // comment for why fullscreen used to hide every control including its
+  // own exit button.
+  const fullscreenRef = useRef(null);
 
   useEffect(() => {
     fetchShippedTemplates()
@@ -160,7 +165,7 @@ export default function MorphingTab({ slots }) {
   }
 
   return (
-    <div className="longitudinal-morphing-tab">
+    <div ref={fullscreenRef} className="longitudinal-morphing-tab">
       <div className="longitudinal-toolbar">
         <span className="hint">timepoints:</span>
         {readyIndices.map((i) => (
@@ -218,7 +223,7 @@ export default function MorphingTab({ slots }) {
       {status && <p className="status-line">{status}</p>}
 
       <div className="longitudinal-morphing-viewer">
-        <MorphControl onT={(t) => morphViewerRef.current?.setT(t)} morphViewerRef={morphViewerRef} />
+        <MorphControl onT={(t) => morphViewerRef.current?.setT(t)} morphViewerRef={morphViewerRef} fullscreenRef={fullscreenRef} />
         <div className="longitudinal-morphing-viewer-canvas">
           <LongitudinalMorphViewer ref={morphViewerRef} />
         </div>

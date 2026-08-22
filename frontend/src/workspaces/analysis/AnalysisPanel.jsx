@@ -78,8 +78,6 @@ export default function AnalysisPanel({
   onExportMeasurementsChange,
   exportAsymmetry,
   onExportAsymmetryChange,
-  exportMeshes,
-  onExportMeshesChange,
   isDesktop,
   saveDestDir,
   onChooseSaveFolder,
@@ -338,10 +336,6 @@ export default function AnalysisPanel({
         <label className="checkbox">
           <input type="checkbox" checked={exportAsymmetry} onChange={(e) => onExportAsymmetryChange(e.target.checked)} />
           asymmetry
-        </label>
-        <label className="checkbox">
-          <input type="checkbox" checked={exportMeshes} onChange={(e) => onExportMeshesChange(e.target.checked)} />
-          meshes
         </label>
       </div>
       <button type="button" onClick={onExportAnalysis} disabled={exportingAnalysis}>
