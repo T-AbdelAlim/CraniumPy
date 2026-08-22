@@ -5,8 +5,10 @@ import ResizablePane from "./ResizablePane.jsx";
 // between the top-level app modes - "Per patient" (single-patient
 // preprocess/analyze/export, everything else in this app), "Longitudinal"
 // (follow-up comparison across a patient's own timepoints - see
-// workspaces/longitudinal/LongitudinalWorkspace.jsx), and "Cohort"
-// (batch/cohort analysis across already-exported patients - see
+// workspaces/longitudinal/LongitudinalWorkspace.jsx), "Facial Anthropometrics"
+// (custom point-to-point measurements batch-extracted across many
+// NICP-registered meshes - see workspaces/facial/FacialWorkspace.jsx), and
+// "Cohort" (batch/cohort analysis across already-exported patients - see
 // workspaces/cohort/CohortWorkspace.jsx). no routing here either -
 // workspace switching is local tab state until patient persistence gives
 // routes something real to key on (:patientId). a bottom jobs bar slots
@@ -53,6 +55,13 @@ export default function Shell({
               onClick={() => onAppModeChange("longitudinal")}
             >
               Longitudinal
+            </button>
+            <button
+              type="button"
+              className={appMode === "facial" ? "shell-nav-item active" : "shell-nav-item"}
+              onClick={() => onAppModeChange("facial")}
+            >
+              Facial Anthropometrics
             </button>
             <button
               type="button"

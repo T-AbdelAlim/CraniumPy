@@ -10,6 +10,7 @@ import ConfirmDialog from "./components/ConfirmDialog.jsx";
 import StagedWorkspaceDialog from "./components/StagedWorkspaceDialog.jsx";
 import CohortWorkspace from "./workspaces/cohort/CohortWorkspace.jsx";
 import LongitudinalWorkspace from "./workspaces/longitudinal/LongitudinalWorkspace.jsx";
+import FacialWorkspace from "./workspaces/facial/FacialWorkspace.jsx";
 import { listCohortPatients } from "./api/cohort.js";
 import {
   meshUrl,
@@ -196,6 +197,7 @@ function App() {
   // the Preprocessing->Longitudinal staging flow already uses.
   const [longitudinalSnapshot, setLongitudinalSnapshot] = useState(null);
   const [cohortSnapshot, setCohortSnapshot] = useState(null);
+  const [facialSnapshot, setFacialSnapshot] = useState(null);
   // { mode, snapshot } while a restore prompt is up, else null. "patients"
   // has no real snapshot object (its state already lives in App.jsx, which
   // never unmounts on a switch - see appMode's own comment) - snapshot is
@@ -206,6 +208,7 @@ function App() {
   // read-once-at-mount pattern loadStagedIntoLongitudinal already uses.
   const [loadSnapshotIntoLongitudinal, setLoadSnapshotIntoLongitudinal] = useState(false);
   const [loadSnapshotIntoCohort, setLoadSnapshotIntoCohort] = useState(false);
+  const [loadSnapshotIntoFacial, setLoadSnapshotIntoFacial] = useState(false);
 
   function handleStageForLongitudinal(timepoint) {
     // re-staging an already-staged timepoint replaces it rather than
@@ -243,6 +246,7 @@ function App() {
     const snapshot =
       nextMode === "longitudinal" ? longitudinalSnapshot
       : nextMode === "cohort" ? cohortSnapshot
+      : nextMode === "facial" ? facialSnapshot
       : nextMode === "patients" && sessionId != null ? true // patients has no real snapshot object - its state already lives in App.jsx (see appMode's own comment)
       : null;
     // a workspace reports its own snapshot up on every state change,
@@ -253,6 +257,7 @@ function App() {
     const hasSnapshot =
       nextMode === "longitudinal" ? snapshot?.slots?.some((s) => s.sessionId || s.ready)
       : nextMode === "cohort" ? snapshot?.rows?.length > 0
+      : nextMode === "facial" ? snapshot?.measurements?.length > 0 || snapshot?.batchResults?.length > 0
       : !!snapshot;
     if (hasSnapshot) {
       setPendingRestore({ mode: nextMode, snapshot });
@@ -267,6 +272,7 @@ function App() {
     setPendingRestore(null);
     if (mode === "longitudinal") setLoadSnapshotIntoLongitudinal(true);
     if (mode === "cohort") setLoadSnapshotIntoCohort(true);
+    if (mode === "facial") setLoadSnapshotIntoFacial(true);
     setLoadStagedIntoLongitudinal(false);
     setAppMode(mode);
   }
@@ -281,6 +287,10 @@ function App() {
     if (mode === "cohort") {
       setCohortSnapshot(null);
       setLoadSnapshotIntoCohort(false);
+    }
+    if (mode === "facial") {
+      setFacialSnapshot(null);
+      setLoadSnapshotIntoFacial(false);
     }
     if (mode === "patients") {
       setSessionId(null);
@@ -1612,7 +1622,10 @@ function App() {
     <StagedWorkspaceDialog
       title="Previous session found"
       message={`You have previous ${
-        pendingRestore.mode === "longitudinal" ? "Longitudinal" : pendingRestore.mode === "cohort" ? "Cohort" : "Patients"
+        pendingRestore.mode === "longitudinal" ? "Longitudinal"
+        : pendingRestore.mode === "cohort" ? "Cohort"
+        : pendingRestore.mode === "facial" ? "Facial Anthropometrics"
+        : "Patients"
       } work from earlier in this session. Load it, or start clean?`}
       confirmLabel="load previous workspace"
       onLoadStaged={handleRestorePrevious}
@@ -1631,6 +1644,34 @@ function App() {
             <CohortWorkspace
               onSnapshotChange={setCohortSnapshot}
               initialSnapshot={loadSnapshotIntoCohort ? cohortSnapshot : null}
+            />
+          }
+          inspectorTitle={null}
+          inspector={null}
+        />
+        {restoreDialog}
+        {showStagedPrompt && (
+          <StagedWorkspaceDialog
+            count={stagedLongitudinalMeshes.length}
+            onLoadStaged={handleLoadStagedWorkspace}
+            onLoadClean={handleLoadCleanWorkspace}
+          />
+        )}
+      </>
+    );
+  }
+
+  if (appMode === "facial") {
+    return (
+      <>
+        <Shell
+          appMode={appMode}
+          onAppModeChange={handleAppModeChange}
+          workspaces={[]}
+          workspace={
+            <FacialWorkspace
+              onSnapshotChange={setFacialSnapshot}
+              initialSnapshot={loadSnapshotIntoFacial ? facialSnapshot : null}
             />
           }
           inspectorTitle={null}

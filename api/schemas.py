@@ -662,3 +662,150 @@ class LongitudinalReportRequest(BaseModel):
     label_a: str = "Baseline"
     label_b: str = "Follow-up"
     include_diff: bool = True
+
+
+# --- Facial Anthropometrics workspace -------------------------------------
+
+
+class FacialTemplateLoadRequest(BaseModel):
+    """the default shipped face-nasion-origin template, or an optional
+    custom one - exactly one of the two should be given (shipped_name
+    defaults to the shipped face template when both are omitted)."""
+
+    shipped_name: str | None = "template_face"
+    path: str | None = None
+
+
+class FacialTemplateResponse(BaseModel):
+    template_id: str
+    vertex_count: int
+    face_count: int
+
+
+class FacialPickRequest(BaseModel):
+    point: LandmarkPoint
+
+
+class FacialPickResponse(BaseModel):
+    vertex_index: int
+    point: LandmarkPoint  # the snapped position, not the raw raycast hit
+
+
+class FacialMeasurementDef(BaseModel):
+    """one user-defined measurement - point_ids reference keys in a
+    separate {point_id: LandmarkPoint} dict (see FacialMeasurementPreviewRequest/
+    FacialBatchStartRequest), not raw coordinates, since the same point can
+    be corrected independently later without touching the measurement
+    definition itself. color is computed once, client-side, when the
+    measurement is created (see frontend/src/workspaces/facial/lib/points.js's
+    colorForMeasurement) and carried through every request from then on -
+    the single source of truth for "consistent unique colors," so the
+    legend the frontend renders live and the one the Excel export writes
+    are guaranteed to match without a second color algorithm to keep in sync."""
+
+    id: str
+    name: str
+    abbreviation: str
+    type: Literal["linear", "angular", "area"]
+    point_ids: list[str]
+    geodesic: bool = False  # linear only; ignored for angular/area
+    color: str = "#4ade80"  # hex, e.g. "#4ade80"
+
+
+class FacialMeasurementPreviewRequest(BaseModel):
+    template_id: str
+    points: dict[str, LandmarkPoint]
+    measurements: list[FacialMeasurementDef]
+
+
+class FacialMeasurementPreviewResponse(BaseModel):
+    values: dict[str, float | None]
+    value_errors: dict[str, str]
+
+
+class FacialListMeshesRequest(BaseModel):
+    """turns a picked folder (frontend/src/lib/desktop.js's pickFolderNative
+    only ever returns a folder path, never its contents) into the flat,
+    non-recursive list of mesh files inside it - the batch's own
+    mesh_paths, one file picker/listing step removed from the actual
+    batch-processing endpoint below."""
+
+    folder: str
+
+
+class FacialListMeshesResponse(BaseModel):
+    mesh_paths: list[str]
+
+
+class FacialBatchStartRequest(BaseModel):
+    """desktop: real local paths (a folder listing or explicit file picks -
+    see frontend/src/lib/desktop.js's pickFolderNative/pickFileNative).
+    browser batches are a separate multipart upload endpoint (uploaded
+    bytes have no real path to fall back on, same split every other
+    upload flow in this app already makes)."""
+
+    template_id: str
+    mesh_paths: list[str]
+    points: dict[str, LandmarkPoint]
+    measurements: list[FacialMeasurementDef]
+
+
+class FacialBatchFileResult(BaseModel):
+    filename: str
+    status: Literal["ok", "error"]
+    error: str | None = None
+    landmark_points: dict[str, LandmarkPoint] = Field(default_factory=dict)
+    values: dict[str, float | None] = Field(default_factory=dict)
+    value_errors: dict[str, str] = Field(default_factory=dict)
+
+
+class FacialBatchResponse(BaseModel):
+    batch_id: str
+    results: list[FacialBatchFileResult]
+
+
+class FacialCorrectionRequest(BaseModel):
+    batch_id: str
+    filename: str
+    point_id: str
+    point: LandmarkPoint
+
+
+class FacialCorrectionResponse(BaseModel):
+    """only the measurements that reference the corrected point - the
+    frontend merges this into its own per-file state rather than
+    overwriting everything, so an unrelated measurement's value never
+    flickers/recomputes needlessly."""
+
+    landmark_point: LandmarkPoint  # the snapped correction, echoed back
+    values: dict[str, float | None]
+    value_errors: dict[str, str]
+
+
+# --- Facial Anthropometrics <-> Cohort integration --------------------------
+
+
+class FacialMeasurementsLoadRequest(BaseModel):
+    """cohort_path: the currently-open cohort study's own .xlsx (same path
+    the Per-patient sidebar's cohort controls already use). measurement_file_path:
+    a Facial Anthropometrics batch export (api/routers/facial.py's
+    export_batch) - the "attach custom measurements..." control's own file pick."""
+
+    cohort_path: str
+    measurement_file_path: str
+
+
+class FacialMeasurementsLoadResponse(BaseModel):
+    """columns are already formatted "Name (ABBR)" (see
+    api/routers/facial.py's _measurement_header) - the Cohort workspace
+    merges rows_by_cohort_id straight into its own row view by these exact
+    keys, so every existing tab (already generic over column names) treats
+    them like any other numeric cohort variable with no code changes.
+    unmatched/ambiguous are never silently dropped - the frontend surfaces
+    them before committing the merge."""
+
+    columns: list[str]
+    rows_by_cohort_id: dict[str, dict[str, str]]
+    legend: list[dict[str, str]]
+    unmatched: list[str]
+    ambiguous: dict[str, list[str]]

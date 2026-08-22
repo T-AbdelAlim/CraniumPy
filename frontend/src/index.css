@@ -1434,3 +1434,244 @@ select {
   gap: 0.6rem;
   margin-top: 1.1rem;
 }
+
+/* Facial Anthropometrics workspace - same tab-strip/content shape as
+   .longitudinal-ws (own internal Define/Batch tabs, both kept mounted -
+   see FacialWorkspace.jsx's own comment on why). */
+.facial-ws {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.facial-ws-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.5rem 1rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.facial-ws-tab {
+  width: auto;
+  margin-top: 0;
+  padding: 0.5rem 0.9rem;
+  border: none;
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.facial-ws-tab:hover {
+  background: var(--bg-subtle);
+}
+
+.facial-ws-tab.active {
+  background: var(--viewer-bg);
+  color: var(--viewer-text);
+  font-weight: 600;
+}
+
+.facial-ws-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 1rem;
+}
+
+.facial-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.facial-define-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(260px, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.facial-define-viewer {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-subtle);
+}
+
+.facial-define-hint {
+  position: absolute;
+  left: 0.5rem;
+  bottom: 0.5rem;
+  margin: 0;
+  background: rgba(8, 10, 13, 0.6);
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+}
+
+.facial-define-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.facial-add-measurement {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+}
+
+.facial-add-measurement-pending {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.facial-add-measurement-pending label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.85rem;
+}
+
+.facial-add-measurement-pending label.checkbox {
+  flex-direction: row;
+  align-items: center;
+}
+
+.facial-add-measurement-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.3rem;
+}
+
+.facial-form-warning {
+  color: var(--hc, #d1453d);
+}
+
+.facial-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.facial-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.facial-legend-swatch {
+  width: 0.8em;
+  height: 0.8em;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.facial-legend-label {
+  flex: 1;
+}
+
+.facial-legend-value {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.facial-legend-value-error {
+  color: var(--hc, #d1453d);
+}
+
+.facial-batch-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.facial-batch-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.facial-batch-viewer {
+  position: relative;
+  width: 100%;
+  max-width: 640px;
+  aspect-ratio: 1;
+  margin: 0 auto 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-subtle);
+}
+
+.facial-batch-error {
+  color: var(--hc, #d1453d);
+}
+
+.facial-export-panel {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+/* Cohort workspace's attached custom-measurements control
+   (CustomMeasurementsPanel.jsx) and its unmatched-filenames confirmation
+   (UnmatchedFilenamesDialog.jsx). */
+.cohort-custom-measurements {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface);
+}
+
+.cohort-custom-measurements-summary {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.unmatched-filenames-dialog {
+  max-width: 480px;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.unmatched-filenames-section {
+  margin-top: 0.9rem;
+}
+
+.unmatched-filenames-section h4 {
+  margin: 0 0 0.3rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.unmatched-filenames-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  max-height: 160px;
+  overflow-y: auto;
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
