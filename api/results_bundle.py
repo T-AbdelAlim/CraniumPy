@@ -17,6 +17,7 @@ from __future__ import annotations
 import io
 import json
 import textwrap
+import uuid
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -839,6 +840,65 @@ def _next_cohort_id(existing_ids: list[str]) -> str:
     return f"C{highest + 1:05d}"
 
 
+def prepare_new_cohort_path(picked_path: str) -> str:
+    """redirects a freshly-picked "create new cohort file" save location
+    (desktop/app.py's pick_excel_file, save=True - defaults to a bare
+    "cohort.xlsx" suggestion) into its own dedicated cohort_{uniqueID}/
+    folder, with the cohort file itself carrying that same uniqueID in its
+    own filename too (and so will its id-mapping companion, since
+    _id_mapping_path just derives from this file's own stem) - so two
+    cohorts both saved with the default suggested name, or just given the
+    same name by two different users, never collide or silently overwrite
+    each other, and each cohort's own folder is self-describing on disk
+    rather than an indistinguishable bare "cohort.xlsx" sitting wherever it
+    was saved. only meant to be called once, right when "create new cohort
+    file..." is picked (see desktop/app.py's pick_excel_file) - the
+    resulting path is what the frontend then holds onto (App.jsx's
+    cohortPath) for every later row this session upserts into the same
+    file, so the folder isn't reminted on every save."""
+    original = Path(picked_path)
+    unique_id = uuid.uuid4().hex[:8]
+    folder = original.parent / f"cohort_{unique_id}"
+    folder.mkdir(parents=True, exist_ok=True)
+    return str(folder / f"cohort_{unique_id}.xlsx")
+
+
+def list_cohort_patients(cohort_path: Path) -> list[dict[str, str]]:
+    """the Per-patient sidebar's "load from cohort" dropdown (see
+    PatientMetadataForm.jsx) - one entry per unique patient_id already in
+    this cohort, reconstructed by joining the id-mapping file's own
+    identity fields (patient_id/date_of_birth/date_of_intervention - see
+    _id_mapping_path) back to the shared cohort file's own non-identifying
+    ones (sex/diagnosis/treatment - still present there, only the fields in
+    _COHORT_XLSX_EXCLUDED_COLUMNS were ever stripped out) via cohort_id. a
+    patient with more than one row (a baseline plus follow-ups) appears
+    once, using their MOST RECENT row - sex/diagnosis/date_of_birth
+    shouldn't actually differ across a patient's own rows, but if one was
+    ever corrected, the latest value is the one worth offering back. [] for
+    a cohort with no mapping file yet (a freshly created one nothing's been
+    saved into) - _read_xlsx_rows already treats a missing file as "nothing
+    to read" rather than an error."""
+    _, mapping_rows = _read_xlsx_rows(_id_mapping_path(cohort_path))
+    _, cohort_rows = _read_xlsx_rows(cohort_path)
+    cohort_by_id = {r.get("cohort_id", ""): r for r in cohort_rows}
+
+    by_patient: dict[str, dict[str, str]] = {}
+    for m in mapping_rows:
+        patient_id = m.get("patient_id", "")
+        if not patient_id:
+            continue
+        cohort_row = cohort_by_id.get(m.get("cohort_id", ""), {})
+        by_patient[patient_id] = {
+            "patient_id": patient_id,
+            "date_of_birth": m.get("date_of_birth", ""),
+            "date_of_intervention": m.get("date_of_intervention", ""),
+            "sex": cohort_row.get("sex", ""),
+            "diagnosis": cohort_row.get("diagnosis", ""),
+            "treatment": cohort_row.get("treatment", ""),
+        }
+    return sorted(by_patient.values(), key=lambda p: p["patient_id"])
+
+
 # columns that never appear in the shared cohort file itself - anything
 # that identifies the patient (directly, like patient_id/date_of_birth, or
 # indirectly, like a file_name/file_path that might embed a name or MRN)
@@ -1124,7 +1184,7 @@ def _report_pdf(
     with PdfPages(buf) as pdf:
         title_page = Figure(figsize=(PAGE_W_IN, PAGE_H_IN))  # A4 portrait
         FigureCanvasAgg(title_page)
-        title_page.text(0.5, 0.92, "CranioSuite Analysis Report", ha="center", fontsize=20, weight="bold")
+        title_page.text(0.5, 0.92, "CraniumPy v2.0 Analysis Report", ha="center", fontsize=20, weight="bold")
         title_page.text(
             0.5, 0.885,
             f"{'Cranial' if target == 'cranium' else 'Facial'} analysis - {original_filename}",
@@ -1246,7 +1306,7 @@ def mean_shape_report_pdf(
     with PdfPages(buf) as pdf:
         title_page = Figure(figsize=(PAGE_W_IN, PAGE_H_IN))
         FigureCanvasAgg(title_page)
-        title_page.text(0.5, 0.92, "CranioSuite Cohort Mean Shape Report", ha="center", fontsize=20, weight="bold")
+        title_page.text(0.5, 0.92, "CraniumPy v2.0 Cohort Mean Shape Report", ha="center", fontsize=20, weight="bold")
         title_page.text(
             0.5, 0.885,
             f"{'Cranial' if target == 'cranium' else 'Facial'} mean shape - {group_label}",
@@ -1368,7 +1428,7 @@ def longitudinal_comparison_report_pdf(
     with PdfPages(buf) as pdf:
         title_page = Figure(figsize=(PAGE_W_IN, PAGE_H_IN))
         FigureCanvasAgg(title_page)
-        title_page.text(0.5, 0.92, "CranioSuite Longitudinal Comparison Report", ha="center", fontsize=20, weight="bold")
+        title_page.text(0.5, 0.92, "CraniumPy v2.0 Longitudinal Comparison Report", ha="center", fontsize=20, weight="bold")
         title_page.text(
             0.5, 0.885, f"{'Cranial' if target == 'cranium' else 'Facial'} comparison", ha="center", fontsize=11, color="#666666",
         )

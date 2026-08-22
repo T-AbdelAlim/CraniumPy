@@ -35,6 +35,22 @@ export async function uploadCohortFile(file) {
   return response.json(); // {columns, rows}
 }
 
+// the Per-patient sidebar's "load from cohort" dropdown - every unique
+// patient already in this cohort (see api/results_bundle.py's
+// list_cohort_patients), for freezing the form onto one instead of
+// retyping their details for a follow-up image. path is the same
+// cohort.xlsx path "add to existing cohort file..." already resolved.
+export async function listCohortPatients(path) {
+  const response = await fetch("/api/cohort/patients", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  const data = await response.json();
+  return data.patients; // [{patient_id, date_of_birth, date_of_intervention, sex, diagnosis, treatment}]
+}
+
 // values: {group label: numeric values[]}. returns both a parametric and a
 // rank-based/nonparametric result together (see api/routers/cohort.py's
 // _run_stats_test for which pair runs, 2 groups vs 3+) - which one to trust

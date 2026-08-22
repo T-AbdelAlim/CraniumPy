@@ -18,6 +18,7 @@ import uvicorn
 import webview
 
 from api.main import app
+from api.results_bundle import prepare_new_cohort_path
 
 HOST = "127.0.0.1"
 PORT = 8734
@@ -101,7 +102,15 @@ class Api:
         file"), False opens a native Open dialog (for "add to an existing
         one"). the backend side doesn't actually care which dialog
         produced the path - create-vs-append collapses to the same upsert
-        operation either way, see results_bundle._upsert_cohort_xlsx."""
+        operation either way, see results_bundle._upsert_cohort_xlsx.
+
+        a save=True pick additionally gets redirected into its own
+        cohort_{uniqueID}/ folder (see results_bundle.prepare_new_cohort_path)
+        before it's ever handed back to the frontend - so whatever the user
+        actually typed/left as the Save dialog's filename, the real on-disk
+        result is always uniquely named and self-contained, never a bare
+        "cohort.xlsx" sitting loose in some folder where another cohort of
+        the same name could silently overwrite it."""
         if self._window is None:
             return None
         dialog_type = webview.FileDialog.SAVE if save else webview.FileDialog.OPEN
@@ -110,7 +119,10 @@ class Api:
             save_filename="cohort.xlsx" if save else "",
             file_types=("Excel files (*.xlsx)", "All files (*.*)"),
         )
-        return result[0] if result else None
+        if not result:
+            return None
+        path = result[0]
+        return prepare_new_cohort_path(path) if save else path
 
     def open_folder(self, path: str) -> bool:
         """the frontend's "go to save folder" button (see
@@ -195,7 +207,7 @@ def _set_windows_app_user_model_id() -> None:
     import ctypes
 
     try:
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("CranioSuite.CranioSuite.1")
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("CraniumPy.CraniumPy.1")
     except (AttributeError, OSError):
         pass
 
@@ -211,7 +223,7 @@ def main() -> None:
     webview.settings["ALLOW_DOWNLOADS"] = True
 
     api = Api()
-    window = webview.create_window("CranioSuite", f"http://{HOST}:{PORT}", width=1280, height=800, js_api=api)
+    window = webview.create_window("CraniumPy v2.0", f"http://{HOST}:{PORT}", width=1280, height=800, js_api=api)
     api._window = window
     window.events.loaded += lambda: _register_native_drop(window)
     webview.start(icon=str(ICON_PATH) if ICON_PATH.is_file() else None)

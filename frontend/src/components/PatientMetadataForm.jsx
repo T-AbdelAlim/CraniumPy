@@ -61,16 +61,17 @@ export default function PatientMetadataForm({
   cohortMode,
   cohortPath,
   onCohortModeChange,
-  samePatientMode,
-  onSamePatientModeChange,
+  cohortPatients,
+  selectedCohortPatientId,
+  onCohortPatientSelect,
 }) {
   const diagnosisInputRef = useRef(null);
-  // greyed out while samePatientMode is on - everything about the PATIENT
-  // rather than this particular image, so it doesn't need retyping for a
-  // follow-up scan of someone already filled in (see App.jsx's
-  // handleUploaded, which preserves exactly these fields across a
-  // same-patient upload and blanks everything else).
-  const frozen = samePatientMode;
+  // greyed out once a patient's picked from the "load from cohort" dropdown
+  // below - everything about the PATIENT rather than this particular image,
+  // so it doesn't need retyping for a follow-up scan of someone already in
+  // the cohort (see App.jsx's handleUploaded, which preserves exactly these
+  // fields across a same-patient upload and blanks everything else).
+  const frozen = !!selectedCohortPatientId;
 
   // both age fields recompute whenever date_of_birth or the relevant date
   // changes, overwriting whatever was there - a fresh useEffect run only
@@ -129,14 +130,29 @@ export default function PatientMetadataForm({
     <div className="metadata-form">
       <h3 className="metadata-form-title">Patient / visit</h3>
 
-      <label className="checkbox metadata-same-patient-toggle">
-        <input
-          type="checkbox"
-          checked={samePatientMode}
-          onChange={(e) => onSamePatientModeChange(e.target.checked)}
-        />
-        same patient, new image
-      </label>
+      {/* replaces the old standalone "same patient, new image" checkbox -
+          picking a patient here freezes the form onto their own details
+          (read back from this cohort, see App.jsx's handleCohortPatientSelect)
+          instead of just preserving whatever was already typed in, and it
+          works for a patient processed in an earlier session too, not only
+          "the one I just finished a moment ago". only meaningful once a
+          cohort's actually loaded (cohortMode "create"/"append" - see
+          onCohortModeChange) - nothing to pick from otherwise, so this stays
+          hidden and patient ID is just a plain field, same as before this
+          existed. */}
+      {cohortMode !== "none" && (
+        <label>
+          load from cohort
+          <select value={selectedCohortPatientId} onChange={(e) => onCohortPatientSelect(e.target.value)}>
+            <option value="">— new patient —</option>
+            {cohortPatients.map((p) => (
+              <option key={p.patient_id} value={p.patient_id}>
+                {p.patient_id}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       {frozen && (
         <p className="hint">
           patient details below are locked - only imaging date, image timing, and notes reset for the new upload.

@@ -37,29 +37,6 @@ function extensionForMimeType(mimeType) {
   return mimeType.startsWith("video/mp4") ? "mp4" : "webm";
 }
 
-// mirrors LongitudinalMorphViewer's own per-leg t-mapping (see that
-// component's applyCurrentFrame) purely for display - "62% from t1 to t2"
-// instead of a flat "62% toward follow-up" that stops meaning anything once
-// there are more than two timepoints chained together in one sweep.
-// legLabels is optional (the plain two-timepoint case doesn't pass it) and
-// falls back to the original wording when absent or too short to chain.
-function readoutText(t, legLabels) {
-  if (!legLabels || legLabels.length < 2) {
-    return t < 0.02 ? "baseline" : t > 0.98 ? "follow-up" : `${Math.round(t * 100)}% toward follow-up`;
-  }
-  const legs = legLabels.length - 1;
-  const scaled = Math.max(0, Math.min(1, t)) * legs;
-  let legIndex = Math.floor(scaled);
-  if (legIndex >= legs) legIndex = legs - 1;
-  if (legIndex < 0) legIndex = 0;
-  const localT = scaled - legIndex;
-  const from = legLabels[legIndex];
-  const to = legLabels[legIndex + 1];
-  if (localT < 0.02) return from;
-  if (localT > 0.98) return to;
-  return `${Math.round(localT * 100)}% from ${from} to ${to}`;
-}
-
 // scrubber + play/pause for LongitudinalMorphViewer - a plain 0..1 range
 // input always available (manual scrub), plus an optional auto-play
 // ping-pong loop (start -> end -> start, chaining through every leg in
@@ -67,9 +44,11 @@ function readoutText(t, legLabels) {
 // see LongitudinalMorphViewer.jsx's own setT) for a hands-free preview, at a
 // user-chosen speed. onT fires on every change, scrub or animated alike -
 // the parent just forwards it straight to the viewer's imperative setT(t).
-// legLabels (optional) is just the ordered timepoint labels, used only for
-// the readout text below (see readoutText) - the actual sweep math lives in
-// the viewer, this component never needs to know how many legs there are.
+// the readout is a bare percentage, not "62% from Timepoint 0 to Timepoint
+// 1" - a leg-label version of this used to widen/rejumble the whole toolbar
+// as playback moved between legs with different-length labels, which read
+// as the panel itself jittering. this component never needs to know how
+// many legs there are - that's entirely the viewer's own concern.
 //
 // morphViewerRef (optional) additionally enables "export video": one full
 // start -> end -> start sweep at the current speed, captured straight off
@@ -82,12 +61,14 @@ function readoutText(t, legLabels) {
 // engine, whether that's a real browser tab or the desktop app's own
 // pywebview/WebView2 window) - a GIF would need a whole extra JS encoder
 // dependency for a strictly worse result.
-export default function MorphControl({ onT, morphViewerRef, legLabels }) {
+export default function MorphControl({ onT, morphViewerRef }) {
   const [t, setT] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [sweepSeconds, setSweepSeconds] = useState(DEFAULT_SWEEP_SECONDS);
   const [exporting, setExporting] = useState(false);
   const [exportStatus, setExportStatus] = useState("");
+  const [opacity, setOpacity] = useState(1);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const directionRef = useRef(1);
   const rafRef = useRef(null);
   const lastRef = useRef(null);
@@ -96,6 +77,28 @@ export default function MorphControl({ onT, morphViewerRef, legLabels }) {
   useEffect(() => {
     onT(t);
   }, [t]);
+
+  useEffect(() => {
+    morphViewerRef?.current?.setMeshOpacity(opacity);
+  }, [opacity, morphViewerRef]);
+
+  // synced from the browser's own fullscreenchange event, not just the
+  // button click - Escape (or the browser/OS's own fullscreen exit
+  // control) leaves fullscreen without ever calling handleToggleFullscreen,
+  // and the button's own label needs to reflect that either way.
+  useEffect(() => {
+    function onFullscreenChange() {
+      setIsFullscreen(!!morphViewerRef?.current?.isFullscreenElement());
+    }
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
+  }, [morphViewerRef]);
+
+  function handleToggleFullscreen() {
+    if (!morphViewerRef?.current) return;
+    if (morphViewerRef.current.isFullscreenElement()) morphViewerRef.current.exitFullscreen();
+    else morphViewerRef.current.requestFullscreen();
+  }
 
   // read from the tick loop below via a ref, not the sweepSeconds state
   // directly - so changing speed mid-playback takes effect on the very
@@ -180,10 +183,27 @@ export default function MorphControl({ onT, morphViewerRef, legLabels }) {
           ))}
         </select>
       </label>
-      <span className="hint longitudinal-morph-readout">{readoutText(t, legLabels)}</span>
+      <span className="hint longitudinal-morph-readout">{Math.round(t * 100)}%</span>
+      <label className="longitudinal-morph-opacity">
+        opacity
+        <input
+          type="range"
+          min={0.1}
+          max={1}
+          step={0.05}
+          value={opacity}
+          disabled={exporting}
+          onChange={(e) => setOpacity(Number(e.target.value))}
+        />
+      </label>
       {morphViewerRef && (
         <button type="button" className="button-subtle" onClick={handleExportVideo} disabled={exporting}>
           {exporting ? "recording..." : "export video"}
+        </button>
+      )}
+      {morphViewerRef && (
+        <button type="button" className="button-subtle" onClick={handleToggleFullscreen}>
+          {isFullscreen ? "exit fullscreen" : "fullscreen"}
         </button>
       )}
       {exportStatus && <span className="hint">{exportStatus}</span>}

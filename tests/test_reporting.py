@@ -37,6 +37,8 @@ from api.results_bundle import (
     _silhouette_polygon,
     _summary_xlsx,
     _upsert_cohort_xlsx,
+    list_cohort_patients,
+    prepare_new_cohort_path,
 )
 from craniumpy_core.asymmetry import AsymmetryResult
 from craniumpy_core.craniometrics import CranioMeasurements, FrontalBossingResult
@@ -402,6 +404,85 @@ def test_upsert_cohort_xlsx_unions_columns_from_an_older_narrower_schema(tmp_pat
     assert new_row_out["an_old_removed_column"] == ""  # old column, blank on the new row
     assert new_row_out["depth_mm"] == "59.12"
     assert new_row_out.get("file_path", "") == ""  # never written for a row from today's schema
+
+
+def test_prepare_new_cohort_path_redirects_into_its_own_uniqueid_folder(tmp_path):
+    picked = tmp_path / "cohort.xlsx"
+
+    result = Path(prepare_new_cohort_path(str(picked)))
+
+    assert result.parent.parent == tmp_path
+    assert result.parent.is_dir()
+    assert result.parent.name.startswith("cohort_")
+    unique_id = result.parent.name.removeprefix("cohort_")
+    assert result.name == f"cohort_{unique_id}.xlsx"
+
+
+def test_prepare_new_cohort_path_never_collides_on_repeated_default_name(tmp_path):
+    first = Path(prepare_new_cohort_path(str(tmp_path / "cohort.xlsx")))
+    second = Path(prepare_new_cohort_path(str(tmp_path / "cohort.xlsx")))
+
+    assert first != second
+    assert first.parent != second.parent
+
+
+def test_list_cohort_patients_empty_when_nothing_saved_yet(tmp_path):
+    assert list_cohort_patients(tmp_path / "cohort.xlsx") == []
+
+
+def test_list_cohort_patients_joins_mapping_and_cohort_rows(tmp_path):
+    cohort_path = tmp_path / "cohort.xlsx"
+    row = _metrics_row(
+        "cranium",
+        {
+            "file_name": "a.ply", "file_path": "/data/a.ply", "patient_id": "MRN-1",
+            "date_of_birth": "2020-01-01", "date_of_intervention": "2021-06-01",
+            "sex": "female", "diagnosis": "Sagittal synostosis", "treatment": "helmet",
+        },
+        _config(), _craniometrics(), None, None, None,
+    )
+    _upsert_cohort_xlsx(cohort_path, row)
+
+    patients = list_cohort_patients(cohort_path)
+
+    assert patients == [
+        {
+            "patient_id": "MRN-1",
+            "date_of_birth": "2020-01-01",
+            "date_of_intervention": "2021-06-01",
+            "sex": "female",
+            "diagnosis": "Sagittal synostosis",
+            "treatment": "helmet",
+        }
+    ]
+
+
+def test_list_cohort_patients_dedupes_by_patient_id_keeping_latest_row(tmp_path):
+    cohort_path = tmp_path / "cohort.xlsx"
+    baseline = _metrics_row(
+        "cranium",
+        {
+            "file_name": "a.ply", "file_path": "/data/a.ply", "patient_id": "MRN-1",
+            "date_of_birth": "2020-01-01", "sex": "female", "diagnosis": "Sagittal synostosis",
+        },
+        _config(), _craniometrics(), None, None, None,
+    )
+    followup = _metrics_row(
+        "cranium",
+        {
+            "file_name": "a_followup.ply", "file_path": "/data/a_followup.ply", "patient_id": "MRN-1",
+            "date_of_birth": "2020-01-01", "sex": "female", "diagnosis": "Sagittal synostosis - corrected",
+        },
+        _config(), _craniometrics(), None, None, None,
+    )
+    _upsert_cohort_xlsx(cohort_path, baseline)
+    _upsert_cohort_xlsx(cohort_path, followup)
+
+    patients = list_cohort_patients(cohort_path)
+
+    assert len(patients) == 1
+    assert patients[0]["patient_id"] == "MRN-1"
+    assert patients[0]["diagnosis"] == "Sagittal synostosis - corrected"
 
 
 # --- PDF figure layout ---------------------------------------------------

@@ -32,7 +32,7 @@ if getattr(sys, "frozen", False):
 else:
     FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
-app = FastAPI(title="CraniumPy")
+app = FastAPI(title="CraniumPy v2.0")
 
 
 @app.get("/api/health")
