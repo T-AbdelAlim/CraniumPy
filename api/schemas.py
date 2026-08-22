@@ -399,6 +399,24 @@ class CohortDataResponse(BaseModel):
     rows: list[dict[str, str]]
 
 
+class CohortPatientOption(BaseModel):
+    """one entry in the Per-patient sidebar's "load from cohort" dropdown -
+    see results_bundle.list_cohort_patients for how this gets reconstructed
+    by joining the cohort file's own id-mapping companion back to the
+    shared cohort file itself."""
+
+    patient_id: str
+    date_of_birth: str = ""
+    date_of_intervention: str = ""
+    sex: str = ""
+    diagnosis: str = ""
+    treatment: str = ""
+
+
+class CohortPatientsResponse(BaseModel):
+    patients: list[CohortPatientOption]
+
+
 class CohortStatsTestRequest(BaseModel):
     """values is {group label: that group's numeric values for one metric} -
     the cohort workspace does its own filtering/grouping/type-parsing
@@ -571,53 +589,19 @@ class CohortExportRequest(BaseModel):
 
 class LongitudinalMeshRef(BaseModel):
     """points at one already-in-memory server-side mesh - either a live
-    patient session's own pipeline stage, or a previously-completed direct
-    patient-to-patient fit's result (see LongitudinalNicpFitResponse.fit_id).
-    exactly one of session_id/fit_id should be set. stage="original" is the
-    Longitudinal workspace's "already registered" fast path - a file the
-    user picked that's already the output of a prior Patients session (an
-    _rg/_rg_C/_rg_F/_rg_{C|F}N.ply), uploaded as a fresh session's raw mesh
-    with no /align or /clip needed since it's already in this app's
-    canonical registered frame."""
+    patient session's own pipeline stage, or a shipped template (for the
+    "distance heatmap" overlay's custom-reference mode - see
+    CompareTab.jsx). exactly one of session_id/template should be set.
+    stage="original" is the Longitudinal workspace's "load pre-registered
+    (NICP) file" fast path - a file the user picked that's already the
+    output of a prior Patients session's NICP fit (an _rg_{C|F}N.ply),
+    uploaded as a fresh session's raw mesh with no /align, /clip, or /run
+    needed since it's already in this app's canonical registered frame,
+    fit to a shared template."""
 
     session_id: str | None = None
     stage: Literal["original", "clipped", "result", "nicp_result"] = "nicp_result"
-    fit_id: str | None = None
-
-
-class LongitudinalNicpFitRequest(BaseModel):
-    """direct patient-to-patient NICP fit - source_ref's mesh becomes the
-    deforming template, target_ref's mesh is what it's fit onto. unlike
-    NicpConfig (which fits a session's mesh onto a shipped/custom
-    template), there's no template file here - the "template" IS one of
-    the two sessions' own meshes, so the two end up in the SOURCE mesh's
-    topology, vertex-correspondent with each other. same alpha/gamma/
-    dist_threshold/inner_iters knobs as NicpConfig, for the same reason
-    (they reconstruct nicp()'s own stiffness schedule)."""
-
-    source_ref: LongitudinalMeshRef
-    target_ref: LongitudinalMeshRef
-    alpha_start: float = 200.0
-    alpha_end: float = 1.0
-    alpha_steps: int = 20
-    gamma: float = 1.0
-    dist_threshold: float = 10.0
-    inner_iters: int = 3
-
-
-class LongitudinalNicpFitResponse(BaseModel):
-    """fit_id is a short-lived handle for the async job this kicks off -
-    poll GET /api/longitudinal/nicp-fit/{fit_id}/status, then fetch the
-    result via GET .../mesh once status is "done", or reference it in a
-    later LongitudinalMeshRef (fit_id=...) for /diff or /report."""
-
-    fit_id: str
-
-
-class LongitudinalFitStatusResponse(BaseModel):
-    status: Literal["running", "done", "error"]
-    error: str | None = None
-    progress: ProgressInfo | None = None
+    template: str | None = None
 
 
 class LongitudinalDiffRequest(BaseModel):

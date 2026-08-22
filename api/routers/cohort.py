@@ -28,7 +28,7 @@ from scipy import stats as scipy_stats
 from craniumpy_core import cohort
 from craniumpy_core.io import mesh_to_glb
 from craniumpy_core.template_registry import load_shipped_template
-from api.results_bundle import mean_shape_report_pdf
+from api.results_bundle import list_cohort_patients, mean_shape_report_pdf
 from api.routers._group_measurements import group_measurements_response
 from api.schemas import (
     CohortDataResponse,
@@ -38,6 +38,7 @@ from api.schemas import (
     CohortMeanShapeMeasurementsResponse,
     CohortMeanShapeRequest,
     CohortMeanShapeResponse,
+    CohortPatientsResponse,
     CohortReferenceDiffResponse,
     CohortReportRequest,
     CohortSagittalBandRequest,
@@ -79,6 +80,22 @@ def load_cohort(request: CohortLoadRequest) -> CohortDataResponse:
     except Exception as exc:  # noqa: BLE001 - want the real reason surfaced, whatever openpyxl raised
         raise HTTPException(status_code=400, detail=f"could not read cohort file: {exc}") from exc
     return CohortDataResponse(columns=columns, rows=rows)
+
+
+@router.post("/patients", response_model=CohortPatientsResponse)
+def get_cohort_patients(request: CohortLoadRequest) -> CohortPatientsResponse:
+    """the Per-patient sidebar's "load from cohort" dropdown (see
+    PatientMetadataForm.jsx) - every unique patient already in this cohort,
+    for picking one to freeze the form onto instead of retyping their
+    details for a follow-up image. request.path is the same cohort.xlsx
+    path the "add to existing cohort file..." picker already resolved (see
+    frontend/src/lib/desktop.js's pickExcelFileNative) - reused here rather
+    than a separate pick, since it's the same file either way. a cohort
+    with nothing saved into it yet (or no path at all) just comes back
+    empty, not an error - list_cohort_patients already treats a missing
+    id-mapping file that way."""
+    path = Path(request.path)
+    return CohortPatientsResponse(patients=list_cohort_patients(path))
 
 
 @router.get("/demo", response_model=CohortDataResponse)

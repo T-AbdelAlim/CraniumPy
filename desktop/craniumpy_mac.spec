@@ -67,7 +67,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="CranioSuite",
+    name="CraniumPy",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -80,11 +80,11 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name="CranioSuite",
+    name="CraniumPy",
 )
 app = BUNDLE(
     coll,
-    name="CranioSuite.app",
+    name="CraniumPy.app",
     icon=str(icon_path) if icon_path.exists() else None,
     bundle_identifier="nl.erasmusmc.craniumpy",
     info_plist={

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { loadCohortFile, loadDemoCohort, uploadCohortFile } from "../../api/cohort.js";
 import { isDesktopApp, pickExcelFileNative } from "../../lib/desktop.js";
 import { parseFormula, formulaColumns, evaluateFormula } from "./lib/safeFormula.js";
@@ -32,7 +32,7 @@ const TABS = [
 // at the top, since every tab below reads from the same merged view of the
 // data - a metric added in the Custom metrics tab is immediately usable in
 // Stratify/Plots without any tab-to-tab plumbing.
-export default function CohortWorkspace() {
+export default function CohortWorkspace({ onHasDataChange }) {
   const fileInputRef = useRef(null);
   const [columns, setColumns] = useState([]);
   const [rows, setRows] = useState([]);
@@ -41,6 +41,12 @@ export default function CohortWorkspace() {
   const [activeTab, setActiveTab] = useState("overview");
   const [loadStatus, setLoadStatus] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // reports "is there a cohort loaded that switching away would throw away"
+  // up to App.jsx's workspace-switch guard (see its own handleAppModeChange).
+  useEffect(() => {
+    onHasDataChange?.(rows.length > 0);
+  }, [rows, onHasDataChange]);
 
   const allColumns = useMemo(() => [...columns, ...derivedColumns.map((d) => d.name)], [columns, derivedColumns]);
 

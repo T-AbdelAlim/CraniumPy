@@ -51,6 +51,7 @@ export default function PreprocessingPanel({
   nicpResultReady,
   useNicpMesh,
   onUseNicpMeshChange,
+  onStageForLongitudinal,
   onSaveMeshes,
   savingMeshes,
   saveMeshesStatus,
@@ -71,6 +72,13 @@ export default function PreprocessingPanel({
   // landmarks + target, so there's nothing stale to invalidate here.
   const runDisabled = !alignSucceeded || landmarksChangedSinceAlign || runningPipeline;
   const [showNicpAdvanced, setShowNicpAdvanced] = useState(false);
+  const [stageTimepoint, setStageTimepoint] = useState("t0");
+  const [stagedNote, setStagedNote] = useState("");
+
+  function handleStage() {
+    onStageForLongitudinal(stageTimepoint);
+    setStagedNote(`staged as ${stageTimepoint} (${target})`);
+  }
 
   function renderItem(name) {
     const p = landmarks[name];
@@ -282,6 +290,10 @@ export default function PreprocessingPanel({
               />
             </div>
           )}
+          <p className="hint">
+            interested in Longitudinal analysis (comparing this patient across timepoints)? point correspondence
+            requires a NICP fit - stage this mesh for Longitudinal once the fit below completes.
+          </p>
           <button type="button" onClick={onFitTemplate} disabled={fittingTemplate}>
             fit template (NICP) - same topology across every patient
           </button>
@@ -305,6 +317,22 @@ export default function PreprocessingPanel({
                   doesn't carry over to the NICP-fitted mesh's own, different vertex layout.
                 </p>
               )}
+              <div className="stage-longitudinal-control">
+                <label>
+                  timepoint:
+                  <select value={stageTimepoint} onChange={(e) => setStageTimepoint(e.target.value)}>
+                    {["t0", "t1", "t2", "t3", "t4", "t5"].map((tp) => (
+                      <option key={tp} value={tp}>
+                        {tp}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button type="button" onClick={handleStage}>
+                  stage for Longitudinal
+                </button>
+                {stagedNote && <p className="hint">{stagedNote}</p>}
+              </div>
             </>
           )}
 

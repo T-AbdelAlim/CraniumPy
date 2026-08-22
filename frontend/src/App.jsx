@@ -6,8 +6,11 @@ import MeshViewToggles from "./workspaces/data/MeshViewToggles.jsx";
 import PreprocessingPanel from "./workspaces/preprocessing/PreprocessingPanel.jsx";
 import AnalysisPanel from "./workspaces/analysis/AnalysisPanel.jsx";
 import PatientMetadataForm from "./components/PatientMetadataForm.jsx";
+import ConfirmDialog from "./components/ConfirmDialog.jsx";
+import StagedWorkspaceDialog from "./components/StagedWorkspaceDialog.jsx";
 import CohortWorkspace from "./workspaces/cohort/CohortWorkspace.jsx";
 import LongitudinalWorkspace from "./workspaces/longitudinal/LongitudinalWorkspace.jsx";
+import { listCohortPatients } from "./api/cohort.js";
 import {
   meshUrl,
   startAlign,
@@ -155,8 +158,109 @@ function App() {
   // switch, not a dual-mounted-hidden Viewer - see CohortWorkspace's own
   // module comment for why that tradeoff is fine for v1: the backend
   // session is untouched either way, only in-progress frontend
-  // landmark/align state resets.
+  // landmark/align state resets - which is exactly why a switch that would
+  // actually lose something gets confirmed first, see handleAppModeChange.
   const [appMode, setAppMode] = useState("patients");
+  // whether the CURRENTLY active workspace has anything loaded worth
+  // confirming before it's thrown away - "patients" reads straight off
+  // sessionId (this file's own state), the other two report it up via
+  // their own onHasDataChange prop (see LongitudinalWorkspace.jsx/
+  // CohortWorkspace.jsx), since their loaded state lives entirely inside
+  // those components, not here.
+  const [longitudinalHasData, setLongitudinalHasData] = useState(false);
+  const [cohortWorkspaceHasData, setCohortWorkspaceHasData] = useState(false);
+  // set while a workspace switch is waiting on the confirm dialog below -
+  // the mode the user actually clicked, not yet committed to appMode.
+  const [pendingAppMode, setPendingAppMode] = useState(null);
+  // meshes staged for Longitudinal from the Preprocessing panel's own
+  // "stage for Longitudinal" control (see handleStageForLongitudinal) -
+  // {sessionId, target, stage: "nicp_result", timepoint, label}. never
+  // auto-cleared - staging again just appends, and switching to
+  // Longitudinal without picking "load staged" leaves the list intact for
+  // next time.
+  const [stagedLongitudinalMeshes, setStagedLongitudinalMeshes] = useState([]);
+  // shown once a switch to "longitudinal" is about to actually commit (see
+  // commitAppModeSwitch) while stagedLongitudinalMeshes isn't empty - see
+  // StagedWorkspaceDialog.jsx.
+  const [showStagedPrompt, setShowStagedPrompt] = useState(false);
+  // whether the NEXT mount of LongitudinalWorkspace should seed its slots
+  // from stagedLongitudinalMeshes - read once, at mount (LongitudinalWorkspace
+  // gets a full remount on every appMode switch, see appMode's own comment),
+  // so this only needs to reflect "what was just chosen", not stay in sync
+  // afterward.
+  const [loadStagedIntoLongitudinal, setLoadStagedIntoLongitudinal] = useState(false);
+
+  function activeWorkspaceHasData() {
+    if (appMode === "patients") return sessionId != null;
+    if (appMode === "longitudinal") return longitudinalHasData;
+    if (appMode === "cohort") return cohortWorkspaceHasData;
+    return false;
+  }
+
+  function handleStageForLongitudinal(timepoint) {
+    setStagedLongitudinalMeshes((prev) => [
+      ...prev,
+      {
+        sessionId,
+        target,
+        stage: "nicp_result",
+        timepoint,
+        label: patientMetadata.patient_id || patientMetadata.file_name || "patient",
+      },
+    ]);
+  }
+
+  // the actual appMode commit, once any data-loss confirmation has already
+  // been cleared (see handleAppModeChange/confirmAppModeSwitch below) -
+  // switching INTO longitudinal with something staged detours through the
+  // staged-workspace prompt (StagedWorkspaceDialog) instead of committing
+  // immediately.
+  function commitAppModeSwitch(nextMode) {
+    if (nextMode === "longitudinal" && stagedLongitudinalMeshes.length > 0) {
+      setShowStagedPrompt(true);
+      return;
+    }
+    setLoadStagedIntoLongitudinal(false);
+    setAppMode(nextMode);
+  }
+
+  // the Shell nav's own onAppModeChange - guards a switch AWAY from a
+  // workspace that still has something loaded behind a confirmation
+  // (see ConfirmDialog below), instead of just silently remounting into a
+  // blank workspace and losing it (see appMode's own comment above for why
+  // that remount happens at all). a re-click of the already-active mode,
+  // or switching while the current one is empty, commits immediately - the
+  // dialog is only for the case that would actually lose something.
+  function handleAppModeChange(nextMode) {
+    if (nextMode === appMode) return;
+    if (activeWorkspaceHasData()) {
+      setPendingAppMode(nextMode);
+      return;
+    }
+    commitAppModeSwitch(nextMode);
+  }
+
+  function confirmAppModeSwitch() {
+    const nextMode = pendingAppMode;
+    setPendingAppMode(null);
+    commitAppModeSwitch(nextMode);
+  }
+
+  function handleLoadStagedWorkspace() {
+    setLoadStagedIntoLongitudinal(true);
+    setShowStagedPrompt(false);
+    setAppMode("longitudinal");
+  }
+
+  function handleLoadCleanWorkspace() {
+    setLoadStagedIntoLongitudinal(false);
+    setShowStagedPrompt(false);
+    setAppMode("longitudinal");
+  }
+
+  function cancelAppModeSwitch() {
+    setPendingAppMode(null);
+  }
 
   const [target, setTarget] = useState("cranium");
   const [useAltFrontal, setUseAltFrontal] = useState(false);
@@ -301,14 +405,21 @@ function App() {
   const [patientMetadata, setPatientMetadata] = useState(BLANK_PATIENT_METADATA);
   const [cohortMode, setCohortMode] = useState("none"); // "none" | "create" | "append"
   const [cohortPath, setCohortPath] = useState(null);
-  // "same patient, new image" - see PatientMetadataForm's freeze toggle.
-  // when on, a fresh upload keeps every field except file_name/file_path
-  // (always overwritten - see PER_IMAGE_METADATA_FIELDS' own comment) and
-  // PER_IMAGE_METADATA_FIELDS (reset blank, since those genuinely need new
-  // input for a new image). stays on across uploads until the user turns
-  // it off - processing a third, fourth, ... image of the same patient in
-  // a row shouldn't need re-toggling each time.
-  const [samePatientMode, setSamePatientMode] = useState(false);
+  // "load from cohort" dropdown (PatientMetadataForm.jsx) - replaces the
+  // old standalone "same patient, new image" checkbox. cohortPatients is
+  // this cohort's own patient list (see api/results_bundle.py's
+  // list_cohort_patients), fetched whenever cohortPath changes/refreshes;
+  // selectedCohortPatientId is which one (if any) is currently picked.
+  // picking one freezes the form exactly like the old checkbox did (see
+  // handleCohortPatientSelect/handleUploaded below) - a fresh upload keeps
+  // every field except file_name/file_path (always overwritten - see
+  // PER_IMAGE_METADATA_FIELDS' own comment) and PER_IMAGE_METADATA_FIELDS
+  // (reset blank, since those genuinely need new input for a new image).
+  // stays selected across uploads until the user picks "new patient" -
+  // processing a third, fourth, ... image of the same patient in a row
+  // shouldn't need reselecting each time.
+  const [cohortPatients, setCohortPatients] = useState([]);
+  const [selectedCohortPatientId, setSelectedCohortPatientId] = useState("");
 
   async function handleUploaded({
     sessionId: newSessionId,
@@ -322,7 +433,7 @@ function App() {
     setWireframe(false);
     setDropStatus("");
     resetPreprocessingState();
-    if (samePatientMode) {
+    if (selectedCohortPatientId) {
       // everything except file_name/file_path carries over unchanged, then
       // the per-image fields reset blank for fresh input - see
       // PER_IMAGE_METADATA_FIELDS.
@@ -400,11 +511,17 @@ function App() {
   // matching native dialog (Save vs Open - see desktop/app.py's
   // pick_excel_file) and only commit to the new mode once a real path comes
   // back, so a cancelled dialog leaves the previous choice in place instead
-  // of silently switching to a mode with no path behind it.
+  // of silently switching to a mode with no path behind it. either way, a
+  // freshly (re)picked cohort also refreshes cohortPatients - a "create"
+  // pick almost always comes back empty (nothing saved into a brand new
+  // file yet), but "append" is picking an EXISTING file specifically to
+  // read prior patients back out of, so it has to actually fetch.
   async function handleCohortModeChange(mode) {
     if (mode === "none") {
       setCohortMode("none");
       setCohortPath(null);
+      setCohortPatients([]);
+      setSelectedCohortPatientId("");
       return;
     }
     const path = await pickExcelFileNative(mode === "create", (msg) =>
@@ -413,7 +530,36 @@ function App() {
     if (path) {
       setCohortMode(mode);
       setCohortPath(path);
+      setSelectedCohortPatientId("");
+      try {
+        setCohortPatients(await listCohortPatients(path));
+      } catch {
+        setCohortPatients([]);
+      }
     }
+  }
+
+  // picking a patient_id from PatientMetadataForm's "load from cohort"
+  // dropdown - freezes the form onto that patient's own details, read back
+  // from this cohort (see api/results_bundle.py's list_cohort_patients),
+  // the same way the old "same patient, new image" checkbox froze onto
+  // whatever was already typed in. "" (the "new patient" option) just
+  // un-freezes without touching any field, same as unchecking that old
+  // checkbox did.
+  function handleCohortPatientSelect(patientId) {
+    setSelectedCohortPatientId(patientId);
+    if (!patientId) return;
+    const picked = cohortPatients.find((p) => p.patient_id === patientId);
+    if (!picked) return;
+    setPatientMetadata((prev) => ({
+      ...prev,
+      patient_id: picked.patient_id,
+      date_of_birth: picked.date_of_birth,
+      diagnosis: picked.diagnosis,
+      sex: picked.sex,
+      treatment: picked.treatment,
+      date_of_intervention: picked.date_of_intervention,
+    }));
   }
 
   function resetPreprocessingState() {
@@ -1285,6 +1431,13 @@ function App() {
         setLastSavedAnalysisFolder(savedTo);
         if (targetCohortPath) {
           setExportCohortStatus(`added to cohort ${baseName(targetCohortPath)}: ${targetCohortPath}`);
+          // picks up the patient just saved (new or updated) so the "load
+          // from cohort" dropdown can offer them back immediately, without
+          // needing the cohort file to be re-picked - keeps the previous
+          // list on a transient read failure rather than blanking it.
+          listCohortPatients(targetCohortPath)
+            .then(setCohortPatients)
+            .catch(() => {});
         }
         setExportingAnalysis(false);
         return;
@@ -1333,34 +1486,78 @@ function App() {
 
   if (appMode === "cohort") {
     return (
-      <Shell
-        appMode={appMode}
-        onAppModeChange={setAppMode}
-        workspaces={[]}
-        workspace={<CohortWorkspace />}
-        inspectorTitle={null}
-        inspector={null}
-      />
+      <>
+        <Shell
+          appMode={appMode}
+          onAppModeChange={handleAppModeChange}
+          workspaces={[]}
+          workspace={<CohortWorkspace onHasDataChange={setCohortWorkspaceHasData} />}
+          inspectorTitle={null}
+          inspector={null}
+        />
+        {pendingAppMode && (
+          <ConfirmDialog
+            title="Switch workspace?"
+            message="Switching workspaces clears the current workspace. Are you sure?"
+            confirmLabel="Switch anyway"
+            cancelLabel="Stay here"
+            onConfirm={confirmAppModeSwitch}
+            onCancel={cancelAppModeSwitch}
+          />
+        )}
+        {showStagedPrompt && (
+          <StagedWorkspaceDialog
+            count={stagedLongitudinalMeshes.length}
+            onLoadStaged={handleLoadStagedWorkspace}
+            onLoadClean={handleLoadCleanWorkspace}
+          />
+        )}
+      </>
     );
   }
 
   if (appMode === "longitudinal") {
     return (
-      <Shell
-        appMode={appMode}
-        onAppModeChange={setAppMode}
-        workspaces={[]}
-        workspace={<LongitudinalWorkspace />}
-        inspectorTitle={null}
-        inspector={null}
-      />
+      <>
+        <Shell
+          appMode={appMode}
+          onAppModeChange={handleAppModeChange}
+          workspaces={[]}
+          workspace={
+            <LongitudinalWorkspace
+              onHasDataChange={setLongitudinalHasData}
+              initialStagedMeshes={loadStagedIntoLongitudinal ? stagedLongitudinalMeshes : []}
+            />
+          }
+          inspectorTitle={null}
+          inspector={null}
+        />
+        {pendingAppMode && (
+          <ConfirmDialog
+            title="Switch workspace?"
+            message="Switching workspaces clears the current workspace. Are you sure?"
+            confirmLabel="Switch anyway"
+            cancelLabel="Stay here"
+            onConfirm={confirmAppModeSwitch}
+            onCancel={cancelAppModeSwitch}
+          />
+        )}
+        {showStagedPrompt && (
+          <StagedWorkspaceDialog
+            count={stagedLongitudinalMeshes.length}
+            onLoadStaged={handleLoadStagedWorkspace}
+            onLoadClean={handleLoadCleanWorkspace}
+          />
+        )}
+      </>
     );
   }
 
   return (
+    <>
     <Shell
       appMode={appMode}
-      onAppModeChange={setAppMode}
+      onAppModeChange={handleAppModeChange}
       contextLabel={meshLabel}
       workspaces={WORKSPACES}
       activeWorkspace={activeWorkspace}
@@ -1375,8 +1572,9 @@ function App() {
             cohortMode={cohortMode}
             cohortPath={cohortPath}
             onCohortModeChange={handleCohortModeChange}
-            samePatientMode={samePatientMode}
-            onSamePatientModeChange={setSamePatientMode}
+            cohortPatients={cohortPatients}
+            selectedCohortPatientId={selectedCohortPatientId}
+            onCohortPatientSelect={handleCohortPatientSelect}
           />
         )
       }
@@ -1431,6 +1629,7 @@ function App() {
             nicpResultReady={nicpResultReady}
             useNicpMesh={showingNicpResult}
             onUseNicpMeshChange={handleUseNicpMeshChange}
+            onStageForLongitudinal={handleStageForLongitudinal}
             onSaveMeshes={handleSaveMeshes}
             savingMeshes={savingMeshes}
             saveMeshesStatus={saveMeshesStatus}
@@ -1536,6 +1735,24 @@ function App() {
         </>
       }
     />
+    {pendingAppMode && (
+      <ConfirmDialog
+        title="Switch workspace?"
+        message="Switching workspaces clears the current workspace. Are you sure?"
+        confirmLabel="Switch anyway"
+        cancelLabel="Stay here"
+        onConfirm={confirmAppModeSwitch}
+        onCancel={cancelAppModeSwitch}
+      />
+    )}
+    {showStagedPrompt && (
+      <StagedWorkspaceDialog
+        count={stagedLongitudinalMeshes.length}
+        onLoadStaged={handleLoadStagedWorkspace}
+        onLoadClean={handleLoadCleanWorkspace}
+      />
+    )}
+    </>
   );
 }
 

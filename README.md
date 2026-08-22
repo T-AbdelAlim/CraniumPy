@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="resources/CraniumPy_logo.png" alt="CraniumPy logo" width="220">
+</p>
+
 # CranioSuite (built on CraniumPy)
 
 
