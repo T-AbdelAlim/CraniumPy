@@ -104,6 +104,21 @@ def test_unknown_session_returns_404(client):
     assert response.status_code == 404
 
 
+def test_close_session_releases_it(client):
+    session_id = _upload(client)
+    assert client.get(f"/api/sessions/{session_id}/status").status_code == 200
+
+    response = client.delete(f"/api/sessions/{session_id}")
+    assert response.status_code == 204
+
+    assert client.get(f"/api/sessions/{session_id}/status").status_code == 404
+
+
+def test_close_session_unknown_id_is_a_no_op(client):
+    response = client.delete("/api/sessions/does-not-exist")
+    assert response.status_code == 204
+
+
 def test_list_templates(client):
     response = client.get("/api/templates")
     assert response.status_code == 200
@@ -1113,10 +1128,11 @@ def test_save_analysis_cohort_xlsx_create_append_and_replace(client, landmarks_p
     assert rows[0]["sex"] == "male"
     # the shared cohort file gets a cohort_id instead of every
     # patient-identifying field (patient_id, file_name/file_path,
-    # date_of_birth/date_of_intervention) - none of them ever appear in
-    # it, see the id-mapping assertions below for where they do end up
+    # date_of_birth/date_of_intervention, nicp_mesh_path) - none of them
+    # ever appear in it, see the id-mapping assertions below for where
+    # they do end up
     assert rows[0]["cohort_id"] == "C00001"
-    for key in ("patient_id", "file_name", "file_path", "date_of_birth", "date_of_intervention"):
+    for key in ("patient_id", "file_name", "file_path", "date_of_birth", "date_of_intervention", "nicp_mesh_path"):
         assert key not in rows[0]
 
     mapping_rows = _read_xlsx_rows(_id_mapping_path(cohort_path).read_bytes())
@@ -1148,8 +1164,11 @@ def test_save_analysis_cohort_xlsx_create_append_and_replace(client, landmarks_p
 
 def test_save_analysis_cohort_xlsx_records_nicp_mesh_path(client, landmarks_payload, tmp_path):
     # the cohort workspace's mean-shape feature has to be able to find each
-    # patient's NICP-fitted mesh from the cohort spreadsheet alone - this is
-    # the column that makes that possible (see results_bundle._nicp_mesh_path).
+    # patient's NICP-fitted mesh - nicp_mesh_path is an absolute on-disk
+    # path, so (like file_name/file_path) it's kept out of the shared
+    # cohort file and lives only in the id-mapping companion file instead,
+    # positioned right after file_path (see results_bundle._nicp_mesh_path,
+    # _upsert_cohort_xlsx).
     import shutil
 
     tmp_mesh = tmp_path / "patient.ply"
@@ -1183,9 +1202,17 @@ def test_save_analysis_cohort_xlsx_records_nicp_mesh_path(client, landmarks_payl
 
     rows = _read_xlsx_rows(cohort_path.read_bytes())
     assert len(rows) == 1
-    nicp_path = Path(rows[0]["nicp_mesh_path"])
+    assert "nicp_mesh_path" not in rows[0]
+
+    mapping_bytes = _id_mapping_path(cohort_path).read_bytes()
+    mapping_rows = _read_xlsx_rows(mapping_bytes)
+    assert len(mapping_rows) == 1
+    nicp_path = Path(mapping_rows[0]["nicp_mesh_path"])
     assert nicp_path.is_file()
     assert nicp_path.name.endswith("N.ply")
+
+    mapping_header = [str(c.value) for c in next(load_workbook(BytesIO(mapping_bytes)).active.iter_rows(min_row=1, max_row=1))]
+    assert mapping_header.index("nicp_mesh_path") == mapping_header.index("file_path") + 1
 
 
 def test_save_analysis_cohort_xlsx_nicp_mesh_path_blank_without_a_fit(client, landmarks_payload, tmp_path):
@@ -1204,7 +1231,9 @@ def test_save_analysis_cohort_xlsx_nicp_mesh_path_blank_without_a_fit(client, la
     )
     assert save_response.status_code == 200, save_response.text
     rows = _read_xlsx_rows(cohort_path.read_bytes())
-    assert rows[0]["nicp_mesh_path"] == ""
+    assert "nicp_mesh_path" not in rows[0]
+    mapping_rows = _read_xlsx_rows(_id_mapping_path(cohort_path).read_bytes())
+    assert mapping_rows[0]["nicp_mesh_path"] == ""
 
 
 # --- /api/cohort/* -------------------------------------------------------
@@ -1238,6 +1267,39 @@ def test_cohort_load_reads_a_real_path(client, tmp_path):
 def test_cohort_load_missing_file_is_a_400(client, tmp_path):
     response = client.post("/api/cohort/load", json={"path": str(tmp_path / "does_not_exist.xlsx")})
     assert response.status_code == 400
+
+
+def test_cohort_load_joins_nicp_mesh_path_from_id_mapping_file(client, tmp_path):
+    # nicp_mesh_path isn't a column in the shared cohort file itself (see
+    # results_bundle._upsert_cohort_xlsx) - /load has to join it back in
+    # from the sibling id-mapping file, keyed by cohort_id, so the Mean
+    # Shape workspace can keep reading row["nicp_mesh_path"] unchanged.
+    cohort_path = tmp_path / "cohort.xlsx"
+    _write_cohort_xlsx(cohort_path, ["cohort_id", "diagnosis"], [["C00001", "metopic"]])
+    _write_cohort_xlsx(
+        _id_mapping_path(cohort_path),
+        ["cohort_id", "patient_id", "file_name", "file_path", "nicp_mesh_path"],
+        [["C00001", "P001", "patient.ply", "/mesh/patient.ply", "/mesh/patient_rg_CN.ply"]],
+    )
+
+    response = client.post("/api/cohort/load", json={"path": str(cohort_path)})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert "nicp_mesh_path" in body["columns"]
+    assert body["rows"][0]["nicp_mesh_path"] == "/mesh/patient_rg_CN.ply"
+
+
+def test_cohort_load_without_id_mapping_file_has_no_nicp_mesh_path_column(client, tmp_path):
+    cohort_path = tmp_path / "cohort.xlsx"
+    _write_cohort_xlsx(cohort_path, ["patient_id", "diagnosis"], [["P001", "metopic"]])
+
+    response = client.post("/api/cohort/load", json={"path": str(cohort_path)})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["columns"] == ["patient_id", "diagnosis"]
+    assert "nicp_mesh_path" not in body["rows"][0]
 
 
 def test_cohort_demo_returns_the_shipped_demo_cohort(client):

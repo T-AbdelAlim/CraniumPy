@@ -185,6 +185,12 @@ class Session:
     # by then), harmless to leave around until the next run_job clears it.
     nicp_preview_mesh: trimesh.Trimesh | None = None
     _future: Future | None = field(default=None, repr=False)
+    # guards run_job's own check-and-set below - FastAPI runs sync routes on
+    # a thread pool, so two near-simultaneous requests against the same
+    # session (a double-click, a flaky retry) could otherwise both observe
+    # job_status == "idle" before either flips it to "running" and both get
+    # submitted, concurrently mutating this same Session's fields.
+    _job_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def clear_clip_result(self) -> None:
         """reverts everything from the clip stage onward - used by both a
@@ -266,13 +272,14 @@ class SessionStore:
             self._sessions.pop(session_id, None)
 
     def run_job(self, session: Session, fn: Callable[[], dict[str, Any]]) -> None:
-        if session.job_status == "running":
-            raise RuntimeError("a job is already running for this session")
-        session.job_status = "running"
-        session.job_error = None
-        session.result = None
-        session.nicp_preview_mesh = None
-        session.report_progress("starting", "")
+        with session._job_lock:
+            if session.job_status == "running":
+                raise RuntimeError("a job is already running for this session")
+            session.job_status = "running"
+            session.job_error = None
+            session.result = None
+            session.nicp_preview_mesh = None
+            session.report_progress("starting", "")
 
         def _wrapped() -> None:
             try:

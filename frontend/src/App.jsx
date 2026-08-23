@@ -29,7 +29,7 @@ import {
   nicpPreviewMeshUrl,
   nicpResultMeshUrl,
   saveMeshes,
-  meshesBundleUrl,
+  closeSession,
   getResults,
   measureRegistered,
   saveAnalysis,
@@ -303,6 +303,7 @@ function App() {
       setLoadSnapshotIntoMeanShape(false);
     }
     if (mode === "patients") {
+      closeSession(sessionId);
       setSessionId(null);
       setPatientMetadata(BLANK_PATIENT_METADATA);
       resetPreprocessingState();
@@ -512,6 +513,7 @@ function App() {
     filePath: newFilePath,
     selectionHasTexture: newSelectionHasTexture,
   }) {
+    closeSession(sessionId); // release whatever session this one is replacing
     setSessionId(newSessionId);
     setMeshLabel(newMeshLabel);
     setSelectionHasTexture(newSelectionHasTexture);
@@ -533,12 +535,19 @@ function App() {
       // retype, so every field resets, not just the identity ones.
       setPatientMetadata({ ...BLANK_PATIENT_METADATA, file_name: newMeshLabel || "", file_path: newFilePath || "" });
     }
-    const { hasTexture: loadedHasTexture } = await viewerRef.current.displayMesh(meshUrl(newSessionId), {
-      selectionHasTexture: newSelectionHasTexture,
-    });
-    displayedMeshKeyRef.current = meshDisplayKey(newSessionId, target, "original");
-    setHasTexture(loadedHasTexture);
-    setTextureEnabled(loadedHasTexture);
+    // viewerRef.current can be null if the user switched away from the
+    // Patients workspace while the upload request itself was still in
+    // flight (unmounting Viewer) - the session still opened successfully,
+    // so state below still applies; redisplayCurrentPatientMesh picks the
+    // mesh back up once the user returns to this workspace.
+    if (viewerRef.current) {
+      const { hasTexture: loadedHasTexture } = await viewerRef.current.displayMesh(meshUrl(newSessionId), {
+        selectionHasTexture: newSelectionHasTexture,
+      });
+      displayedMeshKeyRef.current = meshDisplayKey(newSessionId, target, "original");
+      setHasTexture(loadedHasTexture);
+      setTextureEnabled(loadedHasTexture);
+    }
     setMeshRevision((n) => n + 1);
     // jump straight to the region-of-interest picker (Preprocessing's own
     // first control) instead of leaving the user on the Data tab having to
@@ -858,6 +867,7 @@ function App() {
         setTemplateOffset(null);
         return;
       }
+      if (!viewerRef.current) return; // switched away from Patients mid-load
       const offset = await viewerRef.current.showTemplateOverlay(url);
       setTemplateOffset(offset);
       setTemplateStatus(offset ? "" : "Upload a mesh first.");
@@ -1088,7 +1098,7 @@ function App() {
           // skip the fetch/GLTF-parse/camera-refit entirely when what's
           // already on screen is already exactly this - e.g. toggling back
           // and forth without touching anything else in between.
-          if (displayedMeshKeyRef.current !== neededKey) {
+          if (displayedMeshKeyRef.current !== neededKey && viewerRef.current) {
             await viewerRef.current.displayMesh(
               incomingSnapshot.showingNicpResult ? nicpResultMeshUrl(sessionId) : meshUrl(sessionId, incomingSnapshot.meshStage),
               { selectionHasTexture: incomingSnapshot.showingNicpResult ? false : selectionHasTexture },
@@ -1119,7 +1129,7 @@ function App() {
     // the toggle" case before picking landmarks), this is a no-op: same
     // mesh already showing.
     const neededKey = meshDisplayKey(sessionId, newTarget, "original");
-    if (displayedMeshKeyRef.current !== neededKey) {
+    if (displayedMeshKeyRef.current !== neededKey && viewerRef.current) {
       await viewerRef.current.displayMesh(meshUrl(sessionId, "original"), { selectionHasTexture });
       displayedMeshKeyRef.current = neededKey;
     }
@@ -1147,8 +1157,10 @@ function App() {
 
   async function handleReset() {
     resetPreprocessingState();
-    await viewerRef.current.displayMesh(meshUrl(sessionId, "original"), { selectionHasTexture });
-    displayedMeshKeyRef.current = meshDisplayKey(sessionId, target, "original");
+    if (viewerRef.current) {
+      await viewerRef.current.displayMesh(meshUrl(sessionId, "original"), { selectionHasTexture });
+      displayedMeshKeyRef.current = meshDisplayKey(sessionId, target, "original");
+    }
     setMeshRevision((n) => n + 1);
   }
 
@@ -1193,8 +1205,16 @@ function App() {
         else if (stage !== "done") setAlignStatus(describeStage(stage, detail));
       });
       if (result.status === "done") {
-        await viewerRef.current.displayMesh(meshUrl(sessionId, "registered"), { selectionHasTexture });
-        displayedMeshKeyRef.current = meshDisplayKey(sessionId, alignTarget, "registered");
+        // viewerRef.current can be null here - the user switched away from
+        // the Patients workspace (unmounting Viewer) while this poll was
+        // still in flight. the backend job still succeeded, so every state
+        // update below still applies regardless; only the live display
+        // update is skippable, and redisplayCurrentPatientMesh picks the
+        // right mesh stage back up once the user returns to this workspace.
+        if (viewerRef.current) {
+          await viewerRef.current.displayMesh(meshUrl(sessionId, "registered"), { selectionHasTexture });
+          displayedMeshKeyRef.current = meshDisplayKey(sessionId, alignTarget, "registered");
+        }
         setMeshRevision((n) => n + 1);
         const transform = await getRegisteredTransform(sessionId);
         setRegisteredTransform(transform);
@@ -1266,8 +1286,11 @@ function App() {
         // fully-preprocessed mesh to compare against - the user has to
         // opt back out, not in, every time.
         setShowTemplateOverlay(true);
-        await viewerRef.current.displayMesh(meshUrl(sessionId, "result"), { selectionHasTexture });
-        displayedMeshKeyRef.current = meshDisplayKey(sessionId, target, "result");
+        // same possibly-unmounted-Viewer race as handleAlign above.
+        if (viewerRef.current) {
+          await viewerRef.current.displayMesh(meshUrl(sessionId, "result"), { selectionHasTexture });
+          displayedMeshKeyRef.current = meshDisplayKey(sessionId, target, "result");
+        }
         setShowingNicpResult(false);
         setMeshRevision((n) => n + 1);
         setRunProgress(100);
@@ -1358,8 +1381,11 @@ function App() {
         // Viewer.jsx's displayMesh), so the finally block's own
         // hideNicpPreview call below becomes a harmless no-op for the
         // success path, same as it always was for the failure path.
-        await viewerRef.current.displayMesh(nicpResultMeshUrl(sessionId), { selectionHasTexture: false });
-        displayedMeshKeyRef.current = meshDisplayKey(sessionId, target, "nicp-result");
+        // same possibly-unmounted-Viewer race as handleAlign above.
+        if (viewerRef.current) {
+          await viewerRef.current.displayMesh(nicpResultMeshUrl(sessionId), { selectionHasTexture: false });
+          displayedMeshKeyRef.current = meshDisplayKey(sessionId, target, "nicp-result");
+        }
         setShowingNicpResult(true);
         setNicpResultReady(true);
         // land on just the fitted mesh, not a template comparison drawn on
@@ -1405,7 +1431,7 @@ function App() {
     setShowingNicpResult(checked);
     const descriptor = checked ? "nicp-result" : "result";
     const neededKey = meshDisplayKey(sessionId, target, descriptor);
-    if (displayedMeshKeyRef.current !== neededKey) {
+    if (displayedMeshKeyRef.current !== neededKey && viewerRef.current) {
       await viewerRef.current.displayMesh(
         checked ? nicpResultMeshUrl(sessionId) : meshUrl(sessionId, "result"),
         { selectionHasTexture: checked ? false : selectionHasTexture },
@@ -1471,6 +1497,7 @@ function App() {
   // with no re-fetch needed.
   useEffect(() => {
     if (!analysisResults) return;
+    let cancelled = false;
     (async () => {
       // mirrors AnalysisPanel.jsx's own showMeasurements/showAsymmetry/
       // showMetopic derivation exactly, so the live 3D overlay always
@@ -1506,6 +1533,7 @@ function App() {
           wantNicpMesh ? nicpResultMeshUrl(sessionId) : meshUrl(sessionId, "result"),
           { selectionHasTexture: wantNicpMesh ? false : selectionHasTexture },
         );
+        if (cancelled) return;
         displayedMeshKeyRef.current = neededKey;
       }
 
@@ -1539,6 +1567,9 @@ function App() {
       // opacity - apply the user's actual slider value on top of that.
       viewerRef.current?.setMeshOpacity(analysisMeshOpacity);
     })();
+    return () => {
+      cancelled = true;
+    };
     // deliberately not deps of this effect (see handleAnalysisMeshOpacityChange
     // for the opacity one): dragging the opacity slider shouldn't rebuild the
     // whole overlay. showingNicpResult/sessionId/selectionHasTexture are
@@ -1555,8 +1586,11 @@ function App() {
     viewerRef.current?.setMeshOpacity(value);
   }
 
-  // same desktop-first-then-bundle-download fallback as handleSaveMeshes.
-  // patientMetadata rides along either way (POST body or GET query params -
+  // desktop-first-then-bundle-download fallback (unlike autoSaveMeshes,
+  // which just no-ops on a 400 - see its own comment for why an explicit
+  // export click is the case where falling back to a forced browser
+  // download actually makes sense). patientMetadata rides along either way
+  // (POST body or GET query params -
   // see api/sessions.js's saveAnalysis/analysisBundleUrl); cohortPath only
   // on the desktop/POST path, since a one-shot zip download has nowhere
   // persistent to append a cohort row into.

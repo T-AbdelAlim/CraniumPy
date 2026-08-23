@@ -30,6 +30,19 @@ export function meshUrl(sessionId, stage = "original") {
   return `/api/sessions/${sessionId}/mesh/${stage}`;
 }
 
+// releases a session's server-side meshes once the frontend is done
+// referencing it (a fresh upload replacing the current one, or leaving the
+// Patients workspace) - see api/routers/mesh.py's close_session for why
+// this matters (otherwise every opened patient's meshes stay resident for
+// the rest of the process's life). fire-and-forget by design: the session
+// is already gone from frontend state by the time this is called, so
+// there's nothing useful to do with a failure here beyond not letting it
+// surface as an unrelated-looking error.
+export function closeSession(sessionId) {
+  if (!sessionId) return;
+  fetch(`/api/sessions/${sessionId}`, { method: "DELETE" }).catch(() => {});
+}
+
 export async function fetchShippedTemplates() {
   const response = await fetch("/api/templates");
   if (!response.ok) throw new Error(await response.text());
@@ -141,9 +154,9 @@ export async function startRun(sessionId, { nVertices, nicp }) {
 // desktop: writes just the two mesh files (_rg.ply / _rg_{C|F}.ply) next
 // to the original mesh file, or into destDir if given (the "change save
 // folder..." override - see api/schemas.py's SaveRequest). thrown errors
-// carry a .status so a caller can tell "no real source path, fall back to
-// meshesBundleUrl" (400) apart from a real failure worth surfacing, same
-// as legacy's save-results button did.
+// carry a .status so a caller can tell "no real source path" (400, e.g. a
+// plain browser session with nothing to write next to) apart from a real
+// failure worth surfacing - see autoSaveMeshes in App.jsx, its only caller.
 export async function saveMeshes(sessionId, destDir) {
   const response = await fetch(`/api/sessions/${sessionId}/save/meshes`, {
     method: "POST",

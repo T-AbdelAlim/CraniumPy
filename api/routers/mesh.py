@@ -275,6 +275,22 @@ def open_mesh_from_paths(request: OpenFromPathsRequest) -> UploadResponse:
     return UploadResponse(session_id=session.id, vertex_count=len(mesh.vertices), face_count=len(mesh.faces))
 
 
+@router.delete("/{session_id}", status_code=204)
+def close_session(session_id: str) -> Response:
+    """releases a session's meshes (Session holds a full-resolution
+    trimesh per align/clip/run stage, plus a snapshot copy per target
+    switched to - real memory on a mesh-sized session). the frontend calls
+    this whenever it's about to stop referencing a session_id - a fresh
+    upload replacing the current one (App.jsx's handleUploaded), or
+    "start over"/leaving the Patients workspace (handleRestoreClean) -
+    otherwise nothing ever calls SessionStore.delete and every opened
+    patient's meshes stay resident for the rest of the process's life.
+    a missing/already-closed id is a no-op, not an error - the frontend
+    doesn't need to track whether it already asked once."""
+    store.delete(session_id)
+    return Response(status_code=204)
+
+
 @router.post("/{session_id}/align", response_model=StatusResponse)
 def start_align(session_id: str, request: AlignRequest) -> StatusResponse:
     """pure rigid registration - landmark-triangle alignment only. no
@@ -1143,8 +1159,12 @@ def save_meshes_to_source_folder(session_id: str, save_request: SaveRequest = Sa
     CP_{stem}_{C|F}_{3|4}[_CoM]/ folder inside the destination folder - the
     lighter-weight save that only needs a completed /run, not a full
     craniometrics/asymmetry pass (see /save for "everything, including the
-    analysis report"). desktop-only, same as /save - the frontend falls
-    back to /bundle/meshes when this 400s."""
+    analysis report"). desktop-only, same as /save - the frontend's own
+    caller (App.jsx's autoSaveMeshes) just no-ops on a 400 rather than
+    falling back to /bundle/meshes, since it's auto-triggered after every
+    Align and a forced browser download on every one would be a surprising
+    side effect; /bundle/meshes stays available as a plain zip download for
+    any caller that does want just the mesh files in browser mode."""
     session = _get_session(session_id)
     dest_dir = _resolve_dest_dir(session, save_request)
     clip_request = _require_completed_run(session)

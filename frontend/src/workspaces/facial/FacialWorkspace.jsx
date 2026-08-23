@@ -46,6 +46,12 @@ export default function FacialWorkspace({ onSnapshotChange, initialSnapshot }) {
   const [measurementRenderPaths, setMeasurementRenderPaths] = useState({});
   const [measurementRenderFaces, setMeasurementRenderFaces] = useState({});
   const [pendingMeasurement, setPendingMeasurement] = useState(null); // {type, pointIds} | null
+  // live boundary/fill preview for an in-progress Area measurement, once
+  // it has enough points to close a loop - same renderPath/renderFaces
+  // shape a confirmed measurement gets, just not yet keyed by a real
+  // measurement id (see handlePick, the define-phase segments effect below).
+  const [pendingRenderPath, setPendingRenderPath] = useState(null);
+  const [pendingRenderFaces, setPendingRenderFaces] = useState(null);
   const [activeTab, setActiveTab] = useState(initialSnapshot?.activeTab ?? "define");
   const [batchId, setBatchId] = useState(initialSnapshot?.batchId ?? null);
   const [batchResults, setBatchResults] = useState(initialSnapshot?.batchResults ?? []);
@@ -55,6 +61,7 @@ export default function FacialWorkspace({ onSnapshotChange, initialSnapshot }) {
   const defineViewerRef = useRef(null);
   const batchViewerRef = useRef(null);
   const dragTokenRef = useRef(0);
+  const areaPreviewTokenRef = useRef(0);
   // synchronous, monotonically-increasing seed for new point ids (see
   // lib/points.js's maxPointIndex for why this exists and why it's seeded
   // by max index rather than count) - incremented in handlePick BEFORE the
@@ -151,10 +158,36 @@ export default function FacialWorkspace({ onSnapshotChange, initialSnapshot }) {
     const id = `p${nextPointIndexRef.current++}`;
     try {
       const { point: snapped } = await pickFacialPoint(templateId, rawPoint);
-      setPoints((prev) => ({ ...prev, [id]: snapped }));
-      setPendingMeasurement((prev) => (prev ? { ...prev, pointIds: [...prev.pointIds, id] } : prev));
+      const nextPoints = { ...points, [id]: snapped };
+      const nextPointIds = [...pendingMeasurement.pointIds, id];
+      setPoints(nextPoints);
+      setPendingMeasurement((prev) => (prev ? { ...prev, pointIds: nextPointIds } : prev));
+      if (pendingMeasurement.type === "area" && nextPointIds.length >= 3) {
+        await previewPendingArea(nextPoints, nextPointIds);
+      }
     } catch (err) {
       setTemplateStatus(`pick failed: ${err.message}`);
+    }
+  }
+
+  // live boundary/fill for an Area measurement still being composed - once
+  // 3+ points exist there's a real loop to close, so this fires the same
+  // preview a confirmed measurement's own renderPath/renderFaces come
+  // from, keyed under a throwaway id since there's no real measurement yet
+  // (see pendingRenderPath/pendingRenderFaces above). token-guarded like
+  // handleDrag - a fast run of picks can fire several of these before the
+  // first resolves.
+  async function previewPendingArea(nextPoints, nextPointIds) {
+    const token = ++areaPreviewTokenRef.current;
+    const def = { id: "pending", name: "pending", abbreviation: "pending", type: "area", pointIds: nextPointIds, geodesic: false };
+    try {
+      const { renderPaths, renderFaces } = await previewFacialMeasurements(templateId, nextPoints, [def]);
+      if (token !== areaPreviewTokenRef.current) return;
+      setPendingRenderPath(renderPaths[def.id] ?? null);
+      setPendingRenderFaces(renderFaces[def.id] ?? null);
+    } catch {
+      // best-effort live preview only - a still-open/degenerate boundary
+      // just means no fill shows yet, not a fatal error for point placement
     }
   }
 
@@ -183,6 +216,8 @@ export default function FacialWorkspace({ onSnapshotChange, initialSnapshot }) {
 
   function handleStartType(type) {
     setPendingMeasurement({ type, pointIds: [] });
+    setPendingRenderPath(null);
+    setPendingRenderFaces(null);
   }
 
   function handleCancelPending() {
@@ -195,6 +230,8 @@ export default function FacialWorkspace({ onSnapshotChange, initialSnapshot }) {
       });
     }
     setPendingMeasurement(null);
+    setPendingRenderPath(null);
+    setPendingRenderFaces(null);
   }
 
   async function handleConfirmMeasurement({ name, abbreviation, geodesic }) {
@@ -210,6 +247,8 @@ export default function FacialWorkspace({ onSnapshotChange, initialSnapshot }) {
     };
     setMeasurements((prev) => [...prev, def]);
     setPendingMeasurement(null);
+    setPendingRenderPath(null);
+    setPendingRenderFaces(null);
     try {
       const { values, valueErrors, renderPaths, renderFaces } = await previewFacialMeasurements(templateId, points, [def]);
       setMeasurementValues((prev) => ({ ...prev, ...values }));
@@ -277,12 +316,12 @@ export default function FacialWorkspace({ onSnapshotChange, initialSnapshot }) {
         type: m.type,
         color: colorToThreeHex(m.color),
         rawPoints: m.pointIds.map((pid) => points[pid]).filter(Boolean),
-        renderPath: measurementRenderPaths[m.id],
-        renderFaces: measurementRenderFaces[m.id],
+        renderPath: m.id === null ? pendingRenderPath : measurementRenderPaths[m.id],
+        renderFaces: m.id === null ? pendingRenderFaces : measurementRenderFaces[m.id],
       }))
       .filter((seg) => seg.rawPoints.length >= 2);
     defineViewerRef.current.showFacialMeasurementLines(segments);
-  }, [measurements, points, pendingMeasurement, measurementRenderPaths, measurementRenderFaces]);
+  }, [measurements, points, pendingMeasurement, measurementRenderPaths, measurementRenderFaces, pendingRenderPath, pendingRenderFaces]);
 
   // batch-review connecting lines - same reasoning, driven by the active
   // file's own already-fetched landmark points.

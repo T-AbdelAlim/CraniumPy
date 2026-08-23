@@ -1,14 +1,18 @@
 import * as THREE from "three";
 
 // Facial Anthropometrics workspace's own measurement overlay: a connecting
-// line that hugs the mesh surface (Linear/Angular), a small arc marking
-// which angle is measured (Angular), and a translucent patch of the actual
-// enclosed mesh surface (Area) - see api/routers/facial.py's
-// _render_geometry for where render_paths/render_faces come from (a real
-// geodesic trace/enclosed-face set, computed server-side, not approximated
-// here). a straight rawPoints fallback only ever applies when the server
-// couldn't trace a path (a disconnected mesh) or for a measurement still
-// being defined (no round trip yet) - see FacialWorkspace.jsx.
+// line - a smoothed surface trace for a geodesic Linear measurement or an
+// Area boundary, a plain straight segment for everything else (straight
+// Linear, Angular's legs) - a small arc marking which angle is measured
+// (Angular), and a translucent patch of the actual enclosed mesh surface
+// (Area). see api/routers/facial.py's _render_geometry for where
+// render_paths/render_faces come from (server-computed, not approximated
+// here) and for which measurement types actually get one - a straight
+// rawPoints line is drawn whenever there's no render_path at all, which is
+// the CORRECT rendering for straight Linear/Angular (matching what's
+// literally being measured), not just a fallback for when the server
+// couldn't trace one (a disconnected mesh) or a measurement still being
+// defined (no round trip yet) - see FacialWorkspace.jsx.
 
 const AREA_FILL_OPACITY = 0.32;
 const ANGLE_ARC_SEGMENTS = 24;
@@ -19,10 +23,35 @@ function toVector3(p) {
   return new THREE.Vector3(p.x, p.y, p.z);
 }
 
-function addLine(group, points, color, closed) {
+// how many sampled points per input vertex the smoothed curve gets -
+// generous enough that the curve reads as genuinely smooth rather than a
+// slightly-softened zigzag, without generating a huge geometry for what's
+// still just a thin line.
+const SMOOTH_SAMPLES_PER_POINT = 6;
+const SMOOTH_SAMPLES_MIN = 24;
+
+// smooth=true draws a Catmull-Rom spline THROUGH the given points instead
+// of straight segments between them - only meaningful (and only ever
+// passed) for a real server-traced geodesic path (see this file's own
+// addFacialMeasurementLines), whose raw vertex-to-vertex route can zigzag
+// sharply since "shortest path along the mesh's edge graph" has no reason
+// to also be the visually smoothest route across the surface - a Dijkstra
+// shortest path hops between whichever adjacent vertices are cheapest,
+// same as any other shortest-path-over-a-graph result. splining through
+// those exact points keeps the curve anchored to the real traced route
+// while reading as smooth as the surface itself, matching every other
+// straight (non-traced) connector's own clean look. never applied to a
+// plain 2-point straight fallback - nothing to smooth there.
+function addLine(group, points, color, closed, smooth = false) {
   if (points.length < 2) return;
-  const vectors = points.map(toVector3);
-  if (closed) vectors.push(vectors[0].clone());
+  let vectors = points.map(toVector3);
+  if (smooth && vectors.length >= 3) {
+    const curve = new THREE.CatmullRomCurve3(vectors, closed, "catmullrom", 0.5);
+    const samples = Math.max(SMOOTH_SAMPLES_MIN, vectors.length * SMOOTH_SAMPLES_PER_POINT);
+    vectors = curve.getPoints(samples);
+  } else if (closed) {
+    vectors.push(vectors[0].clone());
+  }
   const geometry = new THREE.BufferGeometry().setFromPoints(vectors);
   const material = new THREE.LineBasicMaterial({ color, depthTest: false, transparent: true });
   const line = new THREE.Line(geometry, material);
@@ -123,15 +152,23 @@ export function addFacialMeasurementLines(sceneBag, segments) {
     const { type, color, rawPoints, renderPath, renderFaces } = segment;
     if (type === "area") {
       // a server-traced boundary loop is already closed (its first and
-      // last vertex coincide - see _closed_geodesic_loop) - only the raw
-      // fallback polygon needs an extra segment back to its own start.
+      // last vertex coincide - see _closed_geodesic_loop) - the smoothing
+      // curve gets its own `closed` flag instead so it wraps smoothly
+      // through the seam rather than treating the duplicated start/end
+      // vertex as a sharp corner; only the raw fallback polygon needs an
+      // extra segment manually pushed to close it.
       const usingServerLoop = renderPath && renderPath.length >= 3;
-      addLine(group, usingServerLoop ? renderPath : rawPoints, color, !usingServerLoop);
+      addLine(group, usingServerLoop ? renderPath : rawPoints, color, !usingServerLoop, usingServerLoop);
       addAreaFill(group, renderFaces, color);
       continue;
     }
-    const path = renderPath && renderPath.length >= 2 ? renderPath : rawPoints;
-    addLine(group, path, color, false);
+    // renderPath only exists for a geodesic Linear measurement (see
+    // api/routers/facial.py's _render_geometry) - straight Linear and
+    // Angular (no surface-path toggle at all) always fall back to
+    // rawPoints, a plain straight connector, which is exactly what should
+    // be drawn for them.
+    const usingServerPath = renderPath && renderPath.length >= 2;
+    addLine(group, usingServerPath ? renderPath : rawPoints, color, false, usingServerPath);
     if (type === "angular") addAngleArc(group, rawPoints, color);
   }
   sceneBag.scene.add(group);

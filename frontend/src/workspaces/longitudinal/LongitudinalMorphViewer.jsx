@@ -38,9 +38,29 @@ const VIDEO_MIME_CANDIDATES = [
   "video/webm",
 ];
 
-function pickSupportedVideoMimeType() {
-  if (typeof MediaRecorder === "undefined") return null;
-  return VIDEO_MIME_CANDIDATES.find((mime) => MediaRecorder.isTypeSupported(mime)) ?? null;
+// a ceiling on the actual CAPTURED pixel dimensions for a video export
+// (see startRecording's own longer comment) - keeps a real-time encoder
+// from ever being asked to mux a frame bigger than this, regardless of how
+// large the canvas's own on-screen CSS size already is (fullscreen mode in
+// particular). 1920 is the long edge of plain 1080p - comfortably within
+// every mainstream encoder's real-time limits, still a genuinely sharp
+// export.
+const MAX_RECORDING_DIMENSION = 1920;
+
+// every candidate the engine claims to support, in the same preference
+// order - MorphControl.jsx's own handleExportVideo tries them one at a
+// time (see startRecording/stopRecording below) rather than trusting the
+// first one blindly: isTypeSupported()===true is only a claim the browser
+// CAN mux that format, not a guarantee it actually will for this specific
+// stream - a real, observed failure mode on some WebView2/Chromium builds
+// is an mp4-muxing MediaRecorder that starts normally but never calls
+// ondataavailable/onstop once stop() is requested, hanging forever with no
+// error at all. falling back through the list (webm's encoder path is far
+// more battle-tested across the Chromium family) is what actually recovers
+// from that, since there's no way to detect it up front.
+function supportedVideoMimeTypes() {
+  if (typeof MediaRecorder === "undefined") return [];
+  return VIDEO_MIME_CANDIDATES.filter((mime) => MediaRecorder.isTypeSupported(mime));
 }
 
 // a standalone Three.js viewer, deliberately NOT built on Viewer.jsx - the
@@ -316,6 +336,13 @@ const LongitudinalMorphViewer = forwardRef(function LongitudinalMorphViewer(_pro
         sceneBag.controls.target.fromArray(target);
         sceneBag.controls.update();
       },
+      // every mimeType the engine actually supports, in preference order -
+      // see this file's own module-level supportedVideoMimeTypes comment
+      // for why the caller (MorphControl.jsx) needs the whole list, not
+      // just the first one.
+      getSupportedVideoMimeTypes() {
+        return supportedVideoMimeTypes();
+      },
       // exports the morph animation as a video clip, captured straight off
       // this canvas via the browser's own MediaRecorder - no export library,
       // no server round-trip, no extra dependency: the render loop
@@ -325,35 +352,58 @@ const LongitudinalMorphViewer = forwardRef(function LongitudinalMorphViewer(_pro
       // stopRecording() below - the caller (MorphControl.jsx) starts this,
       // drives its own t sweep exactly as if it were animating normally
       // (setT already applies to whatever's being recorded, live), then
-      // stops it once the sweep finishes.
+      // stops it once the sweep finishes. mimeType is the CALLER's choice
+      // (MorphControl.jsx tries each supported candidate in turn - see
+      // supportedVideoMimeTypes above), not picked internally, so a
+      // hung/broken attempt on one codec can retry cleanly with the next.
       //
-      // pixelRatio temporarily renders at a higher resolution than the
-      // canvas's own on-screen CSS size (a plain WebGLRenderer defaults to a
-      // 1:1 pixel ratio, so the exported clip would otherwise be exactly as
-      // low-res as this one small viewport panel) - restored the moment
-      // recording stops, so the live on-screen viewer itself is never
-      // affected outside the export. the canvas's own on-screen CSS size
-      // must also stay CONSTANT for the whole recording, or captureStream's
-      // video track resolution changes mid-stream and MediaRecorder
-      // produces a corrupted file - see the 3D Morphing tab's own layout
-      // comment for why this viewer now gets a dedicated, never-resized
-      // container instead of sharing a CSS grid row with anything whose own
-      // width can change.
-      startRecording({ fps = 30, bitsPerSecond = 12_000_000, pixelRatio = 3 } = {}) {
+      // pixelRatio bumps the CAPTURED resolution above the canvas's own
+      // on-screen CSS size (a plain WebGLRenderer defaults to a 1:1 pixel
+      // ratio, so the exported clip would otherwise be exactly as low-res
+      // as whatever the panel happens to be on screen) - restored the
+      // moment recording stops, so the live on-screen viewer itself is
+      // never affected outside the export. the canvas's own on-screen CSS
+      // size must also stay CONSTANT for the whole recording, or
+      // captureStream's video track resolution changes mid-stream and
+      // MediaRecorder produces a corrupted file - see the 3D Morphing
+      // tab's own layout comment for why this viewer now gets a dedicated,
+      // never-resized container instead of sharing a CSS grid row with
+      // anything whose own width can change.
+      //
+      // the requested pixelRatio is a CEILING, not a fixed multiplier -
+      // capped so the actual captured pixel dimensions never exceed
+      // MAX_RECORDING_DIMENSION on their longest side, regardless of how
+      // big the canvas's own CSS size already is. this is the fix for a
+      // real, observed bug: fullscreen's canvas already fills most of the
+      // screen (see the 3D Morphing tab's own fullscreen CSS), so blindly
+      // tripling THAT (the small-panel default this pixelRatio was tuned
+      // for) fed some mp4/avc1 encoders a frame size past what they can
+      // actually encode in real time - not an error, just a MediaRecorder
+      // that silently never produces data, exactly the "stuck on
+      // recording..." symptom stopRecording's own timeout now catches and
+      // the mimeType fallback loop above then papers over by landing on
+      // webm instead. capping here fixes the actual cause instead of just
+      // recovering from it, so a normal-sized panel still gets the full 3x
+      // bump (unchanged from before) while fullscreen backs off to
+      // whatever multiplier keeps it under the cap.
+      startRecording({ mimeType, fps = 30, bitsPerSecond = 12_000_000, pixelRatio = 3 }) {
         const sceneBag = sceneBagRef.current;
         if (!sceneBag) throw new Error("viewer not ready");
         if (recorderRef.current) throw new Error("already recording");
-        const mimeType = pickSupportedVideoMimeType();
         if (!mimeType) throw new Error("this browser can't record video (MediaRecorder isn't supported here)");
 
+        const canvas = sceneBag.renderer.domElement;
+        const cssDimension = Math.max(canvas.clientWidth, canvas.clientHeight, 1);
+        const effectivePixelRatio = Math.min(pixelRatio, Math.max(1, MAX_RECORDING_DIMENSION / cssDimension));
+
         const previousPixelRatio = sceneBag.renderer.getPixelRatio();
-        sceneBag.renderer.setPixelRatio(Math.max(previousPixelRatio, pixelRatio));
+        sceneBag.renderer.setPixelRatio(Math.max(previousPixelRatio, effectivePixelRatio));
         // force one immediate re-render at the new resolution, so the very
         // first captured frame isn't a leftover lower-res one from before
         // the pixel ratio bump.
         sceneBag.renderer.render(sceneBag.scene, sceneBag.camera);
 
-        const stream = sceneBag.renderer.domElement.captureStream(fps);
+        const stream = canvas.captureStream(fps);
         const chunks = [];
         const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: bitsPerSecond });
         recorder.ondataavailable = (event) => {
@@ -362,22 +412,62 @@ const LongitudinalMorphViewer = forwardRef(function LongitudinalMorphViewer(_pro
         recorder.start();
         recorderRef.current = { recorder, chunks, previousPixelRatio, mimeType };
       },
-      stopRecording() {
+      // bounded by timeoutMs (default 10s, generous for the couple-second
+      // clips this workspace records) rather than waiting on onstop
+      // forever - some WebView2/Chromium builds have a real, observed
+      // failure mode where a MediaRecorder that started normally never
+      // fires onstop/onerror once stop() is called for a codec it can't
+      // actually mux despite isTypeSupported() claiming it can (see this
+      // file's own supportedVideoMimeTypes comment) - without this bound
+      // that hangs the export UI on "recording..." forever, with no way
+      // out except reloading the whole app. always cleans up (pixelRatio,
+      // recorderRef) on every exit path, timeout included, so a caller can
+      // immediately retry with a different codec after this rejects.
+      stopRecording(timeoutMs = 10_000) {
         const state = recorderRef.current;
         if (!state) return Promise.reject(new Error("not recording"));
         return new Promise((resolve, reject) => {
-          state.recorder.onstop = () => {
+          let settled = false;
+          const finish = (fn, arg) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
             sceneBagRef.current?.renderer.setPixelRatio(state.previousPixelRatio);
             recorderRef.current = null;
-            resolve({ blob: new Blob(state.chunks, { type: state.mimeType }), mimeType: state.mimeType });
+            fn(arg);
+          };
+          const timer = setTimeout(() => {
+            finish(reject, new Error("the recording never finished - this browser's video encoder may not actually support the format it claimed to"));
+          }, timeoutMs);
+          state.recorder.onstop = () => {
+            finish(resolve, { blob: new Blob(state.chunks, { type: state.mimeType }), mimeType: state.mimeType });
           };
           state.recorder.onerror = (event) => {
-            sceneBagRef.current?.renderer.setPixelRatio(state.previousPixelRatio);
-            recorderRef.current = null;
-            reject(event.error || new Error("recording failed"));
+            finish(reject, event.error || new Error("recording failed"));
           };
-          state.recorder.stop();
+          try {
+            state.recorder.stop();
+          } catch (err) {
+            finish(reject, err);
+          }
         });
+      },
+      // forces a stuck/leftover recorder to let go (pixelRatio restored,
+      // recorderRef cleared) between retry attempts - stopRecording's own
+      // timeout already does this on ITS way out, this is for the case a
+      // caller wants to give up on a recorder without waiting through that
+      // whole timeout first (or after startRecording itself threw, leaving
+      // a stale entry from a still-earlier attempt).
+      abortRecording() {
+        const state = recorderRef.current;
+        if (!state) return;
+        try {
+          if (state.recorder.state !== "inactive") state.recorder.stop();
+        } catch {
+          // already stopping/stopped - nothing else to do
+        }
+        sceneBagRef.current?.renderer.setPixelRatio(state.previousPixelRatio);
+        recorderRef.current = null;
       },
     };
   });

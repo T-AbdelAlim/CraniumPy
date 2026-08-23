@@ -17,3 +17,7 @@ __pycache__/
 # if you demo the app on resources/test_mesh/
 CP_*/
 /release_notes_*.md
+
+# stray output from running `uvicorn` straight from the repo root
+/server_stdout.log
+/server_stderr.log

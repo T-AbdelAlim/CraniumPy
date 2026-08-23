@@ -17,6 +17,7 @@ from __future__ import annotations
 import io
 import json
 import textwrap
+import threading
 import uuid
 import zipfile
 from datetime import datetime, timezone
@@ -898,6 +899,33 @@ def list_cohort_patients(cohort_path: Path) -> list[dict[str, str]]:
     return sorted(by_patient.values(), key=lambda p: p["patient_id"])
 
 
+def attach_nicp_mesh_paths(cohort_path: Path, columns: list[str], rows: list[dict[str, str]]) -> None:
+    """desktop-only: joins nicp_mesh_path back onto every already-loaded
+    cohort row from the sibling id-mapping file (see _upsert_cohort_xlsx),
+    keyed by cohort_id - same join _upsert_cohort_xlsx and
+    list_cohort_patients already use, just in the opposite direction.
+    nicp_mesh_path is an absolute on-disk path, so - like every other field
+    in _COHORT_XLSX_EXCLUDED_COLUMNS - it never gets written into the
+    shared cohort file itself; this is what lets the Cohort/Mean Shape
+    workspaces keep reading row["nicp_mesh_path"] as if it were still a
+    plain column there. mutates columns/rows in place. never called for a
+    browser upload (api/routers/cohort.py's /upload) - there's no real path
+    on this machine to find a sibling mapping file next to, consistent with
+    every other real-mesh-path feature in this app being desktop-only. a
+    no-op when there's no id-mapping file next to this cohort file at all
+    (a cohort with nothing saved into it through this app yet), rather
+    than adding an always-empty column to every row."""
+    mapping_path = _id_mapping_path(cohort_path)
+    if not mapping_path.exists():
+        return
+    _, mapping_rows = _read_xlsx_rows(mapping_path)
+    paths_by_id = {r.get("cohort_id", ""): r.get("nicp_mesh_path", "") for r in mapping_rows}
+    if "nicp_mesh_path" not in columns:
+        columns.append("nicp_mesh_path")
+    for row in rows:
+        row["nicp_mesh_path"] = paths_by_id.get(row.get("cohort_id", ""), "")
+
+
 # columns that never appear in the shared cohort file itself - anything
 # that identifies the patient (directly, like patient_id/date_of_birth, or
 # indirectly, like a file_name/file_path that might embed a name or MRN)
@@ -907,7 +935,33 @@ def list_cohort_patients(cohort_path: Path) -> list[dict[str, str]]:
 # isn't itself patient-identifying the way the underlying dates are, and
 # the whole point of a shared cohort file is to carry exactly that kind of
 # de-identified derived measurement.
-_COHORT_XLSX_EXCLUDED_COLUMNS = {"patient_id", "file_name", "file_path", "date_of_birth", "date_of_intervention"}
+_COHORT_XLSX_EXCLUDED_COLUMNS = {
+    "patient_id",
+    "file_name",
+    "file_path",
+    "date_of_birth",
+    "date_of_intervention",
+    "nicp_mesh_path",
+}
+
+
+# _upsert_cohort_xlsx does a read-modify-write across two separate files
+# (cohort_path and its id-mapping companion) with no file locking - two
+# saves against the same cohort file close together (FastAPI runs sync
+# routes on a thread pool) could otherwise interleave, each minting/reusing
+# a cohort_id off a now-stale read, risking a lost update or the two files
+# drifting out of sync. one lock per resolved cohort path serializes those
+# writes; the registry itself only ever grows by one entry per distinct
+# cohort path a save ever targets in this process's lifetime - small in
+# practice, nothing like the mesh-sized objects the real caches guard.
+_cohort_xlsx_locks: dict[str, threading.Lock] = {}
+_cohort_xlsx_locks_guard = threading.Lock()
+
+
+def _lock_for_cohort_path(cohort_path: Path) -> threading.Lock:
+    key = str(cohort_path.resolve())
+    with _cohort_xlsx_locks_guard:
+        return _cohort_xlsx_locks.setdefault(key, threading.Lock())
 
 
 def _upsert_cohort_xlsx(cohort_path: Path, row: dict[str, str]) -> None:
@@ -921,9 +975,11 @@ def _upsert_cohort_xlsx(cohort_path: Path, row: dict[str, str]) -> None:
     before writing (see _COHORT_XLSX_EXCLUDED_COLUMNS) - patient_id (a
     locally meaningful identifier, e.g. a hospital MRN or local study
     number), file_name/file_path (which can embed a patient name or MRN in
-    the filename itself), and date_of_birth/date_of_intervention (real
+    the filename itself), date_of_birth/date_of_intervention (real
     calendar dates, identifying in combination with the rest of a row even
-    though the derived age-in-months fields that stay behind aren't). the
+    though the derived age-in-months fields that stay behind aren't), and
+    nicp_mesh_path (an absolute on-disk path, which - like file_name/
+    file_path - can embed identifying folder/file naming). the
     id is stable across re-exports of the same file (reused, not
     reassigned, when a row is overwritten), and recorded - alongside every
     field just stripped out - in a SEPARATE file next to this one (see
@@ -933,34 +989,37 @@ def _upsert_cohort_xlsx(cohort_path: Path, row: dict[str, str]) -> None:
     cohort_id) has to key off THAT file's own rows now, since the fields
     _row_key needs for that are exactly the ones this file no longer
     carries."""
-    mapping_path = _id_mapping_path(cohort_path)
-    _, existing_mapping_rows = _read_xlsx_rows(mapping_path)
-    _, existing_cohort_rows = _read_xlsx_rows(cohort_path)
-    key = _row_key(row)
-    existing_id = next((r.get("cohort_id", "") for r in existing_mapping_rows if _row_key(r) == key), "")
-    # minted from whichever of the two files' own ids goes higher, not just
-    # the mapping file's - a cohort file that ever ends up without a
-    # matching (or fully in-sync) mapping file next to it (hand-edited,
-    # migrated from an older version, mapping file deleted...) still can't
-    # collide with an id already sitting in the cohort file itself.
-    all_existing_ids = [r.get("cohort_id", "") for r in existing_mapping_rows] + [
-        r.get("cohort_id", "") for r in existing_cohort_rows
-    ]
-    cohort_id = existing_id or _next_cohort_id(all_existing_ids)
+    with _lock_for_cohort_path(cohort_path):
+        mapping_path = _id_mapping_path(cohort_path)
+        _, existing_mapping_rows = _read_xlsx_rows(mapping_path)
+        _, existing_cohort_rows = _read_xlsx_rows(cohort_path)
+        key = _row_key(row)
+        existing_id = next((r.get("cohort_id", "") for r in existing_mapping_rows if _row_key(r) == key), "")
+        # minted from whichever of the two files' own ids goes higher, not
+        # just the mapping file's - a cohort file that ever ends up without
+        # a matching (or fully in-sync) mapping file next to it
+        # (hand-edited, migrated from an older version, mapping file
+        # deleted...) still can't collide with an id already sitting in the
+        # cohort file itself.
+        all_existing_ids = [r.get("cohort_id", "") for r in existing_mapping_rows] + [
+            r.get("cohort_id", "") for r in existing_cohort_rows
+        ]
+        cohort_id = existing_id or _next_cohort_id(all_existing_ids)
 
-    cohort_row = {k: v for k, v in row.items() if k not in _COHORT_XLSX_EXCLUDED_COLUMNS}
-    cohort_row = {"cohort_id": cohort_id, **cohort_row}
-    _upsert_rows(cohort_path, cohort_row, key_fn=lambda r: r.get("cohort_id", ""))
+        cohort_row = {k: v for k, v in row.items() if k not in _COHORT_XLSX_EXCLUDED_COLUMNS}
+        cohort_row = {"cohort_id": cohort_id, **cohort_row}
+        _upsert_rows(cohort_path, cohort_row, key_fn=lambda r: r.get("cohort_id", ""))
 
-    mapping_row = {
-        "cohort_id": cohort_id,
-        "patient_id": row.get("patient_id", ""),
-        "file_name": row.get("file_name", ""),
-        "file_path": row.get("file_path", ""),
-        "date_of_birth": row.get("date_of_birth", ""),
-        "date_of_intervention": row.get("date_of_intervention", ""),
-    }
-    _upsert_rows(mapping_path, mapping_row)
+        mapping_row = {
+            "cohort_id": cohort_id,
+            "patient_id": row.get("patient_id", ""),
+            "file_name": row.get("file_name", ""),
+            "file_path": row.get("file_path", ""),
+            "nicp_mesh_path": row.get("nicp_mesh_path", ""),
+            "date_of_birth": row.get("date_of_birth", ""),
+            "date_of_intervention": row.get("date_of_intervention", ""),
+        }
+        _upsert_rows(mapping_path, mapping_row)
 
 
 # short, parent-facing one-liners for the metrics actually shown on the PDF
