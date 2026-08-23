@@ -66,9 +66,10 @@ pain to install somewhere.
 `frontend/` is now a Vite + React project (plain JS, not TypeScript - matches
 the minimal-tooling approach used everywhere else in this repo; not a
 one-way door, TS can be adopted incrementally later if it ever earns its
-keep). the old plain-HTML/JS viewer (no bundler, no react) is kept around at
-`frontend_legacy/` purely as a reference while its functionality gets ported
-over piece by piece - it isn't wired into anything anymore.
+keep). the old plain-HTML/JS viewer (no bundler, no react) lived alongside it
+at `frontend_legacy/` as a porting reference until every workspace it had was
+fully rebuilt in React - removed from the repo once that was done, since it
+was never wired into anything and had nothing left worth keeping around for.
 
 reason for the reversal: the suite rebuild needs a real multi-workspace
 shell (routed workspaces, an inspector panel, tables, protocol/model
@@ -87,17 +88,13 @@ FastAPI backend) is for live frontend iteration instead.
 
 | package | what it's for | replaced |
 |---|---|---|
-| `react`, `react-dom` | UI | hand-rolled DOM wiring in `frontend_legacy/app.js` |
-| `react-router-dom` | routing between workspaces | n/a, new - the old app was one screen |
-| `three` | 3D viewer (mesh, landmarks, heatmaps, template overlay) | the hand-vendored `frontend_legacy/vendor/three/` files below - now a real npm dependency, bundled by Vite into the built output, so the standalone exe still works fully offline (no CDN fetch at runtime either way) |
+| `react`, `react-dom` | UI | hand-rolled DOM wiring in the old `frontend_legacy/app.js` |
+| `three` | 3D viewer (mesh, landmarks, heatmaps, template overlay) | the old app's own hand-vendored `frontend_legacy/vendor/three/` files - now a real npm dependency, bundled by Vite into the built output, so the standalone exe still works fully offline (no CDN fetch at runtime either way) |
 | `vite`, `@vitejs/plugin-react` | dev server + production build | n/a, new |
 
-### vendored JS (`frontend_legacy/vendor/three/`) - historical, superseded
-
-kept only because `frontend_legacy/` itself is kept, as a porting reference.
-pulled from unpkg.com (mirrors npm packages directly). MIT licensed, straight
-from the official `three` package, version 0.180.0 - the same version now
-pinned as a real npm dependency above.
+workspace switching is plain local state (`App.jsx`'s `appMode`), not a
+router - there's never a URL to deep-link into, so `react-router-dom` isn't
+a dependency here at all.
 
 ## looked at and passed on
 

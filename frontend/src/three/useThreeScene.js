@@ -22,9 +22,20 @@ export function useThreeScene(canvasRef, containerRef) {
     resizeObserver.observe(container);
     sceneBag.resize(container.clientWidth, container.clientHeight);
 
+    // several workspaces (Longitudinal's Compare/3D-Morphing split, Facial
+    // Anthropometrics' Define/Batch split) keep every tab's Viewer mounted
+    // via CSS display:none rather than unmounting it, specifically to
+    // preserve loaded meshes/GPU state across tab switches - but that means
+    // a fully hidden Viewer would otherwise still render every frame at
+    // full cost forever. offsetParent is null exactly when this element (or
+    // an ancestor) is display:none - the same check costs nothing extra and
+    // needs no new prop threaded down, unlike an IntersectionObserver.
+    // still scheduling the next frame either way, so rendering resumes
+    // immediately (no stale frame) the moment the tab becomes visible again.
     let rafId;
     (function animate() {
       rafId = requestAnimationFrame(animate);
+      if (container.offsetParent === null) return;
       sceneBag.controls.update();
       sceneBag.renderer.render(sceneBag.scene, sceneBag.camera);
     })();

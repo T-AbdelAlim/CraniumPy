@@ -35,13 +35,31 @@ export function disposeMesh(object3D) {
 // otherwise), stashes both texture/plain variants on userData so the
 // texture toggle can swap between them without reloading, and reframes the
 // camera. returns whether the loaded mesh actually has a usable texture.
-export async function displayMesh({ sceneBag, gltfLoader, meshStateRef, url, selectionHasTexture }) {
+//
+// tokenRef/token (both optional - a caller that never fires two of these
+// concurrently against the same meshStateRef doesn't need them) guard
+// against the same race Viewer.jsx's own showTemplateOverlay already
+// documents/fixes: two overlapping calls (a fast toggle re-firing before
+// the first's GLB finished loading) would otherwise both survive their own
+// await and both unconditionally scene.add()+overwrite meshStateRef.current
+// - whichever resolves first never gets removed by the second (which only
+// disposes whatever was current at ITS OWN start, before either call's
+// object existed), leaking its geometry/material/texture in the scene
+// forever. the caller bumps tokenRef.current and passes the new value in as
+// token before calling; checking right after the await (not before) is what
+// lets whichever call is genuinely LAST still win regardless of which
+// promise happens to resolve first.
+export async function displayMesh({ sceneBag, gltfLoader, meshStateRef, url, selectionHasTexture, tokenRef, token }) {
   if (meshStateRef.current.object) {
     sceneBag.scene.remove(meshStateRef.current.object);
     disposeMesh(meshStateRef.current.object);
   }
 
   const object = await loadGlb(gltfLoader, url);
+  if (tokenRef && token !== tokenRef.current) {
+    disposeMesh(object);
+    return { hasTexture: false };
+  }
   const materials = [];
   let hasTexture = false;
 

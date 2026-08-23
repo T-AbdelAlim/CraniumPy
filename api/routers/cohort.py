@@ -30,7 +30,7 @@ from craniumpy_core.facial_cohort_link import resolve_cohort_ids_by_filename
 from craniumpy_core.facial_measurements_io import load_measurement_export_xlsx
 from craniumpy_core.io import mesh_to_glb
 from craniumpy_core.template_registry import load_shipped_template
-from api.results_bundle import _id_mapping_path, _read_xlsx_rows, list_cohort_patients
+from api.results_bundle import _id_mapping_path, _read_xlsx_rows, attach_nicp_mesh_paths, list_cohort_patients
 from api.routers._group_measurements import group_measurements_response
 from api.schemas import (
     CohortDataResponse,
@@ -84,6 +84,7 @@ def load_cohort(request: CohortLoadRequest) -> CohortDataResponse:
         columns, rows = cohort.load_cohort_xlsx(path)
     except Exception as exc:  # noqa: BLE001 - want the real reason surfaced, whatever openpyxl raised
         raise HTTPException(status_code=400, detail=f"could not read cohort file: {exc}") from exc
+    attach_nicp_mesh_paths(path, columns, rows)
     return CohortDataResponse(columns=columns, rows=rows)
 
 

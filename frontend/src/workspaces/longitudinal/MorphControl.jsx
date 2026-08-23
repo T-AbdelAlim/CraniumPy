@@ -140,28 +140,51 @@ export default function MorphControl({ onT, morphViewerRef, fullscreenRef }) {
     return () => cancelAnimationFrame(rafRef.current);
   }, [playing]);
 
+  // tries every mimeType the browser claims to support, one whole
+  // recording attempt at a time, instead of trusting the first one blindly
+  // - see LongitudinalMorphViewer.jsx's own supportedVideoMimeTypes/
+  // stopRecording comments for why: isTypeSupported()===true isn't a
+  // guarantee a codec will actually work for THIS stream, and on some
+  // WebView2/Chromium builds a broken one doesn't error, it just never
+  // calls onstop - previously that left the export stuck on "recording..."
+  // forever with no way out. stopRecording's own timeout now bounds each
+  // attempt, and abortRecording cleans up a still-stuck one before moving
+  // to the next candidate.
   async function handleExportVideo() {
     if (!morphViewerRef?.current || exporting) return;
+    const viewer = morphViewerRef.current;
+    const candidates = viewer.getSupportedVideoMimeTypes();
+    if (candidates.length === 0) {
+      setExportStatus("export failed: this browser can't record video (MediaRecorder isn't supported here)");
+      return;
+    }
     setPlaying(false);
     setExporting(true);
-    setExportStatus("recording...");
-    try {
-      morphViewerRef.current.startRecording();
-      await runRoundTripSweep(sweepSecondsRef.current, setT);
-      const { blob, mimeType } = await morphViewerRef.current.stopRecording();
-      const url = URL.createObjectURL(blob);
-      triggerDownload(url, `morph_animation.${extensionForMimeType(mimeType)}`);
-      // the download itself is synchronous (the anchor click fires
-      // immediately), but WebView2/some browsers read the blob lazily
-      // right after - revoking too early can turn that into an empty/
-      // corrupt file, so this waits a beat rather than revoking inline.
-      setTimeout(() => URL.revokeObjectURL(url), 30_000);
-      setExportStatus("");
-    } catch (err) {
-      setExportStatus(`export failed: ${err.message}`);
-    } finally {
-      setExporting(false);
+    let lastError = null;
+    for (let i = 0; i < candidates.length; i++) {
+      setExportStatus(i === 0 ? "recording..." : "recording (retrying with a different video format)...");
+      try {
+        viewer.startRecording({ mimeType: candidates[i] });
+        await runRoundTripSweep(sweepSecondsRef.current, setT);
+        const { blob, mimeType } = await viewer.stopRecording();
+        if (!blob || blob.size === 0) throw new Error("the recording came out empty");
+        const url = URL.createObjectURL(blob);
+        triggerDownload(url, `morph_animation.${extensionForMimeType(mimeType)}`);
+        // the download itself is synchronous (the anchor click fires
+        // immediately), but WebView2/some browsers read the blob lazily
+        // right after - revoking too early can turn that into an empty/
+        // corrupt file, so this waits a beat rather than revoking inline.
+        setTimeout(() => URL.revokeObjectURL(url), 30_000);
+        setExportStatus("");
+        lastError = null;
+        break;
+      } catch (err) {
+        lastError = err;
+        viewer.abortRecording();
+      }
     }
+    if (lastError) setExportStatus(`export failed: ${lastError.message}`);
+    setExporting(false);
   }
 
   return (

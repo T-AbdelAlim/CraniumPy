@@ -4,6 +4,8 @@ import BatchPicker from "../facial/BatchPicker.jsx";
 import { computeMeanShapeWithOutliers, meanShapeDownloadUrl, meanShapeMeshUrl } from "../../api/cohort.js";
 import { sanitizeSegment } from "../cohort/lib/naming.js";
 import { heatmapMax } from "../../three/measurementsLayer.js";
+import { waitForNativeDropPaths } from "../../lib/desktop.js";
+import { MESH_EXTENSIONS, extOf } from "../../lib/meshFiles.js";
 
 // 5th and final top-level workspace (see components/shell/Shell.jsx's nav)
 // - a freeform mean-shape tool: add any set of meshes assumed already
@@ -76,6 +78,37 @@ export default function MeanShapeWorkspace({ onSnapshotChange, initialSnapshot }
     setMeshPaths((prev) => prev.filter((p) => p !== path));
   }
 
+  // dropped straight onto the viewer (see Viewer.jsx's onFilesDropped) - an
+  // alternative to BatchPicker's own file/folder buttons, one at a time or
+  // several at once (a plain multi-file OS drag drops them all in one
+  // event). desktop-only same as BatchPicker itself: this workspace only
+  // ever works with real paths (computeMeanShapeWithOutliers reads meshes
+  // straight off disk), and a plain browser drop never exposes one (see
+  // App.jsx's own handleFilesDropped for the identical limitation/pattern)
+  // - waitForNativeDropPaths races pywebview's native drop resolution
+  // against a short timeout, and only whichever dropped mesh files
+  // actually resolved get added; anything that didn't (or a browser-only
+  // drop, where nothing ever resolves) reports back instead of silently
+  // vanishing.
+  async function handleFilesDropped(files) {
+    const meshNames = files.map((f) => f.name).filter((n) => MESH_EXTENSIONS.includes(extOf(n)));
+    if (meshNames.length === 0) {
+      setPickStatus("No .ply/.obj/.stl found in the files you dropped");
+      return;
+    }
+    setPickStatus("resolving dropped file(s)...");
+    const nativePaths = await waitForNativeDropPaths();
+    const resolved = meshNames.filter((n) => nativePaths?.[n]).map((n) => nativePaths[n]);
+    if (resolved.length === 0) {
+      setPickStatus("Couldn't resolve a real file path for the dropped file(s) - this needs the desktop app.");
+      return;
+    }
+    handlePathsPicked(resolved, null);
+    if (resolved.length < meshNames.length) {
+      setPickStatus(`${meshNames.length - resolved.length} of ${meshNames.length} dropped file(s) didn't resolve to a real path and were skipped.`);
+    }
+  }
+
   async function handleCompute() {
     setComputing(true);
     setStatus("computing mean shape...");
@@ -108,7 +141,14 @@ export default function MeanShapeWorkspace({ onSnapshotChange, initialSnapshot }
   return (
     <div className="meanshape-ws">
       <div className="meanshape-ws-viewer">
-        <Viewer ref={viewerRef} wireframe={false} textureEnabled={false} landmarks={{}} landmarkColors={{}} />
+        <Viewer
+          ref={viewerRef}
+          wireframe={false}
+          textureEnabled={false}
+          landmarks={{}}
+          landmarkColors={{}}
+          onFilesDropped={handleFilesDropped}
+        />
         {!result && <p className="hint overlay">Pick meshes and compute a mean shape to see it here.</p>}
         {result && (
           <div className="heatmap-scalar-bar">
@@ -120,9 +160,10 @@ export default function MeanShapeWorkspace({ onSnapshotChange, initialSnapshot }
       </div>
       <div className="meanshape-ws-sidebar">
         <p className="hint">
-          Add meshes already NICP-fitted to the same template, then compute their averaged mean shape - a vertex-by-
-          vertex average, meaningful because same-template meshes share exact point correspondence. A mesh with a
-          different topology or vertex count is automatically excluded and reported, never silently dropped.
+          Add meshes already NICP-fitted to the same template (drag and drop onto the viewer, one at a time or
+          several at once, or use the buttons below), then compute their averaged mean shape - a vertex-by-vertex
+          average, meaningful because same-template meshes share exact point correspondence. A mesh with a different
+          topology or vertex count is automatically excluded and reported, never silently dropped.
         </p>
         <BatchPicker onPathsPicked={handlePathsPicked} status={pickStatus} />
         {meshPaths.length > 0 && (

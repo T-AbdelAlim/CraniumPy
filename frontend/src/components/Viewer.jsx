@@ -57,6 +57,9 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
   // a second template object nothing then owns/cleans up. see
   // showTemplateOverlay's own comment for the race this fixes.
   const templateOverlayTokenRef = useRef(0);
+  // guards displayMesh below against the same class of race - see
+  // meshDisplay.js's own displayMesh docstring for the leak this prevents.
+  const displayMeshTokenRef = useRef(0);
   const measurementsOverlayRef = useRef(null);
   const metopicOverlayRef = useRef(null);
   const frontalBossingOverlayRef = useRef(null);
@@ -266,12 +269,15 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
       mainMeshNodesRef.current = null;
       disposeMesh(nicpPreviewRef.current);
       nicpPreviewRef.current = null;
+      const token = ++displayMeshTokenRef.current;
       return displayMeshImpl({
         sceneBag: sceneBagRef.current,
         gltfLoader: gltfLoaderRef.current,
         meshStateRef,
         url,
         selectionHasTexture,
+        tokenRef: displayMeshTokenRef,
+        token,
       });
     },
     // a live NICP fit's deforming template, as its own standalone object -

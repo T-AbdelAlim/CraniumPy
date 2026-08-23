@@ -164,18 +164,19 @@ def test_preview_linear_measurement_straight_and_geodesic(client, tmp_path):
     assert body["values"]["m2"] == pytest.approx(3.0)
     assert body["value_errors"] == {}
 
-    # render_paths traces the mesh surface for BOTH straight and geodesic
-    # Linear measurements (see api/routers/facial.py's _render_geometry) -
-    # the overlay always hugs the surface regardless of the value's own
-    # straight/geodesic toggle. row 0 of a flat grid is a straight run of
-    # mesh edges, so the surface trace is the full 4-vertex row, not just
-    # the 2 endpoints.
-    for mid in ("m1", "m2"):
-        path = body["render_paths"][mid]
-        assert len(path) == 4
-        assert [p["x"] for p in path] == [0.0, 1.0, 2.0, 3.0]
-        assert path[0] == points["p1"]
-        assert path[-1] == points["p2"]
+    # render_paths only traces the mesh surface for the GEODESIC measurement
+    # (m2) - a straight-distance Linear measurement (m1) gets no render_path
+    # at all, so the frontend draws its own plain straight connector instead
+    # (see api/routers/facial.py's _render_geometry) - the drawn line has to
+    # match what's actually being measured. row 0 of a flat grid is a
+    # straight run of mesh edges, so m2's surface trace is the full 4-vertex
+    # row, not just the 2 endpoints.
+    assert "m1" not in body["render_paths"]
+    geo_path = body["render_paths"]["m2"]
+    assert len(geo_path) == 4
+    assert [p["x"] for p in geo_path] == [0.0, 1.0, 2.0, 3.0]
+    assert geo_path[0] == points["p1"]
+    assert geo_path[-1] == points["p2"]
     assert body["render_faces"] == {}
 
 
@@ -197,10 +198,11 @@ def test_preview_angular_measurement(client, tmp_path):
     body = response.json()
     assert body["values"]["m1"] == pytest.approx(90.0)
 
-    # the two legs (vertex -> p1, vertex -> p3) chained into one continuous
-    # a -> vertex -> c surface trace - see _render_geometry's own comment.
-    render_path = body["render_paths"]["m1"]
-    assert render_path == [points["p1"], points["p2"], points["p3"]]
+    # Angular has no surface-path toggle - it's always a straight 3D angle,
+    # so it gets no render_path at all; the frontend draws its own plain
+    # straight legs between the raw landmark points instead (see
+    # api/routers/facial.py's _render_geometry).
+    assert "m1" not in body["render_paths"]
 
 
 def test_preview_area_measurement(client, tmp_path):
@@ -313,12 +315,10 @@ def test_start_batch_processes_files_independently_without_aborting(client, tmp_
     results_by_name = {r["filename"]: r for r in body["results"]}
     assert results_by_name["patient_good.ply"]["status"] == "ok"
     assert results_by_name["patient_good.ply"]["values"]["m1"] == pytest.approx(3.0)
-    # render geometry is computed fresh per file (this mesh's own z-offset
-    # vertex positions, not the template's) - not just echoed from the
-    # template's own preview.
-    good_path = results_by_name["patient_good.ply"]["render_paths"]["m1"]
-    assert len(good_path) == 4
-    assert all(p["z"] == pytest.approx(1.0) for p in good_path)
+    # m1 is a straight-distance Linear measurement (geodesic unset) - no
+    # render_path, same "draw what's actually measured" rule as the preview
+    # endpoint (see api/routers/facial.py's _render_geometry).
+    assert "m1" not in results_by_name["patient_good.ply"]["render_paths"]
     assert results_by_name["patient_bad_topology.ply"]["status"] == "error"
     assert results_by_name["patient_bad_topology.ply"]["error"]
 
@@ -394,13 +394,52 @@ def test_correct_landmark_updates_only_the_affected_measurement_for_that_one_fil
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["values"]["m1"] == pytest.approx(2.0)  # 1 grid step closer to p2 now
-    # render geometry is recomputed against the corrected point too, not
-    # left stale from before the correction.
-    assert len(body["render_paths"]["m1"]) == 3
+    # m1 is a straight-distance Linear measurement (geodesic unset) - no
+    # render_path, same as the preview endpoint's own behavior.
+    assert "m1" not in body["render_paths"]
 
     # patient_b's own stored result must be untouched by a correction on patient_a
     export = client.post(f"/api/facial/batch/{batch_id}/export")
     assert export.status_code == 200
+
+
+def test_correct_landmark_refreshes_a_geodesic_measurements_render_path(client, tmp_path):
+    template_mesh = _grid_mesh(4, 4)
+    template_path = _write_mesh(template_mesh, tmp_path / "template.ply")
+    template_id = _load_template(client, template_path)
+
+    mesh_a = _grid_mesh(4, 4, offset=np.array([0.0, 0.0, 1.0]))
+    path_a = _write_mesh(mesh_a, tmp_path / "patient_a.ply")
+
+    a, b = _vidx(4, 0, 0), _vidx(4, 3, 0)
+    points = {"p1": _point(template_mesh, a), "p2": _point(template_mesh, b)}
+    measurements = [
+        {"id": "m1", "name": "Width (geo)", "abbreviation": "WG", "type": "linear", "point_ids": ["p1", "p2"], "geodesic": True}
+    ]
+    start_response = client.post(
+        "/api/facial/batch/start",
+        json={"template_id": template_id, "mesh_paths": [path_a], "points": points, "measurements": measurements},
+    )
+    assert start_response.status_code == 200, start_response.text
+    batch_id = start_response.json()["batch_id"]
+
+    new_point = mesh_a.vertices[_vidx(4, 1, 0)]  # move p1 one grid step closer to p2
+    response = client.post(
+        f"/api/facial/batch/{batch_id}/correct",
+        json={
+            "batch_id": batch_id,
+            "filename": "patient_a.ply",
+            "point_id": "p1",
+            "point": {"x": float(new_point[0]), "y": float(new_point[1]), "z": float(new_point[2])},
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["values"]["m1"] == pytest.approx(2.0)
+    # the surface trace is recomputed against the corrected point too, not
+    # left stale from before the correction (3 vertices: the corrected p1
+    # through to p2, one grid step shorter than before).
+    assert len(body["render_paths"]["m1"]) == 3
 
 
 def test_correct_landmark_unknown_file_404s(client, tmp_path):
@@ -437,7 +476,7 @@ def test_export_batch_produces_a_workbook_with_measurements_and_legend_sheets(cl
 
     measurements_ws = wb["measurements"]
     header = [c.value for c in next(measurements_ws.iter_rows(min_row=1, max_row=1))]
-    assert header == ["identifier", "Width (W)"]
+    assert header == ["identifier", "Width (W) [mm]"]
 
     legend_ws = wb["legend"]
     legend_header = [c.value for c in next(legend_ws.iter_rows(min_row=1, max_row=1))]

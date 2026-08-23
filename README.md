@@ -2,7 +2,7 @@
   <img src="resources/CraniumPy_logo.png" alt="CraniumPy logo" width="220">
 </p>
 
-# CranioSuite (built on CraniumPy)
+# CraniumPy
 
 
   * [Description](#description)
@@ -27,6 +27,9 @@
     * [Mean shape](#mean-shape)
     * [Excel export](#excel-export)
     * [Demo cohort](#demo-cohort)
+  * [Longitudinal workspace](#longitudinal-workspace)
+  * [Facial Anthropometrics workspace](#facial-anthropometrics-workspace)
+  * [Mean Shape workspace](#mean-shape-workspace)
   * [Running it from source](#running-it-from-source)
   * [Known issues](#known-issues)
   * [Citation](#citation)
@@ -40,9 +43,9 @@
 This repository is two things layered on top of each other:
 
 * **CraniumPy** (`src/craniumpy_core`) - the dependency-light processing library: landmark-based registration, repair, clipping, resampling, non-rigid template fitting, and every measurement (cranial cephalometrics, forehead/frontal bossing morphology, facial asymmetry). No UI code lives here.
-* **CranioSuite** - the application built on top of that library: the web/desktop UI, the per-patient analysis workflow (Data / Preprocessing / Analysis workspaces), the reporting layer (per-patient PDF/Excel, cohort accumulation with center-local de-identification), and a second Cohort mode for looking back at everything accumulated across patients - see [Cohort analysis workspace](#cohort-analysis-workspace). This is what `desktop/craniumpy.spec` packages and what the standalone `.exe`/`.app` is titled.
+* **The application** (`api/`, `frontend/`, `desktop/`) - the web/desktop UI built on top of that library: the per-patient analysis workflow (Data / Preprocessing / Analysis workspaces), the reporting layer (per-patient PDF/Excel, cohort accumulation with center-local de-identification), and four further top-level workspaces - Longitudinal, Facial Anthropometrics, Mean Shape, and Cohort - for everything beyond a single patient's own analysis. This is what `desktop/craniumpy.spec` packages, and what the standalone `.exe`/`.app` is titled - both just "CraniumPy", the same name as the library.
 
-CranioSuite registers and analyzes craniofacial 3D scans (`.ply`, `.obj`, `.stl`): landmark picking, registration, clipping, repair, and resampling, followed by cephalometric measurements, forehead/frontal-bossing shape analysis, or a facial asymmetry score - then reports all of it as a plain-language PDF and a per-patient/cohort Excel spreadsheet.
+CraniumPy registers and analyzes craniofacial 3D scans (`.ply`, `.obj`, `.stl`): landmark picking, registration, clipping, repair, and resampling, followed by cephalometric measurements, forehead/frontal-bossing shape analysis, or a facial asymmetry score - then reports all of it as a plain-language PDF and a per-patient/cohort Excel spreadsheet. Beyond a single patient, it also handles follow-up comparison over time, user-defined batch measurements, freeform mean-shape averaging, and cohort-level statistics - see [Usage](#usage) below for all of it.
 
 Runs as a local web app or a standalone desktop app. The legacy PyQt5 version is on the `legacy-craniumpy` branch.
 
@@ -57,6 +60,7 @@ Current capabilities (rigid registration and manual landmarking only, see [Regis
 * Switching between Cranial Vault and Face & Forehead mid-session keeps your landmarks and alignment, and instantly restores whatever scene you'd already built for that target - nothing gets recomputed.
 * Patient/visit metadata entry (including a diagnosis field with a craniosynostosis-subtype quick-pick), a plain-language PDF report, and a per-patient/cohort Excel export that tracks the settings each run actually used (center-of-mass correction, NICP template) alongside every measurement - see [Patient/visit metadata and reporting](#patientvisit-metadata-and-reporting). Checkboxes let you choose what to include (measurements/asymmetry/meshes) each time you export.
 * A separate Cohort mode for exploring everything accumulated across patients: filtering/stratifying, user-defined derived metrics, real statistical tests, plots, and a 3D mean shape (with an inter-patient spread heatmap, a diff against a reference template, and mean measurements with a +/-1 SD spread ribbon) across whichever patients share the same NICP template - see [Cohort analysis workspace](#cohort-analysis-workspace).
+* Three further top-level workspaces beyond a single patient's own analysis: [Longitudinal](#longitudinal-workspace) (follow-up comparison and morph animation across a patient's own timepoints), [Facial Anthropometrics](#facial-anthropometrics-workspace) (define custom point-to-point measurements and batch-extract them across many meshes), and a freeform [Mean Shape](#mean-shape-workspace) tool (average any picked set of same-template meshes, independent of a loaded cohort).
 
 ![Reconstruction](resources/CraniumPy_info.png)
 
@@ -206,7 +210,25 @@ The mean mesh downloads as a `.ply` named after whatever filters (or template gr
 Any stratified comparison (descriptive stats + test result) exports as a formatted `.xlsx` - colored header, banded rows, a frozen filterable header row, auto-detected numeric columns - the same formatted-export endpoint the mean-shape workflow's own file downloads reuse.
 
 ### Demo cohort
-`scripts/generate_demo_cohort.py` generates the shipped `resources/demo_cohort/` - 150 synthetic patients split across two NICP template groups (a cranial and a facial reference), with clinically-informed, diagnosis-correlated parameter ranges (cephalic index, frontal/metopic angle, asymmetry) so a stratified comparison in the demo actually shows something rather than pure noise. Not run at app startup - regenerate it manually if you want to change the synthetic parameters.
+`scripts/generate_demo_cohort.py` generates the shipped `src/craniumpy_core/demo_cohort/` - 150 synthetic patients split across two NICP template groups (a cranial and a facial reference), with clinically-informed, diagnosis-correlated parameter ranges (cephalic index, frontal/metopic angle, asymmetry) so a stratified comparison in the demo actually shows something rather than pure noise. Not run at app startup - regenerate it manually if you want to change the synthetic parameters.
+
+
+## Longitudinal workspace
+
+Follow-up comparison across one patient's own timepoints - stage up to 6 already-NICP-fitted meshes (from the Preprocessing panel, or drag-and-dropped straight in) into numbered slots, then switch between two sub-tabs:
+
+* **Compare** - any two staged timepoints side by side, with a per-vertex correspondence distance heatmap between them (meaningful because both were fit to the same template, so vertex *i* on one mesh is the same anatomical point on the other).
+* **3D Morphing** - the same pair interpolated into a continuous animated morph, with a scrubbable timeline and adjustable playback speed. Exportable as a video, and viewable fullscreen.
+
+Purely a viewer over meshes you've already processed elsewhere - it doesn't run registration or measurements itself.
+
+## Facial Anthropometrics workspace
+
+Define your own point-to-point measurements - linear (straight or shortest-distance-along-the-surface), angular, or an enclosed surface area - by ctrl-clicking landmarks directly on a template mesh, the same picking interaction the Per-patient workspace uses. Once a measurement set is defined, batch-extract it across as many already-NICP-registered patient meshes as you like (pick files/folders, or drag-and-drop), with a per-mesh review step to correct any landmark before the values are finalized, then export everything to a single Excel workbook (one row per mesh, units on every column, plus a legend sheet).
+
+## Mean Shape workspace
+
+A freeform mean-shape tool, independent of any loaded cohort: add any set of meshes you know are already NICP-fitted to the same template (drag-and-drop, one at a time or several at once, or the same file/folder pickers Facial Anthropometrics uses), and it averages them into a single mean shape with a per-vertex spread heatmap. A mesh whose topology or vertex count doesn't match the rest of the group is automatically excluded and reported, never silently dropped or aborting the whole batch. For the same computation scoped to a *loaded cohort's* filtered/stratified rows instead of a freeform pick, see [Mean shape](#mean-shape) under the Cohort workspace above.
 
 
 ## Running it from source
@@ -269,7 +291,7 @@ Abdel-Alim, T. (2022). CraniumPy [Computer software]. https://doi.org/10.5281/ze
 ```
 
 ## Notes on usage:
-**Research use only - not a medical device.** CranioSuite has not been assessed or certified under the EU Medical Device Regulation (MDR), the FDA, or any equivalent regulatory framework, and carries no CE mark. It is intended for research use, not for clinical diagnosis, treatment planning, or any other patient-care decision. Several of its measurements are new, reproducible reference implementations that have not yet been validated against a clinical severity score or independent ground truth.
+**Research use only - not a medical device.** CraniumPy has not been assessed or certified under the EU Medical Device Regulation (MDR), the FDA, or any equivalent regulatory framework, and carries no CE mark. It is intended for research use, not for clinical diagnosis, treatment planning, or any other patient-care decision. Several of its measurements are new, reproducible reference implementations that have not yet been validated against a clinical severity score or independent ground truth.
 
 
 ## Author

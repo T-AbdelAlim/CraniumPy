@@ -203,28 +203,28 @@ def _points_from_array(arr) -> list[LandmarkPoint]:
 def _render_geometry(
     mesh, topology, m: FacialMeasurementDef, vertex_index_by_point: dict[str, int], boundary: BoundaryTopology | None
 ) -> tuple[list[LandmarkPoint] | None, list[LandmarkPoint] | None]:
-    """the VISUAL overlay geometry for one measurement - always traces along
-    the mesh surface, regardless of whether the measurement's own computed
-    VALUE is a straight or geodesic distance (a straight chord between two
-    points on a curved face reads as floating off the surface, so the line
-    the viewer draws always hugs the mesh even for a "straight distance"
-    Linear measurement - the number shown is still the real straight-line
-    value, this only changes what gets drawn). returns (path_points,
-    boundary_face_triangle_points) - Area only ever returns the second,
-    Linear/Angular only the first. (None, None) - never raised - if a path
-    can't be traced (a disconnected mesh): the frontend falls back to a
-    plain straight connector between the raw landmark points in that case,
-    same as it already does before this round trip returns."""
+    """the VISUAL overlay geometry for one measurement, matching what its
+    own computed VALUE actually is: a straight Linear measurement (or an
+    Angular one - always straight, no surface-path toggle exists for it)
+    gets no render_path at all here, so the frontend draws its usual plain
+    straight connector between the raw landmark points - that line has to
+    stay straight-through-space, since that's the literal thing being
+    measured. only a Linear measurement with geodesic=True traces the mesh
+    surface here, for the same reason: the drawn line should show what's
+    actually being measured, not something else entirely. Area's boundary
+    is always geodesic-traced regardless (enclosed surface area has no
+    straight-line equivalent to begin with).
+
+    returns (path_points, boundary_face_triangle_points) - Area only ever
+    returns the second, Linear (geodesic) only the first. (None, None) -
+    never raised - if a path can't be traced (a disconnected mesh): the
+    frontend falls back to a plain straight connector between the raw
+    landmark points in that case, same as it already does before this
+    round trip returns."""
     try:
-        if m.type == "linear":
+        if m.type == "linear" and m.geodesic:
             a, b = (vertex_index_by_point[pid] for pid in m.point_ids)
             return _points_from_indices(mesh, geodesic_path_vertices(mesh, topology, a, b)), None
-        if m.type == "angular":
-            a, vertex, c = (vertex_index_by_point[pid] for pid in m.point_ids)
-            leg_a = geodesic_path_vertices(mesh, topology, vertex, a)
-            leg_c = geodesic_path_vertices(mesh, topology, vertex, c)
-            path = list(reversed(leg_a)) + leg_c[1:]  # a -> vertex -> c, one continuous surface trace
-            return _points_from_indices(mesh, path), None
         if m.type == "area" and boundary is not None:
             loop_points = _points_from_indices(mesh, boundary.boundary_vertex_loop)
             face_verts = mesh.vertices[mesh.faces[boundary.face_indices]].reshape(-1, 3)
@@ -468,7 +468,7 @@ def correct_landmark(batch_id: str, request: FacialCorrectionRequest) -> FacialC
 
 
 def _measurement_header(m: FacialMeasurementDef) -> str:
-    return f"{m.name} ({m.abbreviation})"
+    return f"{m.name} ({m.abbreviation}) [{_UNIT_BY_TYPE[m.type]}]"
 
 
 @router.post("/batch/{batch_id}/export")

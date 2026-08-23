@@ -125,14 +125,14 @@ def geodesic_distance(mesh: trimesh.Trimesh, topology: MeshTopology, a: int, b: 
     return d
 
 
-def geodesic_path_vertices(mesh: trimesh.Trimesh, topology: MeshTopology, a: int, b: int) -> list[int]:
-    """the actual ordered vertex-index route of geodesic_distance's shortest
-    path (not just its length) - used to trace a Surface Area boundary
-    between consecutive landmark points. raises the same ValueError
-    geodesic_distance does when a and b aren't connected."""
+def _geodesic_path_from_graph(graph: csr_matrix, a: int, b: int) -> list[int]:
+    """geodesic_path_vertices' actual path-tracing logic, against an
+    already-built weighted graph - split out so a caller tracing several
+    segments against the same mesh (see _closed_geodesic_loop) can build
+    that graph once and reuse it, instead of geodesic_path_vertices'
+    own per-call _weighted_graph rebuild."""
     if a == b:
         return [a]
-    graph = _weighted_graph(mesh, topology)
     dist, predecessors = dijkstra(graph, indices=[a], directed=False, return_predecessors=True)
     if not np.isfinite(dist[0, b]):
         raise ValueError(
@@ -148,16 +148,29 @@ def geodesic_path_vertices(mesh: trimesh.Trimesh, topology: MeshTopology, a: int
     return path
 
 
+def geodesic_path_vertices(mesh: trimesh.Trimesh, topology: MeshTopology, a: int, b: int) -> list[int]:
+    """the actual ordered vertex-index route of geodesic_distance's shortest
+    path (not just its length) - used to trace a Surface Area boundary
+    between consecutive landmark points. raises the same ValueError
+    geodesic_distance does when a and b aren't connected."""
+    return _geodesic_path_from_graph(_weighted_graph(mesh, topology), a, b)
+
+
 def _closed_geodesic_loop(mesh: trimesh.Trimesh, topology: MeshTopology, vertex_indices: list[int]) -> list[int]:
-    """chains geodesic_path_vertices between each consecutive pair of
-    landmarks, wrapping back from the last to the first - one continuous
-    ordered vertex loop tracing the boundary along the mesh surface."""
+    """chains a geodesic path between each consecutive pair of landmarks,
+    wrapping back from the last to the first - one continuous ordered
+    vertex loop tracing the boundary along the mesh surface. builds the
+    weighted graph once for this mesh and reuses it across every segment,
+    rather than geodesic_path_vertices' own per-call rebuild (this is the
+    one place that's wasteful - a boundary with N landmarks otherwise
+    rebuilds the same graph N times over)."""
+    graph = _weighted_graph(mesh, topology)
     loop = [vertex_indices[0]]
     n = len(vertex_indices)
     for i in range(n):
         a = vertex_indices[i]
         b = vertex_indices[(i + 1) % n]
-        segment = geodesic_path_vertices(mesh, topology, a, b)
+        segment = _geodesic_path_from_graph(graph, a, b)
         loop.extend(segment[1:])  # segment[0] == a == loop[-1] already
     return loop
 
