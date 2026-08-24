@@ -229,7 +229,7 @@ def test_frontal_bossing_excludes_points_below_sellion():
     y = np.linspace(-40.0, 100.0, 400)
     z = np.where(y < 0.0, 50.0, -0.005 * (y - 40.0) ** 2 + 20.0)
     mesh = _sagittal_grid_mesh(y, z)
-    sellion = np.array([0.0, 0.0, 0.0])
+    sellion = np.array([0.0, 0.0, 12.0])  # right on the surface at y=0, like every other test above
 
     result = frontal_bossing(mesh, sellion, slice_height=40.0)
 
@@ -297,6 +297,28 @@ def test_select_forehead_half_picks_the_side_near_sellion_regardless_of_arc_orde
     backward = _select_forehead_half(front_to_back[::-1], sellion)
     assert backward[-1, 1] == pytest.approx(150.0)
     assert backward[0, 2] == pytest.approx(70.9)
+
+
+def test_frontal_bossing_none_when_sellion_region_clipped_away():
+    # mimics the real bug: a cranial clip removes the sellion/nasal-root
+    # region entirely, and the mesh that's left happens to sit off-center
+    # (x in [10, 30], not straddling x=0) - the same shape the shipped
+    # cranial template actually has (empirically: the idealized sellion
+    # snaps 18mm away to x=13.8, not x=0). before the fix, the naive
+    # nearest-point snap would happily land on this off-center mesh and
+    # frontal_bossing would silently return a wrong, sideways-shifted
+    # result. with the distance-gated snap, a gap this large (~20mm, far
+    # past _SELLION_SNAP_MAX_MM) keeps the given (correctly midline)
+    # sellion x instead - and a plane at the true x=0 misses this
+    # off-center mesh entirely, so this must report None rather than
+    # fabricate a measurement.
+    xs = np.linspace(10.0, 30.0, 9)
+    y = np.linspace(20.0, 100.0, 300)
+    z = -0.005 * (y - 60.0) ** 2 + 20.0
+    mesh = _sagittal_grid_mesh(y, z, xs=xs)
+    sellion = np.array([0.0, 0.0, 20.0])
+
+    assert frontal_bossing(mesh, sellion, slice_height=60.0) is None
 
 
 def test_frontal_bossing_full_head_profile_finds_frontal_point_not_occipital():

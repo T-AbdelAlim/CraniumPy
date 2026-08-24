@@ -29,6 +29,13 @@ import trimesh
 
 from .remesh import repair_mesh
 
+# frontal_bossing()'s sellion-snap tolerance: past this many mm, the nearest
+# surface point isn't "the same spot, just decimation-shifted" anymore - it's
+# a different spot the mesh happens to have instead (e.g. a cranial clip's
+# boundary, once the nasal-root region itself is gone). see that function's
+# own docstring.
+_SELLION_SNAP_MAX_MM = 5.0
+
 
 @dataclass
 class SliceProfile:
@@ -409,20 +416,37 @@ def frontal_bossing(mesh: trimesh.Trimesh, sellion: np.ndarray, slice_height: fl
     sits above sellion at all.
 
     the given sellion is snapped onto this mesh's own surface before
-    anything else. the landmark comes from a click on the RAW scan, while
-    this mesh has since been repaired, clipped and resampled - and quadric
-    decimation pulls a tight concavity like the nasal root slightly inward,
-    which leaves the original pick sitting a millimetre or two off the
-    surface in front of it. that showed up as a visible gap between the
-    drawn sellion marker and the mesh, and it also means the angle's own
-    origin wasn't quite on the surface the rest of the construction (the
+    anything else, PROVIDED it's actually close to it already. the
+    landmark comes from a click on the RAW scan, while this mesh has
+    since been repaired, clipped and resampled - and quadric decimation
+    pulls a tight concavity like the nasal root slightly inward, which
+    leaves the original pick sitting a millimetre or two off the surface
+    in front of it. that showed up as a visible gap between the drawn
+    sellion marker and the mesh, and it also means the angle's own origin
+    wasn't quite on the surface the rest of the construction (the
     section, the frontal point) was taken from. snapping fixes both, and
     makes the value independent of how far decimation happened to move
     that spot.
+
+    a CRANIAL clip removes the nasal-root region entirely, though - it
+    simply isn't part of a cranial-target mesh at all, unlike the "a
+    millimetre or two of decimation drift" case snapping was built for.
+    trimesh.proximity.closest_point still returns an answer regardless
+    (the nearest point on the mesh to wherever sellion is, however far
+    that turns out to be), but that answer is just whatever the clip
+    boundary happens to be nearest to sellion's position - under no
+    obligation to sit anywhere near the sagittal midline the way the
+    given (registered) sellion itself reliably does, and observed to
+    land over a centimetre off to one side on the shipped cranial
+    templates. past _SELLION_SNAP_MAX_MM, this falls back to the given
+    sellion as-is (already correctly on/near the midline by construction
+    of registration, just not surface-snapped) rather than trusting a
+    "nearest point" that no longer means what the caller expects it to.
     """
     sellion = np.asarray(sellion, dtype=np.float64)
-    snapped, _, _ = trimesh.proximity.closest_point(mesh, sellion[np.newaxis, :])
-    sellion = snapped[0]
+    snapped, snap_dist, _ = trimesh.proximity.closest_point(mesh, sellion[np.newaxis, :])
+    if snap_dist[0] <= _SELLION_SNAP_MAX_MM:
+        sellion = snapped[0]
 
     section = mesh.section(plane_normal=[1, 0, 0], plane_origin=[sellion[0], 0, 0])
     if section is None or len(section.vertices) == 0:
