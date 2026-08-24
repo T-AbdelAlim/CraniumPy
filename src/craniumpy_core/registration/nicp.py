@@ -54,12 +54,19 @@ def _build_stiffness(faces: np.ndarray, n_verts: int, gamma: float) -> tuple[spa
     """edge incidence matrix M (m x n), kroneckered with diag(1,1,1,gamma) -
     the regularizer that penalizes neighboring vertices' affine transforms
     from drifting apart (stiffness), with gamma weighting the translation
-    column's contribution separately from rotation/scale."""
-    edges = set()
-    for f in faces:
-        a, b, c = sorted(f)
-        edges.update({(a, b), (a, c), (b, c)})
-    edges = np.array(sorted(edges))
+    column's contribution separately from rotation/scale.
+
+    same "sort each face's 3 vertex pairs, dedupe" edge extraction
+    _boundary_vertex_indices uses just above, done once vectorized over
+    every face instead of a per-face Python loop building up a set - for
+    a real template-sized mesh (thousands of faces) the loop was easily
+    the most expensive part of everything in this module that only runs
+    ONCE per fit (as opposed to once per correspondence/solve pass, where
+    the real per-call cost lives) - np.unique(..., axis=0) sorts its
+    output the same way sorted(set-of-tuples) already did, so this
+    produces the exact same edges array, not just an equivalent one."""
+    raw_edges = faces[:, [0, 1, 1, 2, 2, 0]].reshape(-1, 2)
+    edges = np.unique(np.sort(raw_edges, axis=1), axis=0)
     m = len(edges)
 
     rows = np.repeat(np.arange(m), 2)
@@ -74,11 +81,16 @@ def _build_stiffness(faces: np.ndarray, n_verts: int, gamma: float) -> tuple[spa
 def _build_data_term(src_v: np.ndarray) -> sparse.csr_matrix:
     """per-vertex 4-wide data matrix D (n x 4n) holding [x y z 1] blocks -
     D @ X (X being the per-vertex affine params) gives the transformed
-    vertex positions."""
+    vertex positions.
+
+    same [x,y,z,1] blocks the old per-vertex Python loop built one
+    np.append call at a time - np.hstack + ravel produces the identical
+    flat, row-major [x0,y0,z0,1,x1,y1,z1,1,...] sequence in one
+    vectorized pass instead of n small allocations."""
     n = len(src_v)
     rows = np.repeat(np.arange(n), 4)
     cols = np.arange(n * 4)
-    vals = np.concatenate([np.append(src_v[i], 1.0) for i in range(n)])
+    vals = np.hstack([src_v, np.ones((n, 1))]).ravel()
     return sparse.csr_matrix((vals, (rows, cols)), shape=(n, n * 4))
 
 
@@ -154,32 +166,45 @@ def nicp(
         is_source_boundary[:] = False
 
     for step, alpha in enumerate(alphas):
+        # alpha is fixed for every inner iteration at this stiffness
+        # level - hoisted out of the inner loop so the (cheap, but not
+        # free) sparse scalar-multiply happens once per outer step
+        # instead of once per correspondence/solve pass.
+        alpha_kron_MG = alpha * kron_MG
+
         for _ in range(inner_iters):
             transformed = D @ X
 
             dist = np.empty(n)
             idx = np.empty(n, dtype=np.int64)
             if is_source_boundary.any():
-                d_b, i_b = tree_boundary.query(transformed[is_source_boundary])
+                # workers=-1: parallel nearest-neighbor search across all
+                # available cores - exact same results as the default
+                # single-threaded query, just computed concurrently.
+                d_b, i_b = tree_boundary.query(transformed[is_source_boundary], workers=-1)
                 dist[is_source_boundary] = d_b
                 idx[is_source_boundary] = target_boundary_idx[i_b]
             if (~is_source_boundary).any():
-                d_i, i_i = tree.query(transformed[~is_source_boundary])
+                d_i, i_i = tree.query(transformed[~is_source_boundary], workers=-1)
                 dist[~is_source_boundary] = d_i
                 idx[~is_source_boundary] = i_i
             matches = target_v[idx]
 
             w = (dist <= dist_threshold).astype(np.float64)
             W = sparse.diags(w)
+            WD = W @ D
 
-            A = sparse.vstack([alpha * kron_MG, W @ D]).tocsr()
-            B = np.zeros((4 * m + n, 3))
-            B[4 * m :] = w[:, None] * matches
+            A = sparse.vstack([alpha_kron_MG, WD]).tocsr()
 
             # normal equations (A^T A) X = A^T B - what CHOLMOD's
             # cholesky_AAt did, here via a plain sparse LU solve instead.
+            # B is [zeros(4m, 3); w[:,None]*matches] (the stiffness rows
+            # always target zero), so A^T @ B reduces exactly to
+            # WD.T @ (w[:,None]*matches) - computing it directly instead
+            # of the full A^T @ B skips ever multiplying against that
+            # always-zero stiffness block.
             AtA = (A.T @ A).tocsc()
-            AtB = A.T @ B
+            AtB = WD.T @ (w[:, None] * matches)
             X = spsolve(AtA, AtB)
             if X.ndim == 1:
                 X = X.reshape(-1, 3)
