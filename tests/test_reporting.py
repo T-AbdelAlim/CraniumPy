@@ -35,11 +35,14 @@ from api.results_bundle import (
     _id_mapping_path,
     _metrics_row,
     _silhouette_polygon,
+    _draw_trends_chart,
     _summary_xlsx,
     _upsert_cohort_xlsx,
     list_cohort_patients,
     prepare_new_cohort_path,
+    trends_chart_png,
 )
+from api.schemas import TrendsChartSeries
 from craniumpy_core.asymmetry import AsymmetryResult
 from craniumpy_core.craniometrics import CranioMeasurements, FrontalBossingResult
 from craniumpy_core.metopic import MetopicResult
@@ -602,6 +605,57 @@ def test_metopic_figure_xlabel_legend_caption_dont_overlap():
         ) / fig_h
         title_top = lower.title.get_window_extent(renderer).y1 / fig_h
         assert tick_bottom >= title_top
+
+
+# --- trends_chart_png (Longitudinal Trends tab's figure export) ----------
+
+
+def test_trends_chart_png_returns_a_valid_png():
+    series = [
+        TrendsChartSeries(label="OFD (head length)", unit="mm", color="#16a34a", values=[180.0, 182.5, 185.0]),
+        TrendsChartSeries(label="BPD (head width)", unit="mm", color="#2563eb", values=[140.0, 141.0, None]),
+    ]
+
+    png_bytes = trends_chart_png(["Timepoint 0", "Timepoint 1", "Timepoint 2"], series)
+
+    assert png_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+    assert len(png_bytes) > 1000
+
+
+def test_trends_chart_png_handles_a_series_with_no_values_at_all():
+    # a metric that doesn't apply to any of the currently-selected
+    # timepoints (e.g. a metopic-only field with every slot on the cranium
+    # target) - every value is None, not just some of them.
+    series = [TrendsChartSeries(label="Ridge protrusion", unit="mm", color="#dc2626", values=[None, None])]
+
+    png_bytes = trends_chart_png(["Timepoint 0", "Timepoint 1"], series)
+
+    assert png_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_trends_chart_legend_sits_outside_the_axes_not_on_top_of_the_data():
+    # the legend used to be ax.legend(loc="best") - with several series
+    # selected (this chart supports up to ~20), "best" routinely picked a
+    # spot right on top of the plotted lines. now it's a fig-level legend
+    # reserved space below the axes - assert the two don't overlap
+    # vertically, the same way test_measurements_figure_xlabel_legend_
+    # caption_dont_overlap already checks a legend/caption pair elsewhere
+    # in this file.
+    series = [
+        TrendsChartSeries(label=f"metric {i}", unit="mm", color="#16a34a", values=[float(i), float(i) + 1.0])
+        for i in range(8)  # enough series to wrap into multiple legend rows
+    ]
+
+    fig = Figure(figsize=(10, 6))
+    _draw_trends_chart(fig, ["Timepoint 0", "Timepoint 1"], series)
+    canvas = FigureCanvasAgg(fig)
+    canvas.draw()
+    renderer = canvas.get_renderer()
+
+    (ax,) = fig.axes
+    axes_bottom = ax.get_window_extent(renderer).y0
+    legend_top = fig.legends[0].get_window_extent(renderer).y1
+    assert legend_top <= axes_bottom
 
 
 # --- _draw_metric_fields (PDF metric-group text blocks) -------------------

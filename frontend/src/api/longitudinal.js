@@ -7,7 +7,8 @@
 // reaches here, so there's no fitting left to do in this module. these are
 // only the genuinely new operations: the measurement suite run on an
 // arbitrary already-registered mesh, a per-vertex diff between two
-// same-topology meshes, and the two-timepoint PDF report.
+// same-topology meshes, the two-timepoint PDF report, and the Trends tab's/
+// 3D Morphing's save-to-folder exports.
 
 // a mesh ref is either {sessionId, stage} (a live per-timepoint session's
 // own pipeline stage - "original"/"clipped"/"result"/"nicp_result") or
@@ -69,4 +70,40 @@ export async function downloadLongitudinalReport(meshRefA, meshRefB, target, lab
   if (!response.ok) throw new Error(await response.text());
   const blob = await response.blob();
   return URL.createObjectURL(blob);
+}
+
+// the Trends tab's one "export results" button - writes a 300dpi figure
+// (built server-side via matplotlib, so it comes out crisp at print
+// resolution rather than an upscaled screenshot of the on-screen SVG chart)
+// AND an xlsx of the same values into destDir/folderName/ - a real desktop
+// save (returns where it landed), not a browser download, since there's a
+// real folder to write into (see TrendsTab.jsx's own destination-folder
+// control, desktop-only same as every other save-to-folder action in this
+// app). series is [{label, unit, color, values}] - values already resolved
+// client-side (null where a slot has no value for that metric).
+export async function saveTrendsExport(xLabels, series, destDir, folderName) {
+  const response = await fetch("/api/longitudinal/trends-export", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ x_labels: xLabels, series, dest_dir: destDir, folder_name: folderName }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json(); // {saved_to}
+}
+
+// 3D Morphing's "export video" button, desktop variant - the recording
+// itself only exists as an in-browser MediaRecorder Blob (see
+// MorphControl.jsx's handleExportVideo), so this just uploads those bytes
+// for the backend to write into destDir/folderName/ (same folder-naming
+// convention saveTrendsExport uses) instead of triggering a browser
+// download - see api/routers/longitudinal.py's save_video.
+export async function saveVideo(blob, extension, destDir, folderName) {
+  const form = new FormData();
+  form.append("video", blob, `morph_animation.${extension}`);
+  form.append("dest_dir", destDir);
+  form.append("folder_name", folderName);
+  form.append("extension", extension);
+  const response = await fetch("/api/longitudinal/save-video", { method: "POST", body: form });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json(); // {saved_to}
 }

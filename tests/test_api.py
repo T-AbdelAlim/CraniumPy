@@ -59,6 +59,12 @@ def _poll_status(client: TestClient, session_id: str, timeout: float) -> str:
     return status
 
 
+def _run_align(client: TestClient, session_id: str, body: dict, timeout: float = 30) -> str:
+    response = client.post(f"/api/sessions/{session_id}/align", json=body)
+    assert response.status_code == 200, response.text
+    return _poll_status(client, session_id, timeout)
+
+
 def _run_clip(client: TestClient, session_id: str, body: dict, timeout: float = 30) -> str:
     response = client.post(f"/api/sessions/{session_id}/clip", json=body)
     assert response.status_code == 200, response.text
@@ -908,6 +914,75 @@ def test_save_meshes_gains_a_third_file_after_nicp_fit(client, landmarks_payload
     assert any(n.endswith("_rg.ply") for n in names)
     assert any(n.endswith("_rg_C.ply") for n in names)
     assert any(n.endswith("_rg_CN.ply") for n in names)
+
+
+def test_save_meshes_right_after_align_writes_just_rg_ply(client, landmarks_payload, tmp_path):
+    # the bug this covers: pressing "Align" (no /clip, no /run yet) is
+    # documented (PreprocessingPanel.jsx, App.jsx's autoSaveMeshes,
+    # save_meshes_to_source_folder's own docstring) to auto-save the meshes
+    # folder right away - it used to 409 instead, since the endpoint
+    # required a completed /run (session.result_mesh), which /align alone
+    # never sets.
+    import shutil
+
+    tmp_mesh = tmp_path / "patient.ply"
+    shutil.copy(TEMPLATE_PATH, tmp_mesh)
+    open_response = client.post("/api/sessions/from-paths", json={"paths": [str(tmp_mesh)]})
+    session_id = open_response.json()["session_id"]
+
+    status = _run_align(client, session_id, {"target": "cranium", "landmarks": landmarks_payload})
+    assert status == "done"
+
+    save_response = client.post(f"/api/sessions/{session_id}/save/meshes")
+    assert save_response.status_code == 200, save_response.text
+    saved_to = Path(save_response.json()["saved_to"])
+    # com_translation is unknown this early (it's a /clip-time option) -
+    # guessed True, the same default both the frontend and ClipRequest
+    # itself start on - see _resolve_meshes_save_config.
+    assert saved_to == tmp_path / "CP_C_patient_CoM" / "meshes"
+    names = {p.name for p in saved_to.iterdir()}
+    assert names == {"patient_rg.ply"}
+
+    # running the real pipeline afterward (still the default com_translation)
+    # adds the rest into that SAME folder rather than a second one.
+    status = _clip_and_run(client, session_id, {"target": "cranium", "landmarks": landmarks_payload})
+    assert status == "done"
+    save_response = client.post(f"/api/sessions/{session_id}/save/meshes")
+    assert save_response.status_code == 200, save_response.text
+    saved_to_after_run = Path(save_response.json()["saved_to"])
+    assert saved_to_after_run == saved_to
+    names = {p.name for p in saved_to.iterdir()}
+    assert names == {"patient_rg.ply", "patient_rg_C.ply"}
+
+
+def test_save_meshes_before_align_is_a_clear_error(client, tmp_path):
+    # a real source_dir (so _resolve_dest_dir itself succeeds) but nothing
+    # aligned yet - the aligned_mesh check must be what 409s here, not the
+    # dest_dir resolution.
+    import shutil
+
+    tmp_mesh = tmp_path / "patient.ply"
+    shutil.copy(TEMPLATE_PATH, tmp_mesh)
+    open_response = client.post("/api/sessions/from-paths", json={"paths": [str(tmp_mesh)]})
+    session_id = open_response.json()["session_id"]
+
+    save_response = client.post(f"/api/sessions/{session_id}/save/meshes")
+    assert save_response.status_code == 409
+
+
+def test_save_meshes_without_a_source_path_is_a_clear_400(client, landmarks_payload):
+    # a plain browser-bytes upload has no filesystem path behind it - what a
+    # desktop drag-drop also degrades to when the native path doesn't
+    # resolve in time (see lib/desktop.js's waitForNativeDropPaths). there's
+    # genuinely nowhere to auto-save next to, so this must stay a 400: it's
+    # the signal App.jsx's autoSaveMeshes turns into "not saved
+    # automatically, pick a save folder" rather than the silent no-op that
+    # used to make a failed auto-save look identical to a successful one.
+    session_id = _upload(client)
+    assert _run_align(client, session_id, {"target": "cranium", "landmarks": landmarks_payload}) == "done"
+
+    save_response = client.post(f"/api/sessions/{session_id}/save/meshes")
+    assert save_response.status_code == 400
 
 
 def test_analysis_export_records_nicp_settings_after_a_fit(client, landmarks_payload):

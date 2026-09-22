@@ -233,14 +233,22 @@ A freeform mean-shape tool, independent of any loaded cohort: add any set of mes
 
 ## Running it from source
 
-Requires Python 3.11+.
+Requires Python 3.11+ (tested on 3.14) and Node.js 20+.
 
+Quick setup - creates `.venv`, installs the pinned dependencies from `requirements.txt`, and builds the frontend:
 ```
 git clone https://github.com/T-AbdelAlim/CraniumPy.git
 cd CraniumPy
+powershell -ExecutionPolicy Bypass -File setup.ps1     # windows
+bash setup.sh                                          # macos/linux
+```
+then run the desktop app with `.venv\Scripts\python.exe -m desktop.app` (macOS/Linux: `.venv/bin/python -m desktop.app`).
+
+Or by hand:
+```
 python -m venv .venv
 .venv\Scripts\Activate.ps1      # windows/powershell. bash: source .venv/Scripts/activate. mac/linux: source .venv/bin/activate
-pip install -e .
+pip install -r requirements.txt -e .
 ```
 
 The frontend is a Vite/React project under `frontend/` - build it once (requires Node.js) before running either the web app or the desktop app, since both serve the built output, not the source:

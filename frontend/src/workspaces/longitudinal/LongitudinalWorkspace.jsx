@@ -1,62 +1,15 @@
 import { useEffect, useState } from "react";
 import CompareTab from "./tabs/CompareTab.jsx";
 import MorphingTab from "./tabs/MorphingTab.jsx";
-import { slotColor } from "./lib/colors.js";
+import TrendsTab from "./tabs/TrendsTab.jsx";
+import { MAX_SLOTS, makeEmptySlot, mergeStagedMeshesIntoSlots } from "./lib/slots.js";
+import { defaultTrendMetricIds } from "./lib/trendMetrics.js";
 
 const TABS = [
   { id: "compare", label: "Compare" },
+  { id: "trends", label: "Trends" },
   { id: "morphing", label: "3D Morphing" },
 ];
-
-const MAX_SLOTS = 6; // matches lib/colors.js's palette length - past this, slot colors start repeating
-
-function makeEmptySlot(index) {
-  return {
-    id: crypto.randomUUID(),
-    label: "",
-    color: slotColor(index).swatch,
-    sessionId: null,
-    stage: null,
-    target: "cranium",
-    measurements: null,
-    ready: false,
-  };
-}
-
-// converts App.jsx's stagedLongitudinalMeshes ({sessionId, target, stage,
-// timepoint, label}) into this workspace's own slot shape, one slot PER
-// staged timepoint index (parsed from "t0".."t5") - positional, so staging
-// t0 and t2 leaves slot 1 empty rather than compacting them together
-// (matches PreprocessingPanel.jsx's own "select a timepoint" framing: the
-// number picked there is where it lands). two staged meshes for the SAME
-// timepoint (a cranium and a face, say) can't both occupy one slot - the
-// most recently staged one wins, same "last write wins" resolution
-// App.jsx's own array just naturally gives by iteration order. falls back
-// to the plain two-empty-slots default when nothing was staged (or "load
-// clean workspace" was picked - see App.jsx's loadStagedIntoLongitudinal).
-function buildInitialSlots(stagedMeshes) {
-  if (!stagedMeshes || stagedMeshes.length === 0) return [makeEmptySlot(0), makeEmptySlot(1)];
-  const byTimepoint = new Map();
-  for (const m of stagedMeshes) {
-    const index = Number(String(m.timepoint).replace("t", "")) || 0;
-    byTimepoint.set(index, m);
-  }
-  const count = Math.min(Math.max(Math.max(...byTimepoint.keys()) + 1, 2), MAX_SLOTS);
-  return Array.from({ length: count }, (_, i) => {
-    const staged = byTimepoint.get(i);
-    if (!staged) return makeEmptySlot(i);
-    return {
-      id: crypto.randomUUID(),
-      label: staged.label || "",
-      color: slotColor(i).swatch,
-      sessionId: staged.sessionId,
-      stage: staged.stage,
-      target: staged.target,
-      measurements: null,
-      ready: false,
-    };
-  });
-}
 
 // third top-level workspace alongside Patients/Cohort (see
 // components/shell/Shell.jsx's nav) - compares two or more ALREADY NICP-fit
@@ -92,11 +45,27 @@ export default function LongitudinalWorkspace({ onSnapshotChange, initialStagedM
   // Viewer scene/measurement blob itself.
   const [slots, setSlots] = useState(() => {
     if (initialSnapshot) return initialSnapshot.slots.map((s) => ({ ...s, ready: false, measurements: null }));
-    return buildInitialSlots(initialStagedMeshes);
+    return mergeStagedMeshesIntoSlots([], initialStagedMeshes);
   });
   const [activeTab, setActiveTab] = useState(() => initialSnapshot?.activeTab ?? "compare");
   const [linkCameras, setLinkCameras] = useState(() => initialSnapshot?.linkCameras ?? true);
   const [overlayMode, setOverlayMode] = useState(() => initialSnapshot?.overlayMode ?? "measurements");
+  // the Trends tab's own metric selection - lifted up here (rather than
+  // owned by TrendsTab itself) for the same reason linkCameras/overlayMode
+  // are: it needs to survive this workspace's own snapshot/restore cycle
+  // (see the useEffect below), not just an unmount within one session.
+  const [selectedTrendMetricIds, setSelectedTrendMetricIds] = useState(
+    () => initialSnapshot?.selectedTrendMetricIds ?? defaultTrendMetricIds(slots)
+  );
+  // where the Trends "export results" button and 3D Morphing's "export
+  // video" button write to (a native folder picker, desktop-only - see
+  // TrendsTab.jsx/MorphControl.jsx) - one shared destination for both,
+  // since they're both "save this workspace's own output somewhere",
+  // rather than two independent choices to keep track of. null until
+  // chosen; both export buttons stay disabled until then (there's no
+  // sensible default the way a single-session save has one - see
+  // api/schemas.py's TrendsExportRequest docstring).
+  const [exportDestDir, setExportDestDir] = useState(() => initialSnapshot?.exportDestDir ?? null);
 
   // reports this workspace's own lightweight, JSON-safe state up to
   // App.jsx on every change - deliberately dropping measurements/ready
@@ -109,8 +78,10 @@ export default function LongitudinalWorkspace({ onSnapshotChange, initialStagedM
       activeTab,
       linkCameras,
       overlayMode,
+      selectedTrendMetricIds,
+      exportDestDir,
     });
-  }, [slots, activeTab, linkCameras, overlayMode, onSnapshotChange]);
+  }, [slots, activeTab, linkCameras, overlayMode, selectedTrendMetricIds, exportDestDir, onSnapshotChange]);
 
   function handleAddSlot() {
     setSlots((prev) => (prev.length >= MAX_SLOTS ? prev : [...prev, makeEmptySlot(prev.length)]));
@@ -159,8 +130,17 @@ export default function LongitudinalWorkspace({ onSnapshotChange, initialStagedM
             onOverlayModeChange={setOverlayMode}
           />
         </div>
+        <div style={{ display: activeTab === "trends" ? undefined : "none" }}>
+          <TrendsTab
+            slots={slots}
+            selectedMetricIds={selectedTrendMetricIds}
+            onSelectedMetricIdsChange={setSelectedTrendMetricIds}
+            exportDestDir={exportDestDir}
+            onExportDestDirChange={setExportDestDir}
+          />
+        </div>
         <div style={{ display: activeTab === "morphing" ? undefined : "none" }}>
-          <MorphingTab slots={slots} />
+          <MorphingTab slots={slots} exportDestDir={exportDestDir} onExportDestDirChange={setExportDestDir} />
         </div>
       </div>
     </div>

@@ -661,6 +661,39 @@ class LongitudinalReportRequest(BaseModel):
     include_diff: bool = True
 
 
+class TrendsChartSeries(BaseModel):
+    """one line on the Trends tab's "measurements over time" chart - see
+    api/results_bundle.trends_chart_png. color is a hex string (the
+    frontend's own per-metric color - see workspaces/longitudinal/lib/
+    trendMetrics.js) so the exported figure's legend matches the on-screen
+    chart exactly. values is index-aligned with the caller's own x_labels
+    (see TrendsExportRequest below), one entry per timepoint slot - None
+    where that slot has no value for this metric (a metopic field on a
+    cranium-target slot, an unready slot), which the chart draws as a gap
+    rather than a false connecting line."""
+
+    label: str
+    unit: str
+    color: str
+    values: list[float | None]
+
+
+class TrendsExportRequest(BaseModel):
+    """the Trends tab's "export results" button - writes both the 300dpi
+    figure and the xlsx of the same values into one dest_dir/folder_name/
+    folder (see api/routers/longitudinal.py's trends_export) - desktop
+    only, same dest_dir convention as api/schemas.py's SaveRequest, just
+    without a session to fall back to (a Trends chart spans several
+    sessions/timepoints, so there's no single one to resolve a default
+    destination from - the frontend always sends a real, user-picked
+    dest_dir here)."""
+
+    x_labels: list[str]
+    series: list[TrendsChartSeries]
+    dest_dir: str
+    folder_name: str
+
+
 # --- Facial Anthropometrics workspace -------------------------------------
 
 

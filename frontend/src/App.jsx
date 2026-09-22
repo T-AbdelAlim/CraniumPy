@@ -10,6 +10,7 @@ import ConfirmDialog from "./components/ConfirmDialog.jsx";
 import StagedWorkspaceDialog from "./components/StagedWorkspaceDialog.jsx";
 import CohortWorkspace from "./workspaces/cohort/CohortWorkspace.jsx";
 import LongitudinalWorkspace from "./workspaces/longitudinal/LongitudinalWorkspace.jsx";
+import { mergeStagedMeshesIntoSlots } from "./workspaces/longitudinal/lib/slots.js";
 import FacialWorkspace from "./workspaces/facial/FacialWorkspace.jsx";
 import MeanShapeWorkspace from "./workspaces/meanshape/MeanShapeWorkspace.jsx";
 import { listCohortPatients } from "./api/cohort.js";
@@ -170,10 +171,17 @@ function App() {
   const [appMode, setAppMode] = useState("patients");
   // meshes staged for Longitudinal from the Preprocessing panel's own
   // "stage for Longitudinal" control (see handleStageForLongitudinal) -
-  // {sessionId, target, stage: "nicp_result", timepoint, label}. never
-  // auto-cleared - staging again just appends, and switching to
-  // Longitudinal without picking "load staged" leaves the list intact for
-  // next time.
+  // {sessionId, target, stage: "nicp_result", timepoint, label}. not
+  // cleared just by staging more (staging again just appends) or by
+  // switching AWAY from Longitudinal without visiting it - only once
+  // they're actually acted on: loaded, declined, or merged into an
+  // existing snapshot (see handleAppModeChange/handleLoadStagedWorkspace/
+  // handleLoadCleanWorkspace, all three of which clear this). leaving a
+  // consumed batch sitting here used to be a real bug - the NEXT staging
+  // action would re-append to it, and the following merge would replay
+  // THIS batch's (possibly since-closed) session ids back on top of the
+  // workspace's own live state, silently blanking a timepoint that had
+  // been working fine.
   const [stagedLongitudinalMeshes, setStagedLongitudinalMeshes] = useState([]);
   // shown once a switch to "longitudinal" is about to actually commit (see
   // handleAppModeChange) while stagedLongitudinalMeshes isn't empty - see
@@ -213,13 +221,32 @@ function App() {
   const [loadSnapshotIntoFacial, setLoadSnapshotIntoFacial] = useState(false);
   const [loadSnapshotIntoMeanShape, setLoadSnapshotIntoMeanShape] = useState(false);
 
+  // a session id can be held by more than just the Patients workspace:
+  // staging copies it into stagedLongitudinalMeshes, and once Longitudinal
+  // has been visited its snapshot holds one per slot. closing a session
+  // releases its meshes server-side (see api/routers/mesh.py's
+  // close_session), so releasing one those still point at leaves a
+  // timepoint that can never load its mesh again - every later request for
+  // it 404s and the slot just sits there empty. that's what made "stage a
+  // mesh, then open the next patient" quietly break the staged timepoint.
+  function isSessionHeldElsewhere(id) {
+    if (id == null) return false;
+    if (stagedLongitudinalMeshes.some((m) => m.sessionId === id)) return true;
+    return !!longitudinalSnapshot?.slots?.some((s) => s.sessionId === id);
+  }
+
+  // closeSession, minus the sessions another workspace is still relying on.
+  function releaseSessionIfUnused(id) {
+    if (!isSessionHeldElsewhere(id)) closeSession(id);
+  }
+
   function handleStageForLongitudinal(timepoint) {
     // re-staging an already-staged timepoint replaces it rather than
     // appending a second entry - without this, staging t1 twice inflated
     // stagedLongitudinalMeshes.length (shown directly as the
     // StagedWorkspaceDialog count) past the number of distinct timepoints
-    // that actually end up as slots (buildInitialSlots already collapses
-    // duplicates by timepoint, last-write-wins - this just keeps the raw
+    // that actually end up as slots (mergeStagedMeshesIntoSlots already
+    // collapses duplicates by timepoint, last-write-wins - this just keeps the raw
     // array's own length agreeing with that).
     setStagedLongitudinalMeshes((prev) => [
       ...prev.filter((m) => m.timepoint !== timepoint),
@@ -236,13 +263,34 @@ function App() {
   // the Shell nav's own onAppModeChange - switching is always immediate now
   // (nothing is ever discarded, see longitudinalSnapshot's own comment
   // above), except for two detours that need a choice first: freshly staged
-  // meshes waiting for Longitudinal (takes priority - a staging action just
-  // taken moments ago is a stronger signal than a passive leftover
-  // snapshot), or a preserved snapshot from the last time the target
-  // workspace was visited.
+  // meshes waiting for Longitudinal with NOTHING to merge them into yet
+  // (see the branch below for when there's already a real snapshot), or a
+  // preserved snapshot from the last time the target workspace was visited.
   function handleAppModeChange(nextMode) {
     if (nextMode === appMode) return;
     if (nextMode === "longitudinal" && stagedLongitudinalMeshes.length > 0) {
+      // same "does this snapshot actually carry anything" check the
+      // hasSnapshot computation below uses for every other workspace.
+      const hasExistingLongitudinalSnapshot = longitudinalSnapshot?.slots?.some((s) => s.sessionId || s.ready);
+      if (hasExistingLongitudinalSnapshot) {
+        // the workspace already holds real state from a previous visit -
+        // added/replaced timepoints, trend selections, an export folder...
+        // that's the latest, authoritative picture of "what this workspace
+        // actually contains", so it always wins now: freshly staged meshes
+        // merge into it (same per-timepoint "last write wins" rule
+        // mergeStagedMeshesIntoSlots always applies) instead of competing
+        // with it through the staged-vs-clean prompt below, which used to
+        // silently offer only the ORIGINAL staged mesh(es) and lose
+        // everything done in the workspace since - see this app's own
+        // notes on "the workspace should always remember its latest state,
+        // regardless of what was staged earlier".
+        setLongitudinalSnapshot((prev) => ({ ...prev, slots: mergeStagedMeshesIntoSlots(prev.slots, stagedLongitudinalMeshes) }));
+        setStagedLongitudinalMeshes([]);
+        setLoadSnapshotIntoLongitudinal(true);
+        setLoadStagedIntoLongitudinal(false);
+        setAppMode(nextMode);
+        return;
+      }
       setShowStagedPrompt(true);
       return;
     }
@@ -303,7 +351,7 @@ function App() {
       setLoadSnapshotIntoMeanShape(false);
     }
     if (mode === "patients") {
-      closeSession(sessionId);
+      releaseSessionIfUnused(sessionId);
       setSessionId(null);
       setPatientMetadata(BLANK_PATIENT_METADATA);
       resetPreprocessingState();
@@ -316,12 +364,26 @@ function App() {
     setLoadStagedIntoLongitudinal(true);
     setLoadSnapshotIntoLongitudinal(false);
     setShowStagedPrompt(false);
+    // this batch of staged meshes has now actually been acted on - clearing
+    // it here (not just in handleAppModeChange's own merge branch above) is
+    // what stops it from being a real bug: without this, a LATER staging
+    // action re-appends to an array that still silently carries these same
+    // entries, so the very next merge replays THIS batch's session ids back
+    // on top of the workspace's own live state - including ones that have
+    // since been closed (e.g. Per-patient closes its current session on the
+    // next upload), silently blanking a timepoint that was working fine.
+    setStagedLongitudinalMeshes([]);
     setAppMode("longitudinal");
   }
 
   function handleLoadCleanWorkspace() {
     setLoadStagedIntoLongitudinal(false);
     setShowStagedPrompt(false);
+    // same reasoning as handleLoadStagedWorkspace above - declining this
+    // batch is still "acting on" it. leaving it in place would silently
+    // re-inject the very meshes just declined the next time something else
+    // gets staged and this workspace is revisited.
+    setStagedLongitudinalMeshes([]);
     setAppMode("longitudinal");
   }
 
@@ -513,7 +575,7 @@ function App() {
     filePath: newFilePath,
     selectionHasTexture: newSelectionHasTexture,
   }) {
-    closeSession(sessionId); // release whatever session this one is replacing
+    releaseSessionIfUnused(sessionId); // release whatever session this one is replacing, unless Longitudinal still holds it
     setSessionId(newSessionId);
     setMeshLabel(newMeshLabel);
     setSelectionHasTexture(newSelectionHasTexture);
@@ -754,7 +816,18 @@ function App() {
       setLastSavedMeshesFolder(savedTo);
     } catch (err) {
       if (err.status === 400) {
-        setSaveMeshesStatus("");
+        // this function already returned early in browser mode, so a 400
+        // here only ever means the ONE thing: this session has no real
+        // file path to save next to (see api/routers/mesh.py's
+        // _resolve_dest_dir). that happens to a mesh whose native path
+        // never resolved - a drag-drop that fell back to a plain browser
+        // upload (see handleFilesDropped). clearing the status silently
+        // made that indistinguishable from a save that worked, so nothing
+        // ever appeared next to the mesh and nothing said why.
+        setSaveMeshesStatus(
+          'Not saved automatically: this mesh was not opened from a file path. ' +
+            'Use "change save folder..." below to pick where results should go.'
+        );
         return;
       }
       setSaveMeshesStatus(`Save failed: ${err.message}`);

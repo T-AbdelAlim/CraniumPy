@@ -1264,13 +1264,25 @@ select {
   flex-shrink: 0;
 }
 
-.longitudinal-slot-label-input {
+.longitudinal-slot-heading {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.longitudinal-slot-title {
+  font-weight: 600;
+  padding: 0.2rem 0.3rem 0;
+}
+
+.longitudinal-slot-label-input {
   margin: 0;
   border: none;
   background: transparent;
-  font-weight: 600;
-  padding: 0.2rem 0.3rem;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  padding: 0 0.3rem 0.2rem;
 }
 
 .longitudinal-slot-remove {
@@ -1316,6 +1328,67 @@ select {
 .longitudinal-comparison-table th,
 .longitudinal-comparison-table td {
   padding: 0.3rem 0.6rem;
+}
+
+/* every column but "Metric" holds right-aligned numbers (.measurements-table
+   td's own default) - its own header (swatch + "Timepoint N") needs the
+   same alignment, or it sits at the left of a column whose numbers sit at
+   the right, right above them but never lining up. */
+.longitudinal-comparison-table th:not(:first-child) {
+  text-align: right;
+}
+
+/* TrendsTab.jsx - the measurements-over-time chart. picker groups run in a
+   responsive row of columns (matches this workspace's own toolbar wrapping
+   convention) rather than one long flat checkbox list, since the full
+   catalog (lib/trendMetrics.js) runs to ~20 entries across 3 groups. */
+.trends-metric-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 2rem;
+  margin-bottom: 0.75rem;
+}
+
+.trends-metric-group {
+  min-width: 220px;
+}
+
+.trends-metric-group-title {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin: 0 0 0.4rem;
+}
+
+.trends-metric-checkbox {
+  margin-bottom: 0.3rem;
+}
+
+.trends-chart {
+  margin: 0.5rem 0;
+}
+
+.trends-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 1rem;
+  margin-top: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.trends-chart-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.trends-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 0.75rem;
 }
 
 /* MorphingTab.jsx - ONE large viewer, deliberately its own standalone
