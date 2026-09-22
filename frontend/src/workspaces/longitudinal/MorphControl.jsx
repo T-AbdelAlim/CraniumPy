@@ -1,12 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { triggerDownload } from "../../lib/download.js";
+import { saveVideo } from "../../api/longitudinal.js";
 
-// seconds for one full A -> B sweep - the dropdown's own choices. 2s was
-// the old hardcoded rate (see this file's earlier version); kept as the
-// default so existing behavior doesn't shift under anyone who never
-// touches the new control.
+// seconds for one full A -> B sweep - the dropdown's own choices.
 const SWEEP_SECONDS_OPTIONS = [0.5, 1, 2, 4, 8];
-const DEFAULT_SWEEP_SECONDS = 2;
+const DEFAULT_SWEEP_SECONDS = 4;
 
 // drives t through one full A -> B -> A round trip at the given per-leg
 // duration, calling setTFn every frame - the exported video's own
@@ -54,14 +52,22 @@ function extensionForMimeType(mimeType) {
 // start -> end -> start sweep at the current speed, captured straight off
 // the viewer's own canvas via the browser's MediaRecorder (see
 // LongitudinalMorphViewer.jsx's startRecording/stopRecording) - no GIF
-// encoder library, no server round-trip. a real video clip rather than a
-// GIF: better quality per byte (no 256-color palette limit, which a smooth
-// heatmap gradient would show as visible banding), and MediaRecorder is
-// already built into the browser this app runs in either way (a Chromium
-// engine, whether that's a real browser tab or the desktop app's own
-// pywebview/WebView2 window) - a GIF would need a whole extra JS encoder
-// dependency for a strictly worse result.
-export default function MorphControl({ onT, morphViewerRef, fullscreenRef }) {
+// encoder library, the recording itself needs no server round-trip either.
+// a real video clip rather than a GIF: better quality per byte (no
+// 256-color palette limit, which a smooth heatmap gradient would show as
+// visible banding), and MediaRecorder is already built into the browser
+// this app runs in either way (a Chromium engine, whether that's a real
+// browser tab or the desktop app's own pywebview/WebView2 window) - a GIF
+// would need a whole extra JS encoder dependency for a strictly worse
+// result.
+//
+// exportDestDir/videoFolderName (optional, desktop-only - see
+// MorphingTab.jsx's own folder-picker control) redirect the finished
+// recording to a real save-to-folder call (api/routers/longitudinal.py's
+// save_video) instead of the plain browser download below - the ONE step
+// that does round-trip through the backend, since only it can write to an
+// arbitrary filesystem path.
+export default function MorphControl({ onT, morphViewerRef, fullscreenRef, exportDestDir, videoFolderName }) {
   const [t, setT] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [sweepSeconds, setSweepSeconds] = useState(DEFAULT_SWEEP_SECONDS);
@@ -168,14 +174,24 @@ export default function MorphControl({ onT, morphViewerRef, fullscreenRef }) {
         await runRoundTripSweep(sweepSecondsRef.current, setT);
         const { blob, mimeType } = await viewer.stopRecording();
         if (!blob || blob.size === 0) throw new Error("the recording came out empty");
-        const url = URL.createObjectURL(blob);
-        triggerDownload(url, `morph_animation.${extensionForMimeType(mimeType)}`);
-        // the download itself is synchronous (the anchor click fires
-        // immediately), but WebView2/some browsers read the blob lazily
-        // right after - revoking too early can turn that into an empty/
-        // corrupt file, so this waits a beat rather than revoking inline.
-        setTimeout(() => URL.revokeObjectURL(url), 30_000);
-        setExportStatus("");
+        const extension = extensionForMimeType(mimeType);
+        if (exportDestDir) {
+          // desktop, with a destination folder picked (see MorphingTab.jsx's
+          // own folder-picker control) - write the bytes straight to disk
+          // instead of a browser download, same folder-naming convention
+          // the Trends tab's "export results" uses.
+          const { saved_to: savedTo } = await saveVideo(blob, extension, exportDestDir, videoFolderName);
+          setExportStatus(`Saved to ${savedTo}`);
+        } else {
+          const url = URL.createObjectURL(blob);
+          triggerDownload(url, `morph_animation.${extension}`);
+          // the download itself is synchronous (the anchor click fires
+          // immediately), but WebView2/some browsers read the blob lazily
+          // right after - revoking too early can turn that into an empty/
+          // corrupt file, so this waits a beat rather than revoking inline.
+          setTimeout(() => URL.revokeObjectURL(url), 30_000);
+          setExportStatus("");
+        }
         lastError = null;
         break;
       } catch (err) {

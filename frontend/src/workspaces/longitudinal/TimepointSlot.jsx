@@ -42,7 +42,7 @@ import { stageMeshUrl } from "./lib/meshRef.js";
 export default function TimepointSlot({ slot, onChange, viewerRef, colorIndex, canRemove, onRemove }) {
   const [entryStarted, setEntryStarted] = useState(false);
   // seeded straight from `slot` when it already carries a staged mesh (see
-  // LongitudinalWorkspace.jsx's buildInitialSlots) - this instance never
+  // lib/slots.js's mergeStagedMeshesIntoSlots) - this instance never
   // shows the "load pre-registered file" UI at all in that case, the mount
   // effect below immediately displays+measures it instead.
   const [target, setTarget] = useState(slot.target || "cranium");
@@ -65,8 +65,22 @@ export default function TimepointSlot({ slot, onChange, viewerRef, colorIndex, c
   useEffect(() => {
     if (!slot.sessionId || slot.ready) return;
     (async () => {
-      await viewerRef.current?.displayMesh(stageMeshUrl(slot.sessionId, slot.stage || "nicp_result"), { selectionHasTexture: false });
-      await measureAndReport(slot.sessionId, slot.stage || "nicp_result", slot.target || "cranium");
+      try {
+        await viewerRef.current?.displayMesh(stageMeshUrl(slot.sessionId, slot.stage || "nicp_result"), { selectionHasTexture: false });
+        await measureAndReport(slot.sessionId, slot.stage || "nicp_result", slot.target || "cranium");
+      } catch (err) {
+        // e.g. slot.sessionId points at a session that's since been closed
+        // (a stale staged reference - see App.jsx's handleLoadStagedWorkspace/
+        // handleLoadCleanWorkspace) - previously this threw uncaught, which
+        // left the card stuck on its initial "processing" stage forever:
+        // label still showing, status line permanently empty, no retry
+        // button, no explanation why. measureAndReport already catches its
+        // own errors (and already resets stage to "upload" on failure, same
+        // as here) - this only needs to cover the displayMesh call ahead of
+        // it, which wasn't covered by anything.
+        setStatus(`couldn't load this mesh: ${err.message}`);
+        setStage("upload");
+      }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -144,13 +158,25 @@ export default function TimepointSlot({ slot, onChange, viewerRef, colorIndex, c
     <div className="longitudinal-slot">
       <div className="longitudinal-slot-header">
         <span className="longitudinal-slot-swatch" style={{ background: slot.color }} />
-        <input
-          type="text"
-          className="longitudinal-slot-label-input"
-          value={slot.label}
-          placeholder={`Timepoint ${colorIndex}`}
-          onChange={(e) => onChange({ ...slot, label: e.target.value })}
-        />
+        {/* "Timepoint N" always shown - it's this slot's actual identity
+            (the position everything else in this workspace keys off, see
+            slotLabel's own fallback) - the label below it is just a free-
+            text note (a filename when staged from Per-patient, or whatever
+            someone typed), never a replacement for that. used to be one
+            input whose placeholder only showed "Timepoint N" for as long as
+            the label was empty - once staging filled it in with a filename,
+            "Timepoint N" disappeared entirely and slots stopped reading as
+            a sequence at a glance. */}
+        <div className="longitudinal-slot-heading">
+          <span className="longitudinal-slot-title">Timepoint {colorIndex}</span>
+          <input
+            type="text"
+            className="longitudinal-slot-label-input"
+            value={slot.label}
+            placeholder="add a label..."
+            onChange={(e) => onChange({ ...slot, label: e.target.value })}
+          />
+        </div>
         {canRemove && (
           <button type="button" className="button-subtle longitudinal-slot-remove" onClick={onRemove}>
             remove
@@ -209,7 +235,14 @@ export default function TimepointSlot({ slot, onChange, viewerRef, colorIndex, c
           </>
         )}
 
-        {(stage === "processing" || (stage === "ready" && status)) && <p className="status-line">{status}</p>}
+        {/* any stage can have something worth showing: "measuring..." while
+            processing, or an error message that sends stage back to
+            "upload" (a failed measurement, or a stale staged session that
+            failed to even load - see the mount effect above and
+            measureAndReport's own catch) - gating this on stage used to
+            hide exactly that error, leaving a silently blank card with no
+            explanation. */}
+        {status && <p className="status-line">{status}</p>}
 
         {stage === "ready" && detectedTargetNote && (
           <p className="longitudinal-detected-note">

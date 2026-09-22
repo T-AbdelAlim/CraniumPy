@@ -15,8 +15,10 @@ import { computeLongitudinalDiff } from "../../../api/longitudinal.js";
 // `ref` - callers pass their own richer shape straight through, only `ref`
 // is read here) in the relevant order. mode: "fixed" | "longitudinal" |
 // "template". option: for "fixed", the index into `stages` to use as the
-// reference; for "template", the shipped template name; ignored for
-// "longitudinal". returns an array parallel to `stages` - heatmaps[i] is
+// reference; for "template", either a shipped template's own name (a
+// plain string) or a full mesh ref ({sessionId, stage}, e.g. an uploaded
+// custom template - see MorphingTab.jsx's customTemplateSessionId); ignored
+// for "longitudinal". returns an array parallel to `stages` - heatmaps[i] is
 // null only where there's genuinely no reference to diff against yet
 // (stage 0 in "longitudinal" mode, which has no predecessor - "fixed" mode
 // diffs the reference stage against itself for real, a legitimate
@@ -48,7 +50,7 @@ export async function computeDistanceHeatmaps(stages, mode, option) {
       }),
     );
   } else if (mode === "template") {
-    const referenceRef = { template: option };
+    const referenceRef = typeof option === "string" ? { template: option } : option;
     await Promise.all(
       stages.map(async (s, i) => {
         const diff = await computeLongitudinalDiff(referenceRef, s.ref);

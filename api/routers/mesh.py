@@ -335,6 +335,14 @@ def start_align(session_id: str, request: AlignRequest) -> StatusResponse:
         # to overwrite with a repaired + CoM-nudged version - this is what
         # gets saved as _rg.ply, so it has to survive that overwrite.
         session.aligned_mesh = session.registered_mesh
+        # same meaning /clip's own used_alt_frontal already has ("did the
+        # currently active registered state use an alt frontal landmark") -
+        # set here too so a /save/meshes called right after /align (before
+        # any /clip has run) still gets the right landmark-count folder
+        # suffix instead of always looking like it didn't use one. /clip
+        # overwrites this the same way it overwrites registered_mesh, so
+        # nothing here can go stale once a real clip happens.
+        session.used_alt_frontal = request.target == "cranium" and alt_frontal is not None
 
         session.active_target = request.target
         session.report_progress("done", "")
@@ -1131,6 +1139,27 @@ def _require_completed_run(session: Session) -> ClipRequest:
     return session.last_clip_config
 
 
+def _resolve_meshes_save_config(session: Session) -> tuple[str, dict]:
+    """target + a results_folder_name-shaped config for /save/meshes -
+    from the real ClipRequest a completed /clip (then /run) produced when
+    one exists (unchanged from before), else built from what /align alone
+    already knows (session.active_target, session.used_alt_frontal - see
+    start_align, which now sets both), for a save triggered right after
+    /align with no /clip/run yet. com_translation is genuinely undecided at
+    that point - it's a /clip-time option, chosen further down the
+    Preprocessing panel than the Align button - so it's guessed True, the
+    same default this app's frontend state and ClipRequest itself both
+    already start on: the common case (nobody's touched that checkbox)
+    lands in exactly the folder /clip+/run's own later save also uses, so
+    the two saves just add to the same folder over time; someone who
+    unchecks it before running ends up with two sibling folders instead of
+    one - a minor, self-explanatory rough edge on what's fundamentally a
+    provisional, pre-Run save, not worth more machinery to close."""
+    if session.last_clip_config is not None:
+        return session.last_clip_config.target, session.last_clip_config.model_dump()
+    return session.active_target, {"alt_frontal_landmark": session.used_alt_frontal, "com_translation": True}
+
+
 @router.get("/{session_id}/bundle/meshes")
 def download_meshes_bundle(session_id: str):
     session = _get_session(session_id)
@@ -1155,27 +1184,33 @@ def download_meshes_bundle(session_id: str):
 
 @router.post("/{session_id}/save/meshes", response_model=SaveResultsResponse)
 def save_meshes_to_source_folder(session_id: str, save_request: SaveRequest = SaveRequest()) -> SaveResultsResponse:
-    """writes just the two mesh files (_rg.ply / _rg_{C|F}.ply) into a
-    CP_{stem}_{C|F}_{3|4}[_CoM]/ folder inside the destination folder - the
-    lighter-weight save that only needs a completed /run, not a full
-    craniometrics/asymmetry pass (see /save for "everything, including the
-    analysis report"). desktop-only, same as /save - the frontend's own
-    caller (App.jsx's autoSaveMeshes) just no-ops on a 400 rather than
-    falling back to /bundle/meshes, since it's auto-triggered after every
-    Align and a forced browser download on every one would be a surprising
-    side effect; /bundle/meshes stays available as a plain zip download for
-    any caller that does want just the mesh files in browser mode."""
+    """writes whatever mesh files are ready into a
+    CP_{stem}_{C|F}_{3|4}[_CoM]/ folder inside the destination folder - just
+    _rg.ply right after /align alone, then _rg_{C|F}.ply (and _rg_{C|F}N.ply
+    once a NICP fit exists too) once /clip+/run have also completed, into
+    that same folder (see _resolve_meshes_save_config/write_meshes_to_folder).
+    the lighter-weight save that doesn't need a full craniometrics/asymmetry
+    pass (see /save for "everything, including the analysis report").
+    desktop-only, same as /save - the frontend's own caller (App.jsx's
+    autoSaveMeshes) just no-ops on a 400 rather than falling back to
+    /bundle/meshes, since it's auto-triggered after every Align/Run/NICP fit
+    and a forced browser download on every one would be a surprising side
+    effect; /bundle/meshes stays available as a plain zip download (still
+    needing a completed /run - see _require_completed_run) for any caller
+    that does want just the mesh files in browser mode."""
     session = _get_session(session_id)
     dest_dir = _resolve_dest_dir(session, save_request)
-    clip_request = _require_completed_run(session)
+    if session.aligned_mesh is None:
+        raise HTTPException(status_code=409, detail="align the mesh first")
+    target, config = _resolve_meshes_save_config(session)
 
     results_dir = write_meshes_to_folder(
         dest_dir=dest_dir,
         original_filename=session.original_filename,
         registered_mesh=session.aligned_mesh,
         final_mesh=session.result_mesh,
-        target=clip_request.target,
-        config=clip_request.model_dump(),
+        target=target,
+        config=config,
         nicp_mesh=session.nicp_result_mesh,
     )
     return SaveResultsResponse(saved_to=str(results_dir))

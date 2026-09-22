@@ -1,0 +1,34 @@
+# Exact versions of CraniumPy's own dependencies, known to work together
+# (tested on Python 3.14). pyproject.toml keeps the looser minimums for
+# anyone installing it as a library; this file is what a fresh checkout
+# should install so it gets the same environment the app was tested with.
+#
+#   pip install -r requirements.txt -e .
+#
+# or just run setup.ps1 (Windows) / setup.sh (macOS/Linux), which also
+# builds the frontend.
+
+# core
+numpy==2.5.1
+scipy==1.18.0
+trimesh==5.0.0
+shapely==2.1.2
+fast-simplification==0.1.13
+networkx==3.6.1
+rtree==1.4.1
+pillow==12.3.0
+pymeshfix==0.18.1
+matplotlib==3.11.1
+openpyxl==3.1.5
+fastapi==0.141.1
+uvicorn[standard]==0.52.1
+python-multipart==0.0.32
+
+# desktop app + exe build
+pywebview==6.2.1
+pywebview[cocoa]==6.2.1; sys_platform == "darwin"
+pyinstaller==6.22.0
+
+# tests
+pytest==9.1.1
+httpx==0.28.1

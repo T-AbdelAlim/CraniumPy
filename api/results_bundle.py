@@ -41,6 +41,7 @@ from craniumpy_core.craniometrics import CranioMeasurements, FrontalBossingResul
 from craniumpy_core.asymmetry import AsymmetryResult
 from craniumpy_core.cohort import GroupMeasurements, SagittalMidlineBand, SpreadBand
 from craniumpy_core.metopic import MetopicResult
+from api.schemas import TrendsChartSeries
 
 
 def shorten_stem(stem: str) -> str:
@@ -184,6 +185,75 @@ def _measurement_figure(mesh: trimesh.Trimesh, measurements: CranioMeasurements)
     fig = Figure(figsize=(6, 6.4), dpi=FIGURE_PNG_DPI)
     canvas = FigureCanvasAgg(fig)
     _draw_measurements(fig, (0, 0, 1, 1), mesh, measurements)
+    buf = io.BytesIO()
+    canvas.print_png(buf)
+    return buf.getvalue()
+
+
+# a real "export" figure (300dpi, standalone) rather than one more region
+# drawn into a shared report page like every _draw_* above - the Longitudinal
+# workspace's Trends tab (measurements-over-time chart) has no PDF page of
+# its own to live inside, only a PNG download, so this skips the
+# _draw_*/*_figure split those use and just builds+encodes the whole thing
+# in one function.
+TRENDS_FIGURE_DPI = 300
+
+
+def _draw_trends_chart(fig: Figure, x_labels: list[str], series: list[TrendsChartSeries]) -> None:
+    """one line per series across x_labels (a slot's own position/label in
+    the Longitudinal workspace - see TrendsTab.jsx), values already
+    resolved client-side (a metric that doesn't apply to a given slot's
+    target, e.g. a metopic field on a cranium-target slot, comes through as
+    None there) - a None becomes a NaN so matplotlib's own line-plotting
+    breaks the line around it instead of drawing a false connecting
+    segment, same gap behavior the on-screen SVG chart (TrendsChart.jsx)
+    gives it. color is the frontend's own per-metric color (see
+    workspaces/longitudinal/lib/trendMetrics.js) passed straight through, so
+    the exported figure's legend matches the on-screen chart exactly rather
+    than picking its own independent palette.
+
+    factored out of trends_chart_png (which just wraps this with a fresh
+    Figure + PNG encoding) so a test can inspect the legend's own position
+    directly instead of decoding a PNG back into pixels."""
+    ax = fig.add_subplot(111)
+
+    x = np.arange(len(x_labels))
+    for s in series:
+        values = [float("nan") if v is None else v for v in s.values]
+        label = f"{s.label} ({s.unit})" if s.unit else s.label
+        ax.plot(x, values, marker="o", markersize=4, linewidth=1.6, color=s.color, label=label)
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(x_labels)
+    ax.set_xlabel("Timepoint")
+    ax.grid(alpha=0.2)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+    # a fig-level legend below the axes, not ax.legend(loc="best") - with
+    # several series selected (this chart supports up to ~20 - see
+    # workspaces/longitudinal/lib/trendMetrics.js), "best" routinely picks a
+    # spot that sits right on top of the data it's meant to explain. ncol
+    # wraps it into rows instead of one wide strip; bottom is widened by
+    # however many rows that takes so the legend gets real, reserved space
+    # rather than fighting the axes/x-labels for room the way
+    # fig.tight_layout() (which only knows about the axes, not a legend
+    # added after it) would otherwise leave it to.
+    handles, labels = ax.get_legend_handles_labels()
+    ncol = min(len(handles), 4) or 1
+    rows = -(-len(handles) // ncol)  # ceil
+    fig.subplots_adjust(left=0.08, right=0.97, top=0.95, bottom=0.14 + 0.045 * rows)
+    fig.legend(
+        handles, labels, loc="lower center", bbox_to_anchor=(0.5, 0.0), bbox_transform=fig.transFigure,
+        ncol=ncol, fontsize=9, frameon=False,
+    )
+
+
+def trends_chart_png(x_labels: list[str], series: list[TrendsChartSeries]) -> bytes:
+    fig = Figure(figsize=(10, 6), dpi=TRENDS_FIGURE_DPI)
+    canvas = FigureCanvasAgg(fig)
+    _draw_trends_chart(fig, x_labels, series)
+
     buf = io.BytesIO()
     canvas.print_png(buf)
     return buf.getvalue()
@@ -1425,7 +1495,7 @@ def longitudinal_comparison_report_pdf(
 def _build_mesh_files(
     original_filename: str,
     registered_mesh: trimesh.Trimesh,
-    final_mesh: trimesh.Trimesh,
+    final_mesh: trimesh.Trimesh | None,
     target: str,
     config: dict,
     nicp_mesh: trimesh.Trimesh | None = None,
@@ -1434,7 +1504,14 @@ def _build_mesh_files(
     / _rg_{C|F}.ply, plus a third _rg_{C|F}N.ply when nicp_mesh is given -
     the topology-consistent template fit ("fit template" in the UI), kept
     alongside the patient's own clipped/resampled mesh rather than in place
-    of it. {C|F} is cranial/facial, same convention as results_folder_name."""
+    of it. {C|F} is cranial/facial, same convention as results_folder_name.
+
+    final_mesh is None for a save triggered right after /align, before
+    /clip+/run have ever produced a final mesh to go with it (see
+    api/routers/mesh.py's save_meshes_to_source_folder) - just the one
+    _rg.ply file comes out in that case, still into the same folder a
+    later, fuller save (once /run has actually completed) writes the rest
+    into."""
     stem = stem_from_filename(original_filename)
     folder = results_folder_name(original_filename, target, config)
 
@@ -1451,10 +1528,9 @@ def _build_mesh_files(
         vertices=registered_mesh.vertices, faces=registered_mesh.faces, process=False
     )
     target_suffix = "C" if target == "cranium" else "F"
-    files = {
-        f"{stem}_rg.ply": registered_export.export(file_type="ply"),
-        f"{stem}_rg_{target_suffix}.ply": final_mesh.export(file_type="ply"),
-    }
+    files = {f"{stem}_rg.ply": registered_export.export(file_type="ply")}
+    if final_mesh is not None:
+        files[f"{stem}_rg_{target_suffix}.ply"] = final_mesh.export(file_type="ply")
     if nicp_mesh is not None:
         files[f"{stem}_rg_{target_suffix}N.ply"] = nicp_mesh.export(file_type="ply")
     return folder, files
@@ -1638,15 +1714,17 @@ def write_meshes_to_folder(
     dest_dir: Path,
     original_filename: str,
     registered_mesh: trimesh.Trimesh,
-    final_mesh: trimesh.Trimesh,
+    final_mesh: trimesh.Trimesh | None,
     target: str,
     config: dict,
     nicp_mesh: trimesh.Trimesh | None = None,
 ) -> Path:
-    """writes the mesh files (two, or three when a NICP fit exists) into
-    dest_dir/{folder}/meshes/ - the desktop side of "save meshes" (part 9),
-    sibling to write_analysis_to_folder's own analysis/ subfolder. returns
-    the meshes/ folder written."""
+    """writes the mesh files (one right after /align with nothing further
+    yet, two once /clip+/run have produced a final mesh too, three when a
+    NICP fit also exists - see _build_mesh_files) into dest_dir/{folder}/
+    meshes/ - the desktop side of "save meshes" (part 9), sibling to
+    write_analysis_to_folder's own analysis/ subfolder. returns the
+    meshes/ folder written."""
     folder, files = _build_mesh_files(original_filename, registered_mesh, final_mesh, target, config, nicp_mesh)
     results_dir = dest_dir / folder / "meshes"
     results_dir.mkdir(parents=True, exist_ok=True)

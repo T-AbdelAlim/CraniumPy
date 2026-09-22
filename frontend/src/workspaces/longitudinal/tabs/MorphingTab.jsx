@@ -2,9 +2,19 @@ import { useEffect, useRef, useState } from "react";
 import { fetchShippedTemplates } from "../../../api/sessions.js";
 import LongitudinalMorphViewer from "../LongitudinalMorphViewer.jsx";
 import MorphControl from "../MorphControl.jsx";
+import UploadPanel from "../../data/UploadPanel.jsx";
 import { computeDistanceHeatmaps } from "../lib/distanceHeatmap.js";
 import { resampleStageOverlays } from "../lib/overlayMorph.js";
 import { slotStageRef, slotLabel, stageMeshUrl } from "../lib/meshRef.js";
+import { exportFolderName } from "../lib/exportNaming.js";
+import { isDesktopApp, pickFolderNative } from "../../../lib/desktop.js";
+
+// the "custom template" distanceTemplate value that means "whatever was
+// uploaded via customTemplateSessionId below", as opposed to every other
+// possible value (a shipped template's own name string) - never a name a
+// real shipped template could actually have, so a plain equality check is
+// enough to tell the two apart.
+const CUSTOM_TEMPLATE_VALUE = "__custom__";
 
 // replaces the old "Correspondence" tab entirely - there's nothing left to
 // establish. every ready slot is already NICP-fit to a shared template
@@ -25,7 +35,7 @@ import { slotStageRef, slotLabel, stageMeshUrl } from "../lib/meshRef.js";
 // recording - a canvas that resizes mid-stream is exactly what produced the
 // corrupted export. giving this viewer its own fixed-width, nothing-else-
 // sharing-the-row container removes the resize trigger entirely.
-export default function MorphingTab({ slots }) {
+export default function MorphingTab({ slots, exportDestDir, onExportDestDirChange }) {
   const readyIndices = slots.map((s, i) => i).filter((i) => slots[i].ready);
 
   // null = "auto: every ready slot, always" (reactive to slots becoming
@@ -39,6 +49,14 @@ export default function MorphingTab({ slots }) {
   const [distanceReferenceIndex, setDistanceReferenceIndex] = useState(readyIndices[0] ?? 0);
   const [templates, setTemplates] = useState([]);
   const [distanceTemplate, setDistanceTemplate] = useState("");
+  // an uploaded (not shipped) reference mesh for "custom template" mode -
+  // just another session, the same way a TimepointSlot's own "Load
+  // pre-registered file" gets one, except this one only ever gets diffed
+  // against (see computeDistanceHeatmaps' "template" mode), never fit to
+  // or displayed on its own. UploadPanel (reused as-is below) already
+  // shows the uploaded file's own name/status, so there's nothing else to
+  // track here.
+  const [customTemplateSessionId, setCustomTemplateSessionId] = useState(null);
   const [status, setStatus] = useState("");
 
   const morphViewerRef = useRef(null);
@@ -135,13 +153,30 @@ export default function MorphingTab({ slots }) {
         }
         if (overlayMode === "distance") {
           viewer.hideOverlaySequence();
+          const usingCustomTemplate = distanceMode === "template" && distanceTemplate === CUSTOM_TEMPLATE_VALUE;
           if (distanceMode === "template" && !distanceTemplate) return;
+          if (usingCustomTemplate && !customTemplateSessionId) {
+            setStatus("distance heatmap: upload a custom template file first");
+            return;
+          }
           setStatus("computing distance heatmap...");
           const stages = orderedStages.map((s) => ({ ref: slotStageRef(s.slot) }));
           const referencePos = orderedStages.findIndex((s) => s.index === distanceReferenceIndex);
-          const option = distanceMode === "fixed" ? (referencePos >= 0 ? referencePos : 0) : distanceTemplate;
+          const option =
+            distanceMode === "fixed" ? (referencePos >= 0 ? referencePos : 0)
+            : usingCustomTemplate ? { sessionId: customTemplateSessionId, stage: "original" }
+            : distanceTemplate;
           const heatmaps = await computeDistanceHeatmaps(stages, distanceMode, option);
           if (cancelled) return;
+          // computeDistanceHeatmaps' own "fixed" mode silently returns an
+          // all-null array when it can't resolve a reference (see
+          // lib/distanceHeatmap.js) - showHeatmapSequence(heatmaps) would
+          // otherwise happily "succeed" with nothing to actually show,
+          // leaving the mesh untinted with no error anywhere to explain why.
+          if (heatmaps.every((h) => h === null)) {
+            setStatus("distance heatmap: no valid reference found");
+            return;
+          }
           viewer.showHeatmapSequence(heatmaps);
           setStatus("");
           return;
@@ -158,10 +193,17 @@ export default function MorphingTab({ slots }) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sequenceKey, overlayMode, distanceMode, distanceReferenceIndex, distanceTemplate]);
+  }, [sequenceKey, overlayMode, distanceMode, distanceReferenceIndex, distanceTemplate, customTemplateSessionId]);
 
   if (readyIndices.length < 2) {
     return <p className="hint">Register at least two timepoints in the Compare tab to morph between them.</p>;
+  }
+
+  const videoFolderName = exportFolderName("morph", slots, orderedStages.map((s) => s.index));
+
+  async function handleChooseExportFolder() {
+    const folder = await pickFolderNative((msg) => setStatus(`Couldn't open the folder picker: ${msg}`));
+    if (folder) onExportDestDirChange(folder);
   }
 
   return (
@@ -208,22 +250,42 @@ export default function MorphingTab({ slots }) {
             </label>
             <label>
               <input type="radio" checked={distanceMode === "template"} onChange={() => setDistanceMode("template")} />
-              custom template:{" "}
+              reference template:{" "}
               <select disabled={distanceMode !== "template"} value={distanceTemplate} onChange={(e) => setDistanceTemplate(e.target.value)}>
                 {templates.map((t) => (
                   <option key={t.name} value={t.name}>
                     {t.name}
                   </option>
                 ))}
+                <option value={CUSTOM_TEMPLATE_VALUE}>custom (upload a file)...</option>
               </select>
             </label>
           </>
         )}
       </div>
+      {distanceMode === "template" && distanceTemplate === CUSTOM_TEMPLATE_VALUE && (
+        <UploadPanel onUploaded={({ sessionId }) => setCustomTemplateSessionId(sessionId)} />
+      )}
+      {isDesktopApp() && (
+        <div className="longitudinal-toolbar">
+          <span className="hint">
+            video export folder: {exportDestDir ? `${exportDestDir}\\${videoFolderName}` : "no folder chosen yet"}
+          </span>
+          <button type="button" className="button-subtle" onClick={handleChooseExportFolder}>
+            select export folder...
+          </button>
+        </div>
+      )}
       {status && <p className="status-line">{status}</p>}
 
       <div className="longitudinal-morphing-viewer">
-        <MorphControl onT={(t) => morphViewerRef.current?.setT(t)} morphViewerRef={morphViewerRef} fullscreenRef={fullscreenRef} />
+        <MorphControl
+          onT={(t) => morphViewerRef.current?.setT(t)}
+          morphViewerRef={morphViewerRef}
+          fullscreenRef={fullscreenRef}
+          exportDestDir={exportDestDir}
+          videoFolderName={videoFolderName}
+        />
         <div className="longitudinal-morphing-viewer-canvas">
           <LongitudinalMorphViewer ref={morphViewerRef} />
         </div>

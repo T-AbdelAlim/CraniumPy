@@ -111,3 +111,51 @@ def test_diff_template_vertex_mismatch_is_a_clear_error(client, landmarks_payloa
     )
 
     assert response.status_code == 400
+
+
+def test_trends_export_writes_png_and_xlsx_into_a_named_folder(client, tmp_path):
+    # the Trends tab's one "export results" button - unlike every endpoint
+    # above, this one needs no session/mesh at all: the frontend already
+    # has the measurement values, this is purely "write these into a
+    # folder" (see api/results_bundle.trends_chart_png for the figure,
+    # api/routers/cohort._build_export_xlsx for the sheet).
+    response = client.post(
+        "/api/longitudinal/trends-export",
+        json={
+            "x_labels": ["Timepoint 0", "Timepoint 1"],
+            "series": [
+                {"label": "OFD (head length)", "unit": "mm", "color": "#16a34a", "values": [180.0, 185.0]},
+                {"label": "Ridge protrusion", "unit": "mm", "color": "#dc2626", "values": [None, 2.5]},
+            ],
+            "dest_dir": str(tmp_path),
+            "folder_name": "patient1_trend_t0_t1",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    saved_to = Path(response.json()["saved_to"])
+    assert saved_to == tmp_path / "patient1_trend_t0_t1"
+    names = {p.name for p in saved_to.iterdir()}
+    assert names == {"measurements_over_time.png", "measurements_over_time.xlsx"}
+    assert (saved_to / "measurements_over_time.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_trends_export_not_a_real_folder_is_a_clear_error(client):
+    response = client.post(
+        "/api/longitudinal/trends-export",
+        json={"x_labels": ["Timepoint 0"], "series": [], "dest_dir": "C:/nope/not-a-real-folder", "folder_name": "x"},
+    )
+    assert response.status_code == 400
+
+
+def test_save_video_writes_bytes_into_a_named_folder(client, tmp_path):
+    response = client.post(
+        "/api/longitudinal/save-video",
+        data={"dest_dir": str(tmp_path), "folder_name": "patient1_morph_t0_t2", "extension": "webm"},
+        files={"video": ("morph_animation.webm", b"not-really-a-video-but-fine-for-this-test", "video/webm")},
+    )
+
+    assert response.status_code == 200, response.text
+    saved_to = Path(response.json()["saved_to"])
+    assert saved_to == tmp_path / "patient1_morph_t0_t2"
+    assert (saved_to / "morph_animation.webm").read_bytes() == b"not-really-a-video-but-fine-for-this-test"

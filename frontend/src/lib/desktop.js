@@ -70,13 +70,28 @@ export async function openFolderNative(path, onError) {
 // all this ever needs (drags are user-paced, not concurrent), so a single
 // resolver slot is enough - no per-drop correlation id.
 let pendingNativeDropResolve = null;
+// paths that arrived before anything was waiting for them. pywebview's own
+// drop listener round-trips through Python before calling back in
+// (app.py's on_drop -> evaluate_js), so its timing against the plain-JS
+// drop handler below isn't guaranteed either way - discarding them
+// whenever the waiter hadn't registered yet meant the drop silently
+// degraded to a pathless browser upload, and every later auto-save had
+// nowhere to write (see App.jsx's autoSaveMeshes). held briefly instead,
+// so a waiter starting a moment later still finds them.
+let recentNativeDropPaths = null;
+let recentNativeDropAt = 0;
+const NATIVE_DROP_GRACE_MS = 2000;
 
 if (typeof window !== "undefined") {
   window.__cranioSuiteNativeDrop = (pathsByName) => {
-    if (!pendingNativeDropResolve) return;
-    const resolve = pendingNativeDropResolve;
-    pendingNativeDropResolve = null;
-    resolve(pathsByName);
+    if (pendingNativeDropResolve) {
+      const resolve = pendingNativeDropResolve;
+      pendingNativeDropResolve = null;
+      resolve(pathsByName);
+      return;
+    }
+    recentNativeDropPaths = pathsByName;
+    recentNativeDropAt = Date.now();
   };
 }
 
@@ -86,8 +101,18 @@ if (typeof window !== "undefined") {
 // {filename: fullPath} on a match within time, null otherwise (including
 // immediately, in the web app, where there's no native bridge to wait on
 // at all).
-export function waitForNativeDropPaths(timeoutMs = 400) {
+export function waitForNativeDropPaths(timeoutMs = 1500) {
   if (!isDesktopApp()) return Promise.resolve(null);
+  // already arrived (see the grace buffer above). a stale set from an
+  // earlier drop can't be mistaken for this one: the caller only uses
+  // these paths when EVERY dropped filename is present in the map (see
+  // App.jsx's handleFilesDropped), and falls back to a plain upload
+  // otherwise.
+  if (recentNativeDropPaths && Date.now() - recentNativeDropAt < NATIVE_DROP_GRACE_MS) {
+    const paths = recentNativeDropPaths;
+    recentNativeDropPaths = null;
+    return Promise.resolve(paths);
+  }
   return new Promise((resolve) => {
     pendingNativeDropResolve = resolve;
     setTimeout(() => {
