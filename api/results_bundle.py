@@ -382,6 +382,54 @@ def _draw_asymmetry(
     fig.colorbar(mesh_plot, cax=cax, label="deviation from mirrored half (mm)")
 
 
+DISTANCE_FIGURE_DPI = 300
+
+
+def distance_heatmap_figure_png(
+    mesh: trimesh.Trimesh, heatmap: np.ndarray, *, label_a: str, label_b: str, max_abs: float
+) -> bytes:
+    """front view (x horizontal, y vertical) of `mesh` coloured by the signed
+    distance (mm) between it and the NEXT timepoint - heatmap is
+    craniumpy_core.cohort.reference_diff(mesh, next_mesh), so positive/red
+    means `mesh` (label_a) sits outward of the next one (label_b), negative/
+    blue inward. same blue-white-red scale as the asymmetry figure, but
+    with an explicit, shared max_abs (+/-) so every figure in one export
+    uses the same colour range and can be compared side by side.
+
+    a head seen from the front has surface at several depths behind each
+    (x, y) - tripcolor paints triangles in array order, so they're sorted
+    back-to-front by depth (ascending z, +z = anterior) first, which lets
+    the nearest surface win without needing a winding-dependent normal
+    test."""
+    vertices = np.asarray(mesh.vertices)
+    faces = np.asarray(mesh.faces)
+    order = np.argsort(vertices[faces, 2].mean(axis=1))
+    faces = faces[order]
+
+    fig = Figure(figsize=(6.6, 6.4), dpi=DISTANCE_FIGURE_DPI)
+    canvas = FigureCanvasAgg(fig)
+    ax = fig.add_axes((0.10, 0.12, 0.72, 0.78))
+    cax = fig.add_axes((0.86, 0.17, 0.035, 0.68))
+
+    triangulation = Triangulation(vertices[:, 0], vertices[:, 1], faces)
+    mesh_plot = ax.tripcolor(triangulation, heatmap, cmap="bwr", vmin=-max_abs, vmax=max_abs, shading="gouraud")
+    silhouette = _silhouette_polygon(vertices[:, [0, 1]])
+    ax.plot(silhouette[:, 0], silhouette[:, 1], color="#999999", linewidth=0.8, zorder=3)
+
+    ax.set_aspect("equal")
+    ax.set_xlabel("x (mm)")
+    ax.set_ylabel("y (mm)")
+    ax.set_title(f"{label_a} vs. {label_b} (front view)")
+    fig.colorbar(mesh_plot, cax=cax, label=f"distance to {label_b} (mm)")
+    fig.text(
+        0.46, 0.03, f"red: {label_a} sits outward of {label_b}   blue: inward",
+        ha="center", va="bottom", fontsize=7, color="#666666",
+    )
+    buf = io.BytesIO()
+    canvas.print_png(buf)
+    return buf.getvalue()
+
+
 def _asymmetry_figure(mesh: trimesh.Trimesh, asymmetry: AsymmetryResult, *, label: str, view: str = "frontal") -> bytes:
     fig = Figure(figsize=(6.6, 6), dpi=FIGURE_PNG_DPI)
     canvas = FigureCanvasAgg(fig)

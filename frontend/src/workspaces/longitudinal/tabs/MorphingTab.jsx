@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchShippedTemplates } from "../../../api/sessions.js";
+import { saveHeatmapFigures } from "../../../api/longitudinal.js";
 import LongitudinalMorphViewer from "../LongitudinalMorphViewer.jsx";
 import MorphControl from "../MorphControl.jsx";
 import UploadPanel from "../../data/UploadPanel.jsx";
@@ -46,6 +47,7 @@ export default function MorphingTab({ slots, exportDestDir, onExportDestDirChang
   const [manualSelection, setManualSelection] = useState(null);
   const [overlayMode, setOverlayMode] = useState("measurements"); // "measurements" | "asymmetry" | "distance" | "none"
   const [distanceMode, setDistanceMode] = useState("fixed"); // "fixed" | "longitudinal" | "template"
+  const [exportingHeatmaps, setExportingHeatmaps] = useState(false);
   const [distanceReferenceIndex, setDistanceReferenceIndex] = useState(readyIndices[0] ?? 0);
   const [templates, setTemplates] = useState([]);
   const [distanceTemplate, setDistanceTemplate] = useState("");
@@ -206,6 +208,25 @@ export default function MorphingTab({ slots, exportDestDir, onExportDestDirChang
     if (folder) onExportDestDirChange(folder);
   }
 
+  // one 300dpi front-view figure per consecutive pair of the visualized
+  // stages (n stages -> n-1 figures), each stage's own surface coloured by
+  // its distance to the next one - written to <export folder>/heatmaps/.
+  // independent of the overlay picked above: it always compares each stage
+  // with its successor.
+  async function handleExportHeatmapFigures() {
+    setExportingHeatmaps(true);
+    setStatus("generating heatmap figures...");
+    try {
+      const stages = orderedStages.map((s) => ({ ref: slotStageRef(s.slot), label: slotLabel(s.slot, s.index), index: s.index }));
+      const { saved_to: savedTo, files } = await saveHeatmapFigures(stages, exportDestDir, videoFolderName);
+      setStatus(`Saved ${files.length} heatmap figure${files.length === 1 ? "" : "s"} to ${savedTo}`);
+    } catch (err) {
+      setStatus(`heatmap export failed: ${err.message}`);
+    } finally {
+      setExportingHeatmaps(false);
+    }
+  }
+
   return (
     <div ref={fullscreenRef} className="longitudinal-morphing-tab">
       <div className="longitudinal-toolbar">
@@ -273,6 +294,15 @@ export default function MorphingTab({ slots, exportDestDir, onExportDestDirChang
           </span>
           <button type="button" className="button-subtle" onClick={handleChooseExportFolder}>
             select export folder...
+          </button>
+          <button
+            type="button"
+            className="button-subtle"
+            onClick={handleExportHeatmapFigures}
+            disabled={!exportDestDir || exportingHeatmaps}
+            title="one 300 dpi front-view figure per consecutive pair of selected timepoints, saved in a heatmaps folder inside the export folder"
+          >
+            export heatmap figures
           </button>
         </div>
       )}

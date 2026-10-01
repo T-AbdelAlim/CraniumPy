@@ -23,12 +23,14 @@ from fastapi.responses import Response
 
 from craniumpy_core import cohort
 from craniumpy_core.template_registry import load_shipped_template
-from api.results_bundle import longitudinal_comparison_report_pdf, trends_chart_png
+from api.results_bundle import distance_heatmap_figure_png, longitudinal_comparison_report_pdf, trends_chart_png
 from api.routers._group_measurements import group_measurements_response
 from api.routers.cohort import _build_export_xlsx, _sanitize_filename
 from api.schemas import (
     CohortExportSheet,
     CohortMeanShapeMeasurementsResponse,
+    HeatmapFiguresRequest,
+    HeatmapFiguresResponse,
     LongitudinalDiffRequest,
     LongitudinalDiffResponse,
     LongitudinalMeasureRequest,
@@ -175,6 +177,43 @@ def trends_export(request: TrendsExportRequest) -> SaveResultsResponse:
     (out_dir / "measurements_over_time.xlsx").write_bytes(xlsx_bytes)
 
     return SaveResultsResponse(saved_to=str(out_dir))
+
+
+@router.post("/heatmap-figures", response_model=HeatmapFiguresResponse)
+def heatmap_figures(request: HeatmapFiguresRequest) -> HeatmapFiguresResponse:
+    """one 300dpi front-view figure per consecutive pair of stages (see
+    HeatmapFiguresRequest), each stage's own surface coloured by its
+    distance to the NEXT stage - the same comparison the 3D Morphing tab's
+    "longitudinal timing" distance heatmap shows. every figure shares one
+    colour range (the largest |distance| across all pairs), so they read
+    consistently when set next to each other. overwrites same-named files
+    from an earlier run; the last stage has no successor and gets no
+    figure."""
+    if len(request.stages) < 2:
+        raise HTTPException(status_code=400, detail="need at least two stages to compare")
+
+    out_dir = _resolve_export_folder(request.dest_dir, request.folder_name, default="morph_export") / "heatmaps"
+    meshes = [_resolve_mesh_ref(stage.ref) for stage in request.stages]
+
+    diffs = []
+    for mesh, next_mesh in zip(meshes[:-1], meshes[1:]):
+        try:
+            diffs.append(cohort.reference_diff(mesh, next_mesh))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    max_abs = max(max(float(abs(d).max()) for d in diffs), 1e-6)
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    files = []
+    for i, diff in enumerate(diffs):
+        stage, next_stage = request.stages[i], request.stages[i + 1]
+        png = distance_heatmap_figure_png(
+            meshes[i], diff, label_a=stage.label, label_b=next_stage.label, max_abs=max_abs
+        )
+        name = f"heatmap_t{stage.index}_to_t{next_stage.index}.png"
+        (out_dir / name).write_bytes(png)
+        files.append(name)
+    return HeatmapFiguresResponse(saved_to=str(out_dir), files=files)
 
 
 @router.post("/save-video", response_model=SaveResultsResponse)

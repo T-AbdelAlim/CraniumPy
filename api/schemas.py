@@ -717,6 +717,29 @@ class TrendsChartSeries(BaseModel):
     values: list[float | None]
 
 
+class HeatmapFigureStage(BaseModel):
+    ref: LongitudinalMeshRef
+    label: str
+    index: int  # the slot's own timepoint number - used in the file name
+
+
+class HeatmapFiguresRequest(BaseModel):
+    """3D Morphing's "export heatmap figures" button - one 300dpi front-view
+    figure per consecutive pair of the visualized stages (in sequence
+    order), each showing stage i's own surface coloured by its distance to
+    stage i+1. written into dest_dir/folder_name/heatmaps/ - desktop only,
+    same dest_dir convention as TrendsExportRequest."""
+
+    stages: list[HeatmapFigureStage]
+    dest_dir: str
+    folder_name: str
+
+
+class HeatmapFiguresResponse(BaseModel):
+    saved_to: str
+    files: list[str]
+
+
 class TrendsExportRequest(BaseModel):
     """the Trends tab's "export results" button - writes both the 300dpi
     figure and the xlsx of the same values into one dest_dir/folder_name/
