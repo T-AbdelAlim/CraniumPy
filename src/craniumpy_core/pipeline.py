@@ -291,6 +291,8 @@ def harmonize(
     resample_method: ResampleMethod = "quadric",
     com_translation: bool = True,
     trim_rear_neck: bool = True,
+    sphere_center_offset=None,
+    sphere_radius: float | None = None,
     on_progress: ProgressCallback | None = None,
 ) -> trimesh.Trimesh:
     """repair -> clip (incl. boundary cleanup) -> resample, on a mesh
@@ -321,6 +323,12 @@ def harmonize(
     trim_rear_neck is cranial-only, passed straight through to
     cranial_clip - set False for anything registered on a landmark other
     than sellion (see cranial_clip's docstring for why).
+
+    sphere_center_offset / sphere_radius move and resize the trim sphere
+    the clip uses, for when the tuned default catches something it
+    shouldn't on an unusual scan - the viewer offers this interactively
+    (see clipping.adjusted_trim_sphere). ignored by manual clip_mode,
+    which has no trim sphere at all.
     """
     if clip_mode is None:
         clip_mode = "cranial" if target == "cranium" else "facial"
@@ -340,11 +348,19 @@ def harmonize(
     elif clip_mode == "cranial":
         if landmarks is None:
             raise ValueError("cranial clipping needs the mesh's registered landmarks")
-        result = cranial_clip(result, landmarks, trim_rear_neck=trim_rear_neck)
+        result = cranial_clip(
+            result,
+            landmarks,
+            trim_rear_neck=trim_rear_neck,
+            sphere_center_offset=sphere_center_offset,
+            sphere_radius=sphere_radius,
+        )
     elif clip_mode == "facial":
         if landmarks is None:
             raise ValueError("facial clipping needs the mesh's registered landmarks")
-        result = facial_clip(result, landmarks)
+        result = facial_clip(
+            result, landmarks, sphere_center_offset=sphere_center_offset, sphere_radius=sphere_radius
+        )
     else:
         raise ValueError(f"unknown clip_mode {clip_mode!r}")
 
@@ -515,6 +531,8 @@ def register_and_clip_cranial(
     clip_mode: ClipMode | None = None,
     manual_plane_normal: np.ndarray | None = None,
     manual_plane_origin: np.ndarray | None = None,
+    sphere_center_offset=None,
+    sphere_radius: float | None = None,
     on_progress: ProgressCallback | None = None,
 ) -> CranialClipResult:
     """the "Clip" half of the cranial pipeline: register + repair + clip +
@@ -563,6 +581,13 @@ def register_and_clip_cranial(
         repair=False,
         com_translation=False,
         trim_rear_neck=com_translation,
+        # the user adjusts the sphere against the displayed frame; the two
+        # passes here differ by a rotation, so the same numbers don't mean
+        # quite the same thing in each. applied to both regardless, since a
+        # trim sphere that only held for one of them would clip the
+        # measured mesh and the displayed mesh differently.
+        sphere_center_offset=sphere_center_offset,
+        sphere_radius=sphere_radius,
         on_progress=on_progress,
     )
 
@@ -597,6 +622,8 @@ def register_and_clip_cranial(
         repair=False,
         com_translation=False,
         trim_rear_neck=False,
+        sphere_center_offset=sphere_center_offset,
+        sphere_radius=sphere_radius,
         on_progress=on_progress,
     )
 

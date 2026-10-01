@@ -13,6 +13,7 @@ import { addNodesOverlay, removeNodesOverlay, resyncNodesGeometry } from "../thr
 import { addSpreadBandRibbon, removeSpreadBandRibbon } from "../three/spreadBandOverlay.js";
 import { addCorrespondenceMarkers, removeCorrespondenceMarkers } from "../three/correspondenceMarkers.js";
 import { addFacialMeasurementLines, removeFacialMeasurementLines } from "../three/facialMeasurementOverlay.js";
+import { addClipPreview, removeClipPreview, setClipPreviewSphere } from "../three/clipPreviewOverlay.js";
 
 // deforming-template color during a live NICP fit - matches the --hc red
 // token already used elsewhere in this app, so "moving/deforming" reads as
@@ -49,6 +50,14 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
   const meshStateRef = useRef({ object: null, materials: [], markerRadius: 2 });
   const markersRef = useRef({});
   const templateOverlayRef = useRef(null);
+  const clipPreviewRef = useRef(null);
+  // set by showClipPreview so the click handler can report a region pick
+  // back out without the handler needing to be re-attached (it's installed
+  // once, see the big effect below).
+  const onSelectClipTargetRef = useRef(null);
+  // where the pointer went down, so a click that ended an orbit drag isn't
+  // mistaken for a click ON something.
+  const pointerDownRef = useRef(null);
   // bumped on every operation that changes what templateOverlayRef "owns"
   // (a fresh showTemplateOverlay call, hiding it, a mesh swap, or the NICP
   // preview repurposing it) - showTemplateOverlay checks this after its own
@@ -188,16 +197,35 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
     const canvas = canvasRef.current;
 
     function handleClick(event) {
-      if (!(event.ctrlKey || event.metaKey)) return; // plain click still orbits
       const sceneBag = sceneBagRef.current;
+      if (!sceneBag) return;
+
+      if (!(event.ctrlKey || event.metaKey)) {
+        // plain click still orbits - but it also selects a clip region when
+        // it lands on one of the preview's selector discs and the pointer
+        // didn't travel (i.e. this was a click, not the end of an orbit).
+        const discs = clipPreviewRef.current?.discs;
+        if (!discs?.length || !onSelectClipTargetRef.current) return;
+        const down = pointerDownRef.current;
+        if (down && Math.hypot(event.clientX - down.x, event.clientY - down.y) > 4) return;
+        const ndc = pointerToNdc(event, canvas);
+        raycasterRef.current.setFromCamera(ndc, sceneBag.camera);
+        const hit = raycasterRef.current.intersectObjects(discs, false)[0];
+        const target = hit?.object?.userData?.clipSelectTarget;
+        if (target) onSelectClipTargetRef.current(target);
+        return;
+      }
+
       const meshObject = meshStateRef.current.object;
-      if (!sceneBag || !meshObject || !onPickRef.current) return;
+      if (!meshObject || !onPickRef.current) return;
       const ndc = pointerToNdc(event, canvas);
       const point = raycastMesh(raycasterRef.current, sceneBag.camera, ndc, meshObject);
       if (point) onPickRef.current({ x: point.x, y: point.y, z: point.z });
     }
 
     function handleMouseDown(event) {
+      // remembered so handleClick can tell a click from the end of an orbit
+      pointerDownRef.current = { x: event.clientX, y: event.clientY };
       if (!event.altKey || event.button !== 0) return;
       const sceneBag = sceneBagRef.current;
       if (!sceneBag || !onDragRef.current) return;
@@ -255,7 +283,9 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
         for (const band of Object.values(spreadBandsRef.current)) removeSpreadBandRibbon(sceneBagRef.current, band);
         removeCorrespondenceMarkers(sceneBagRef.current, correspondenceMarkersRef.current);
         removeFacialMeasurementLines(sceneBagRef.current, facialMeasurementLinesRef.current);
+        removeClipPreview(sceneBagRef.current, clipPreviewRef.current);
       }
+      clipPreviewRef.current = null;
       templateOverlayRef.current = null;
       measurementsOverlayRef.current = null;
       metopicOverlayRef.current = null;
@@ -392,6 +422,35 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
       removeTemplateOverlay(sceneBag, templateOverlayRef.current);
       templateOverlayRef.current = null;
     },
+    // the clip geometry for BOTH targets, drawn on the just-registered mesh
+    // so "preprocess mesh" is pressed knowing what it will cut. the caller
+    // owns when this appears and disappears (App.jsx: after align, gone for
+    // good once the pipeline runs); onSelectTarget fires when the user
+    // clicks the disc sitting in a region's boundary plane.
+    showClipPreview(geometryByTarget, { selectedTarget, onSelectTarget } = {}) {
+      const sceneBag = sceneBagRef.current;
+      const meshObject = meshStateRef.current.object;
+      if (!sceneBag || !meshObject) return;
+      removeClipPreview(sceneBag, clipPreviewRef.current);
+      onSelectClipTargetRef.current = onSelectTarget ?? null;
+      clipPreviewRef.current = addClipPreview({
+        sceneBag,
+        meshObject,
+        geometryByTarget,
+        selectedTarget,
+      });
+    },
+    // live trim-sphere adjustment, without rebuilding the overlay - see
+    // clipPreviewOverlay.js's setClipPreviewSphere.
+    updateClipSphere(adjustment) {
+      setClipPreviewSphere(clipPreviewRef.current, adjustment);
+    },
+    hideClipPreview() {
+      const sceneBag = sceneBagRef.current;
+      onSelectClipTargetRef.current = null;
+      if (sceneBag) removeClipPreview(sceneBag, clipPreviewRef.current);
+      clipPreviewRef.current = null;
+    },
     // HC-slice ring + BPD/OFD spans, live on the currently-shown (cranial)
     // result mesh - the Analysis workspace's cranial visualization. dims
     // the mesh so a line running along the far side of the surface doesn't
@@ -434,7 +493,7 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
     // workspace's own heatmaps (Compare tab's asymmetry overlay,
     // Correspondence tab's change map) pass dim:false, since those don't
     // have an opacity slider to recover visibility with afterward and the
-    // user wants those heatmaps fully opaque.
+    // those heatmaps should be fully opaque.
     showHeatmap(heatmap, { dim = true } = {}) {
       const meshObject = meshStateRef.current.object;
       if (!meshObject) return;
