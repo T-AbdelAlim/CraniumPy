@@ -11,16 +11,25 @@ const DEFAULT_SWEEP_SECONDS = 4;
 // animation, kept separate from the play/pause loop above (which runs
 // indefinitely) since an export needs to know exactly when it's done so
 // it can stop recording.
-function runRoundTripSweep(secondsPerLeg, setTFn) {
+//
+// forwardOnly drives a single start -> end pass instead (and leaves t at 1
+// when it's done, rather than snapping back to 0, since the clip ends on
+// the final timepoint).
+function runRoundTripSweep(secondsPerLeg, setTFn, forwardOnly = false) {
   return new Promise((resolve) => {
-    const totalSeconds = secondsPerLeg * 2;
+    const totalSeconds = forwardOnly ? secondsPerLeg : secondsPerLeg * 2;
     let start = null;
     function tick(now) {
       if (start === null) start = now;
       const elapsed = (now - start) / 1000;
       if (elapsed >= totalSeconds) {
-        setTFn(0);
+        setTFn(forwardOnly ? 1 : 0);
         resolve();
+        return;
+      }
+      if (forwardOnly) {
+        setTFn(Math.max(0, Math.min(1, elapsed / secondsPerLeg)));
+        requestAnimationFrame(tick);
         return;
       }
       const t = elapsed <= secondsPerLeg ? elapsed / secondsPerLeg : 1 - (elapsed - secondsPerLeg) / secondsPerLeg;
@@ -71,6 +80,7 @@ export default function MorphControl({ onT, morphViewerRef, fullscreenRef, expor
   const [t, setT] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [sweepSeconds, setSweepSeconds] = useState(DEFAULT_SWEEP_SECONDS);
+  const [playbackMode, setPlaybackMode] = useState("continuous"); // "continuous" | "forward"
   const [exporting, setExporting] = useState(false);
   const [exportStatus, setExportStatus] = useState("");
   const [opacity, setOpacity] = useState(1);
@@ -79,6 +89,8 @@ export default function MorphControl({ onT, morphViewerRef, fullscreenRef, expor
   const rafRef = useRef(null);
   const lastRef = useRef(null);
   const sweepSecondsRef = useRef(sweepSeconds);
+  const forwardOnlyRef = useRef(false);
+  const tRef = useRef(0);
 
   useEffect(() => {
     onT(t);
@@ -123,23 +135,48 @@ export default function MorphControl({ onT, morphViewerRef, fullscreenRef, expor
   }, [sweepSeconds]);
 
   useEffect(() => {
+    forwardOnlyRef.current = playbackMode === "forward";
+  }, [playbackMode]);
+
+  tRef.current = t;
+
+  // play from the top: a forward sweep that already finished sits at 100%,
+  // so pressing play again restarts it from 0 instead of doing nothing.
+  function handleTogglePlay() {
+    if (!playing && forwardOnlyRef.current) {
+      directionRef.current = 1;
+      if (tRef.current >= 1) {
+        tRef.current = 0;
+        setT(0);
+      }
+    }
+    setPlaying((p) => !p);
+  }
+
+  useEffect(() => {
     if (!playing) return undefined;
     lastRef.current = null;
     function tick(now) {
       if (lastRef.current == null) lastRef.current = now;
       const dt = (now - lastRef.current) / 1000;
       lastRef.current = now;
-      setT((prev) => {
-        let next = prev + (directionRef.current * dt) / sweepSecondsRef.current;
+      let next = tRef.current + (directionRef.current * dt) / sweepSecondsRef.current;
+      if (forwardOnlyRef.current) {
         if (next >= 1) {
-          next = 1;
-          directionRef.current = -1;
-        } else if (next <= 0) {
-          next = 0;
-          directionRef.current = 1;
+          tRef.current = 1;
+          setT(1);
+          setPlaying(false);
+          return;
         }
-        return next;
-      });
+      } else if (next >= 1) {
+        next = 1;
+        directionRef.current = -1;
+      } else if (next <= 0) {
+        next = 0;
+        directionRef.current = 1;
+      }
+      tRef.current = next;
+      setT(next);
       rafRef.current = requestAnimationFrame(tick);
     }
     rafRef.current = requestAnimationFrame(tick);
@@ -171,7 +208,7 @@ export default function MorphControl({ onT, morphViewerRef, fullscreenRef, expor
       setExportStatus(i === 0 ? "recording..." : "recording (retrying with a different video format)...");
       try {
         viewer.startRecording({ mimeType: candidates[i] });
-        await runRoundTripSweep(sweepSecondsRef.current, setT);
+        await runRoundTripSweep(sweepSecondsRef.current, setT, forwardOnlyRef.current);
         const { blob, mimeType } = await viewer.stopRecording();
         if (!blob || blob.size === 0) throw new Error("the recording came out empty");
         const extension = extensionForMimeType(mimeType);
@@ -205,7 +242,7 @@ export default function MorphControl({ onT, morphViewerRef, fullscreenRef, expor
 
   return (
     <div className="longitudinal-morph-control">
-      <button type="button" onClick={() => setPlaying((p) => !p)} disabled={exporting}>
+      <button type="button" onClick={handleTogglePlay} disabled={exporting}>
         {playing ? "pause" : "play"}
       </button>
       <input
@@ -228,6 +265,13 @@ export default function MorphControl({ onT, morphViewerRef, fullscreenRef, expor
               {s}s / sweep
             </option>
           ))}
+        </select>
+      </label>
+      <label className="longitudinal-morph-speed">
+        playback
+        <select value={playbackMode} onChange={(e) => setPlaybackMode(e.target.value)} disabled={exporting}>
+          <option value="continuous">continuous</option>
+          <option value="forward">forward sweep</option>
         </select>
       </label>
       <span className="hint longitudinal-morph-readout">{Math.round(t * 100)}%</span>
