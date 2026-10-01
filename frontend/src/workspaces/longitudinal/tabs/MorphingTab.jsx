@@ -166,7 +166,7 @@ export default function MorphingTab({ slots, exportDestDir, onExportDestDirChang
             distanceMode === "fixed" ? (referencePos >= 0 ? referencePos : 0)
             : usingCustomTemplate ? { sessionId: customTemplateSessionId, stage: "original" }
             : distanceTemplate;
-          const heatmaps = await computeDistanceHeatmaps(stages, distanceMode, option);
+          const heatmaps = await computeDistanceHeatmaps(stages, distanceMode, option, { vsNext: true });
           if (cancelled) return;
           // computeDistanceHeatmaps' own "fixed" mode silently returns an
           // all-null array when it can't resolve a reference (see
@@ -246,7 +246,7 @@ export default function MorphingTab({ slots, exportDestDir, onExportDestDirChang
             </label>
             <label>
               <input type="radio" checked={distanceMode === "longitudinal"} onChange={() => setDistanceMode("longitudinal")} />
-              longitudinal timing (each vs. previous)
+              longitudinal timing (each vs. next)
             </label>
             <label>
               <input type="radio" checked={distanceMode === "template"} onChange={() => setDistanceMode("template")} />

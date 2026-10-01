@@ -29,7 +29,13 @@ import { computeLongitudinalDiff } from "../../../api/longitudinal.js";
 // never shows" bug). every diff fires in parallel (each pair is independent
 // of every other), not as a serial chain - the point of the whole exercise
 // is computing this once, up front, cheaply.
-export async function computeDistanceHeatmaps(stages, mode, option) {
+//
+// vsNext (only read in "longitudinal" mode) flips which neighbour each stage
+// is measured against: heatmaps[i] is stage i against stage i+1 instead of
+// against stage i-1, so the LAST stage is the one left null. the morph
+// animation uses this so a leg's colours are relative to where that leg
+// is heading, not where it came from. CompareTab leaves it off.
+export async function computeDistanceHeatmaps(stages, mode, option, { vsNext = false } = {}) {
   const heatmaps = new Array(stages.length).fill(null);
 
   if (mode === "fixed") {
@@ -38,6 +44,13 @@ export async function computeDistanceHeatmaps(stages, mode, option) {
     await Promise.all(
       stages.map(async (s, i) => {
         const diff = await computeLongitudinalDiff(referenceRef, s.ref);
+        heatmaps[i] = diff.heatmap;
+      }),
+    );
+  } else if (mode === "longitudinal" && vsNext) {
+    await Promise.all(
+      stages.slice(0, -1).map(async (s, i) => {
+        const diff = await computeLongitudinalDiff(stages[i + 1].ref, s.ref);
         heatmaps[i] = diff.heatmap;
       }),
     );
