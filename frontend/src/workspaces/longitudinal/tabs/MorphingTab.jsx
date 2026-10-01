@@ -285,6 +285,7 @@ export default function MorphingTab({ slots, exportDestDir, onExportDestDirChang
           fullscreenRef={fullscreenRef}
           exportDestDir={exportDestDir}
           videoFolderName={videoFolderName}
+          overlaySuffix={overlayMode}
         />
         <div className="longitudinal-morphing-viewer-canvas">
           <LongitudinalMorphViewer ref={morphViewerRef} />

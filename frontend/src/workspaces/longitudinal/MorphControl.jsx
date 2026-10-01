@@ -76,13 +76,20 @@ function extensionForMimeType(mimeType) {
 // save_video) instead of the plain browser download below - the ONE step
 // that does round-trip through the backend, since only it can write to an
 // arbitrary filesystem path.
-export default function MorphControl({ onT, morphViewerRef, fullscreenRef, exportDestDir, videoFolderName }) {
+//
+// overlaySuffix (the selected overlay mode - see MorphingTab.jsx) is added to
+// the saved file name. when that file already exists in the export folder,
+// the user is asked whether to overwrite it, keep both (the new one gets a
+// _2/_3 suffix) or skip saving - asked after recording, with the recording
+// still in memory, so a "rename" never costs a second take.
+export default function MorphControl({ onT, morphViewerRef, fullscreenRef, exportDestDir, videoFolderName, overlaySuffix = "" }) {
   const [t, setT] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [sweepSeconds, setSweepSeconds] = useState(DEFAULT_SWEEP_SECONDS);
   const [playbackMode, setPlaybackMode] = useState("continuous"); // "continuous" | "forward"
   const [exporting, setExporting] = useState(false);
   const [exportStatus, setExportStatus] = useState("");
+  const [conflict, setConflict] = useState(null); // { filename, resolve } while the overwrite/rename prompt is up
   const [opacity, setOpacity] = useState(1);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const directionRef = useRef(1);
@@ -183,6 +190,26 @@ export default function MorphControl({ onT, morphViewerRef, fullscreenRef, expor
     return () => cancelAnimationFrame(rafRef.current);
   }, [playing]);
 
+  // saves into the export folder; when the file's already there, waits for
+  // the user's overwrite/rename/skip answer and retries. returns the saved
+  // path, or null if they chose to skip.
+  async function saveWithConflictPrompt(blob, extension) {
+    let onConflict = "ask";
+    for (;;) {
+      try {
+        const { saved_to: savedTo, filename } = await saveVideo(
+          blob, extension, exportDestDir, videoFolderName, overlaySuffix, onConflict,
+        );
+        return `${savedTo}\\${filename}`;
+      } catch (err) {
+        if (!err.exists) throw err;
+        onConflict = await new Promise((resolve) => setConflict({ filename: err.filename, resolve }));
+        setConflict(null);
+        if (onConflict === "skip") return null;
+      }
+    }
+  }
+
   // tries every mimeType the browser claims to support, one whole
   // recording attempt at a time, instead of trusting the first one blindly
   // - see LongitudinalMorphViewer.jsx's own supportedVideoMimeTypes/
@@ -217,11 +244,11 @@ export default function MorphControl({ onT, morphViewerRef, fullscreenRef, expor
           // own folder-picker control) - write the bytes straight to disk
           // instead of a browser download, same folder-naming convention
           // the Trends tab's "export results" uses.
-          const { saved_to: savedTo } = await saveVideo(blob, extension, exportDestDir, videoFolderName);
-          setExportStatus(`Saved to ${savedTo}`);
+          const savedPath = await saveWithConflictPrompt(blob, extension);
+          setExportStatus(savedPath ? `Saved to ${savedPath}` : "Not saved (file already exists)");
         } else {
           const url = URL.createObjectURL(blob);
-          triggerDownload(url, `morph_animation.${extension}`);
+          triggerDownload(url, overlaySuffix ? `morph_animation_${overlaySuffix}.${extension}` : `morph_animation.${extension}`);
           // the download itself is synchronous (the anchor click fires
           // immediately), but WebView2/some browsers read the blob lazily
           // right after - revoking too early can turn that into an empty/
@@ -305,6 +332,25 @@ export default function MorphControl({ onT, morphViewerRef, fullscreenRef, expor
       <span className={exportStatus ? "hint longitudinal-morph-export-status is-visible" : "hint longitudinal-morph-export-status"}>
         {exportStatus}
       </span>
+      {conflict && (
+        <div className="confirm-dialog-backdrop">
+          <div className="confirm-dialog">
+            <h3>File already exists</h3>
+            <p>{conflict.filename} is already in the export folder. Overwrite it, or keep both and save this one under a new name?</p>
+            <div className="confirm-dialog-actions">
+              <button type="button" className="button-subtle" onClick={() => conflict.resolve("skip")}>
+                don't save
+              </button>
+              <button type="button" className="button-subtle" onClick={() => conflict.resolve("rename")}>
+                rename (keep both)
+              </button>
+              <button type="button" onClick={() => conflict.resolve("overwrite")}>
+                overwrite
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

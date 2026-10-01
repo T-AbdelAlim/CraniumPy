@@ -285,6 +285,9 @@ class SaveRequest(BaseModel):
 
 class SaveResultsResponse(BaseModel):
     saved_to: str
+    # set by endpoints that write a single named file (save-video) so the
+    # frontend can say which one - folder-level exports leave it None
+    filename: str | None = None
 
 
 class ProgressInfo(BaseModel):
