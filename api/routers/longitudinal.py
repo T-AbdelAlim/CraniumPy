@@ -179,7 +179,12 @@ def trends_export(request: TrendsExportRequest) -> SaveResultsResponse:
 
 @router.post("/save-video", response_model=SaveResultsResponse)
 async def save_video(
-    video: UploadFile, dest_dir: str = Form(...), folder_name: str = Form(...), extension: str = Form("webm")
+    video: UploadFile,
+    dest_dir: str = Form(...),
+    folder_name: str = Form(...),
+    extension: str = Form("webm"),
+    suffix: str = Form(""),
+    on_conflict: str = Form("ask"),
 ) -> SaveResultsResponse:
     """3D Morphing's "export video" button, desktop variant - the recording
     itself only ever exists as an in-browser MediaRecorder Blob (see
@@ -190,9 +195,31 @@ async def save_video(
     above uses (patient id + timepoint range). extension matches whichever
     codec the browser's own MediaRecorder actually used (see
     extensionForMimeType in MorphControl.jsx) - MediaRecorder tries several
-    mime types in turn, so this can't be hardcoded to one."""
+    mime types in turn, so this can't be hardcoded to one.
+
+    suffix (the overlay mode the clip was recorded with - measurements,
+    asymmetry, distance, none) is tacked onto the file name so clips of
+    the same timepoints with different overlays don't collide. when the
+    file already exists, on_conflict decides: "ask" (the default) answers
+    409 with {"exists": true, "filename": ...} and writes nothing, so the
+    frontend can ask the user; "overwrite" replaces it; "rename" keeps the
+    existing file and writes to the next free name (_2, _3, ...)."""
+    if on_conflict not in ("ask", "overwrite", "rename"):
+        raise HTTPException(status_code=400, detail=f"unknown on_conflict: {on_conflict}")
     out_dir = _resolve_export_folder(dest_dir, folder_name, default="morph_export")
     safe_extension = "".join(c for c in extension if c.isalnum()) or "webm"
-    video_bytes = await video.read()
-    (out_dir / f"morph_animation.{safe_extension}").write_bytes(video_bytes)
-    return SaveResultsResponse(saved_to=str(out_dir))
+    safe_suffix = "".join(c for c in suffix if c.isalnum() or c in "-_")
+    stem = f"morph_animation_{safe_suffix}" if safe_suffix else "morph_animation"
+
+    target = out_dir / f"{stem}.{safe_extension}"
+    if target.exists():
+        if on_conflict == "ask":
+            raise HTTPException(status_code=409, detail={"exists": True, "filename": target.name})
+        if on_conflict == "rename":
+            n = 2
+            while (out_dir / f"{stem}_{n}.{safe_extension}").exists():
+                n += 1
+            target = out_dir / f"{stem}_{n}.{safe_extension}"
+
+    target.write_bytes(await video.read())
+    return SaveResultsResponse(saved_to=str(out_dir), filename=target.name)

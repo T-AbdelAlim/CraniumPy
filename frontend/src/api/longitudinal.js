@@ -97,13 +97,27 @@ export async function saveTrendsExport(xLabels, series, destDir, folderName) {
 // for the backend to write into destDir/folderName/ (same folder-naming
 // convention saveTrendsExport uses) instead of triggering a browser
 // download - see api/routers/longitudinal.py's save_video.
-export async function saveVideo(blob, extension, destDir, folderName) {
+//
+// suffix (the overlay mode) goes into the file name. onConflict is "ask" |
+// "overwrite" | "rename" - with "ask" an already-existing file rejects with
+// an error carrying exists=true and the colliding filename, so the caller
+// can prompt and call again with the user's choice.
+export async function saveVideo(blob, extension, destDir, folderName, suffix = "", onConflict = "ask") {
   const form = new FormData();
   form.append("video", blob, `morph_animation.${extension}`);
   form.append("dest_dir", destDir);
   form.append("folder_name", folderName);
   form.append("extension", extension);
+  form.append("suffix", suffix);
+  form.append("on_conflict", onConflict);
   const response = await fetch("/api/longitudinal/save-video", { method: "POST", body: form });
+  if (response.status === 409) {
+    const body = await response.json().catch(() => null);
+    const error = new Error("file already exists");
+    error.exists = true;
+    error.filename = body?.detail?.filename ?? "";
+    throw error;
+  }
   if (!response.ok) throw new Error(await response.text());
-  return response.json(); // {saved_to}
+  return response.json(); // {saved_to, filename}
 }

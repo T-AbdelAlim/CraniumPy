@@ -159,3 +159,51 @@ def test_save_video_writes_bytes_into_a_named_folder(client, tmp_path):
     saved_to = Path(response.json()["saved_to"])
     assert saved_to == tmp_path / "patient1_morph_t0_t2"
     assert (saved_to / "morph_animation.webm").read_bytes() == b"not-really-a-video-but-fine-for-this-test"
+
+
+def _post_video(client, tmp_path, payload=b"clip", **extra):
+    return client.post(
+        "/api/longitudinal/save-video",
+        data={"dest_dir": str(tmp_path), "folder_name": "p_morph_t0_t1", "extension": "webm", **extra},
+        files={"video": ("x.webm", payload, "video/webm")},
+    )
+
+
+def test_save_video_adds_overlay_suffix_to_filename(client, tmp_path):
+    response = _post_video(client, tmp_path, suffix="asymmetry")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["filename"] == "morph_animation_asymmetry.webm"
+    assert (tmp_path / "p_morph_t0_t1" / "morph_animation_asymmetry.webm").exists()
+
+
+def test_save_video_existing_file_asks_instead_of_overwriting(client, tmp_path):
+    assert _post_video(client, tmp_path, payload=b"first", suffix="none").status_code == 200
+
+    response = _post_video(client, tmp_path, payload=b"second", suffix="none")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {"exists": True, "filename": "morph_animation_none.webm"}
+    assert (tmp_path / "p_morph_t0_t1" / "morph_animation_none.webm").read_bytes() == b"first"
+
+
+def test_save_video_overwrite_replaces_the_file(client, tmp_path):
+    _post_video(client, tmp_path, payload=b"first", suffix="none")
+
+    response = _post_video(client, tmp_path, payload=b"second", suffix="none", on_conflict="overwrite")
+
+    assert response.status_code == 200
+    assert (tmp_path / "p_morph_t0_t1" / "morph_animation_none.webm").read_bytes() == b"second"
+
+
+def test_save_video_rename_keeps_both_files(client, tmp_path):
+    _post_video(client, tmp_path, payload=b"first", suffix="none")
+    _post_video(client, tmp_path, payload=b"second", suffix="none", on_conflict="rename")
+
+    response = _post_video(client, tmp_path, payload=b"third", suffix="none", on_conflict="rename")
+
+    folder = tmp_path / "p_morph_t0_t1"
+    assert response.json()["filename"] == "morph_animation_none_3.webm"
+    assert (folder / "morph_animation_none.webm").read_bytes() == b"first"
+    assert (folder / "morph_animation_none_2.webm").read_bytes() == b"second"
+    assert (folder / "morph_animation_none_3.webm").read_bytes() == b"third"
