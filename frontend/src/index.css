@@ -757,6 +757,14 @@ select {
   border-radius: 6px;
 }
 
+/* the clip preview's sphere adjustment - a control you drive by watching
+   the sphere move in the viewer, so it wants the full panel width */
+.template-controls input[type="range"] {
+  width: 100%;
+  margin: 0.15rem 0 0.4rem;
+  accent-color: var(--hc);
+}
+
 .hidden {
   display: none !important;
 }

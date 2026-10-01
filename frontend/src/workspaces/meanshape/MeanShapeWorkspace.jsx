@@ -97,16 +97,23 @@ export default function MeanShapeWorkspace({ onSnapshotChange, initialSnapshot }
       return;
     }
     setPickStatus("resolving dropped file(s)...");
-    const nativePaths = await waitForNativeDropPaths();
+    const nativePaths = await waitForNativeDropPaths(meshNames);
     const resolved = meshNames.filter((n) => nativePaths?.[n]).map((n) => nativePaths[n]);
     if (resolved.length === 0) {
       setPickStatus("Couldn't resolve a real file path for the dropped file(s) - this needs the desktop app.");
       return;
     }
     handlePathsPicked(resolved, null);
-    if (resolved.length < meshNames.length) {
-      setPickStatus(`${meshNames.length - resolved.length} of ${meshNames.length} dropped file(s) didn't resolve to a real path and were skipped.`);
-    }
+    // says so explicitly rather than leaving the picked-list count as the
+    // only evidence: a drop that adds nothing and a drop that adds
+    // everything otherwise look identical for the moment before the list
+    // re-renders, which makes "nothing happened" impossible to tell apart
+    // from "it worked".
+    setPickStatus(
+      resolved.length < meshNames.length
+        ? `added ${resolved.length} of ${meshNames.length} dropped file(s) - the rest didn't resolve to a real path and were skipped.`
+        : `added ${resolved.length} mesh${resolved.length === 1 ? "" : "es"}.`
+    );
   }
 
   async function handleCompute() {

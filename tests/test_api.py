@@ -65,6 +65,13 @@ def _run_align(client: TestClient, session_id: str, body: dict, timeout: float =
     return _poll_status(client, session_id, timeout)
 
 
+def _saved_mesh_names(patient_dir: Path) -> set[str]:
+    """every .ply a save wrote under the patient folder, wherever it landed
+    in the tree - the registration at the top, the region's own clipped/
+    fitted meshes below (see results_bundle._build_mesh_files)."""
+    return {p.name for p in patient_dir.rglob("*.ply")}
+
+
 def _run_clip(client: TestClient, session_id: str, body: dict, timeout: float = 30) -> str:
     response = client.post(f"/api/sessions/{session_id}/clip", json=body)
     assert response.status_code == 200, response.text
@@ -735,15 +742,15 @@ def test_measure_registered_then_save_meshes_and_analysis(client, tmp_path):
     save_meshes_response = client.post(f"/api/sessions/{session_id}/save/meshes")
     assert save_meshes_response.status_code == 200, save_meshes_response.text
     meshes_dir = Path(save_meshes_response.json()["saved_to"])
-    # plain CP_C_{stem}/ - no landmark-count/CoM suffix, since there's no
+    # plain CP_{stem}/ - no landmark-count/CoM suffix, since there's no
     # real clip config behind a skipped-preprocessing session.
-    assert meshes_dir == tmp_path / "CP_C_patient" / "meshes"
+    assert meshes_dir == tmp_path / "CP_patient"
     assert any(n.endswith("_rg.ply") for n in (p.name for p in meshes_dir.iterdir()))
 
     save_analysis_response = client.post(f"/api/sessions/{session_id}/save/analysis")
     assert save_analysis_response.status_code == 200, save_analysis_response.text
     analysis_dir = Path(save_analysis_response.json()["saved_to"])
-    assert analysis_dir == tmp_path / "CP_C_patient" / "analysis"
+    assert analysis_dir == tmp_path / "CP_patient" / "cranium" / "analysis"
     assert any(n.endswith("_report_cranial.json") for n in (p.name for p in analysis_dir.iterdir()))
 
 
@@ -769,7 +776,7 @@ def test_results_bundle_download(client, landmarks_payload):
     bundle = client.get(f"/api/sessions/{session_id}/bundle")
     assert bundle.status_code == 200
     assert bundle.headers["content-type"] == "application/zip"
-    assert "CP_C_template_xy_com_CoM.zip" in bundle.headers["content-disposition"]
+    assert "CP_template_xy_com_CoM_cranium.zip" in bundle.headers["content-disposition"]
 
     zf = zipfile.ZipFile(BytesIO(bundle.content))
     names = zf.namelist()
@@ -817,7 +824,7 @@ def test_save_results_to_source_folder(client, landmarks_payload, tmp_path):
     save_response = client.post(f"/api/sessions/{session_id}/save")
     assert save_response.status_code == 200, save_response.text
     saved_to = Path(save_response.json()["saved_to"])
-    assert saved_to == tmp_path / "CP_C_1016510_20210730_edited_CoM"
+    assert saved_to == tmp_path / "CP_1016510_20210730_edited_CoM" / "cranium"
     assert (saved_to / "1016510_20210730_edited_rg.ply").exists()
     assert (saved_to / "1016510_20210730_edited_rg_C.ply").exists()
     assert (saved_to / "1016510_20210730_edited_report_cranial.json").exists()
@@ -845,8 +852,8 @@ def test_save_results_dest_dir_override(client, landmarks_payload, tmp_path):
     save_response = client.post(f"/api/sessions/{session_id}/save", json={"dest_dir": str(override_dir)})
     assert save_response.status_code == 200, save_response.text
     saved_to = Path(save_response.json()["saved_to"])
-    assert saved_to == override_dir / "CP_C_1016510_20210730_edited_CoM"
-    assert not (source_dir / "CP_C_1016510_20210730_edited_CoM").exists()
+    assert saved_to == override_dir / "CP_1016510_20210730_edited_CoM" / "cranium"
+    assert not (source_dir / "CP_1016510_20210730_edited_CoM").exists()
 
 
 def test_save_results_dest_dir_not_a_real_folder_400s(client, landmarks_payload, tmp_path):
@@ -882,7 +889,7 @@ def test_save_meshes_gains_a_third_file_after_nicp_fit(client, landmarks_payload
     save_response = client.post(f"/api/sessions/{session_id}/save/meshes")
     assert save_response.status_code == 200, save_response.text
     saved_to = Path(save_response.json()["saved_to"])
-    names = {p.name for p in saved_to.iterdir()}
+    names = _saved_mesh_names(saved_to)
     assert len(names) == 2
     assert any(n.endswith("_rg.ply") for n in names)
     assert any(n.endswith("_rg_C.ply") for n in names)
@@ -909,7 +916,7 @@ def test_save_meshes_gains_a_third_file_after_nicp_fit(client, landmarks_payload
     save_response = client.post(f"/api/sessions/{session_id}/save/meshes")
     assert save_response.status_code == 200, save_response.text
     saved_to = Path(save_response.json()["saved_to"])
-    names = {p.name for p in saved_to.iterdir()}
+    names = _saved_mesh_names(saved_to)
     assert len(names) == 3
     assert any(n.endswith("_rg.ply") for n in names)
     assert any(n.endswith("_rg_C.ply") for n in names)
@@ -939,9 +946,24 @@ def test_save_meshes_right_after_align_writes_just_rg_ply(client, landmarks_payl
     # com_translation is unknown this early (it's a /clip-time option) -
     # guessed True, the same default both the frontend and ClipRequest
     # itself start on - see _resolve_meshes_save_config.
-    assert saved_to == tmp_path / "CP_C_patient_CoM" / "meshes"
+    assert saved_to == tmp_path / "CP_patient_CoM"
     names = {p.name for p in saved_to.iterdir()}
-    assert names == {"patient_rg.ply"}
+    # the landmark record rides along with the _rg mesh, so an align-only
+    # run is self-describing (what was picked, where it ended up) for the
+    # batch-preprocessing path that consumes these folders later.
+    assert names == {"patient_rg.ply", "patient_rg_landmarks.json"}
+    record = json.loads((saved_to / "patient_rg_landmarks.json").read_text())
+    assert record["target"] == "cranium"
+    # align alone never applies the CoM nudge, whatever the folder name
+    # guessed - this field describes the mesh, not the folder.
+    assert record["com_translation"] is False
+    sellion = landmarks_payload[0]
+    assert record["picked"]["sellion"] == pytest.approx([sellion["x"], sellion["y"], sellion["z"]], abs=1e-3)
+    assert record["picked"]["alt_frontal"] is None
+    assert record["registered"]["alt_frontal"] is None
+    for block in ("picked", "registered"):
+        for name in ("sellion", "left_tragus", "right_tragus"):
+            assert len(record[block][name]) == 3
 
     # running the real pipeline afterward (still the default com_translation)
     # adds the rest into that SAME folder rather than a second one.
@@ -950,9 +972,147 @@ def test_save_meshes_right_after_align_writes_just_rg_ply(client, landmarks_payl
     save_response = client.post(f"/api/sessions/{session_id}/save/meshes")
     assert save_response.status_code == 200, save_response.text
     saved_to_after_run = Path(save_response.json()["saved_to"])
+    # the SAME patient folder, with the region's own subfolder added under
+    # it - not a second folder beside it.
     assert saved_to_after_run == saved_to
     names = {p.name for p in saved_to.iterdir()}
-    assert names == {"patient_rg.ply", "patient_rg_C.ply"}
+    assert names == {"patient_rg.ply", "patient_rg_landmarks.json", "cranium"}
+    assert {p.name for p in (saved_to / "cranium" / "meshes").iterdir()} == {"patient_rg_C.ply"}
+    # the clip DID ask for the CoM translation, and now the record says so.
+    assert json.loads((saved_to / "patient_rg_landmarks.json").read_text())["com_translation"] is True
+
+
+def test_aligning_both_regions_writes_one_patient_folder(client, landmarks_payload, tmp_path):
+    # the bug this covers: aligning for the cranium and then for the face
+    # produced CP_C_patient_CoM/ and CP_F_patient_CoM/ side by side, two
+    # folders for one scan. pressing align commits to no region at all, so
+    # there is nothing to separate yet - the region only earns a folder
+    # once preprocessing has actually cut something.
+    import shutil
+
+    tmp_mesh = tmp_path / "patient.ply"
+    shutil.copy(TEMPLATE_PATH, tmp_mesh)
+    session_id = client.post("/api/sessions/from-paths", json={"paths": [str(tmp_mesh)]}).json()["session_id"]
+
+    assert _run_align(client, session_id, {"target": "cranium", "landmarks": landmarks_payload}) == "done"
+    client.post(f"/api/sessions/{session_id}/save/meshes")
+    assert _run_align(client, session_id, {"target": "face", "landmarks": landmarks_payload}) == "done"
+    client.post(f"/api/sessions/{session_id}/save/meshes")
+
+    assert [p.name for p in tmp_path.iterdir() if p.is_dir()] == ["CP_patient_CoM"]
+    patient_dir = tmp_path / "CP_patient_CoM"
+    assert {p.name for p in patient_dir.iterdir()} == {"patient_rg.ply", "patient_rg_landmarks.json"}
+    # the record says which frame that single _rg.ply is in - the facial
+    # registration is shifted onto the sellion and the cranial one isn't,
+    # so the later align rewrote it (see _build_mesh_files).
+    assert json.loads((patient_dir / "patient_rg_landmarks.json").read_text())["target"] == "face"
+
+    # and now preprocessing puts the region's own output beneath it
+    assert _clip_and_run(client, session_id, {"target": "face", "landmarks": landmarks_payload}) == "done"
+    client.post(f"/api/sessions/{session_id}/save/meshes")
+    assert sorted(p.name for p in patient_dir.iterdir()) == [
+        "face_and_forehead",
+        "patient_rg.ply",
+        "patient_rg_landmarks.json",
+    ]
+    assert {p.name for p in (patient_dir / "face_and_forehead" / "meshes").iterdir()} == {"patient_rg_F.ply"}
+
+
+def test_pre_clip_save_follows_the_com_setting_it_is_told(client, landmarks_payload, tmp_path):
+    # com_translation names the patient folder, and at align time it hasn't
+    # been acted on yet - so the caller (which has the checkbox on screen)
+    # says what it is, and the align-time save lands where the later
+    # clip-time save will too, instead of beside it.
+    import shutil
+
+    tmp_mesh = tmp_path / "patient.ply"
+    shutil.copy(TEMPLATE_PATH, tmp_mesh)
+    session_id = client.post("/api/sessions/from-paths", json={"paths": [str(tmp_mesh)]}).json()["session_id"]
+    assert _run_align(client, session_id, {"target": "cranium", "landmarks": landmarks_payload}) == "done"
+
+    save = client.post(f"/api/sessions/{session_id}/save/meshes", json={"com_translation": False})
+    assert Path(save.json()["saved_to"]) == tmp_path / "CP_patient"
+
+    status = _clip_and_run(
+        client, session_id, {"target": "cranium", "landmarks": landmarks_payload, "com_translation": False}
+    )
+    assert status == "done"
+    save = client.post(f"/api/sessions/{session_id}/save/meshes")
+    assert Path(save.json()["saved_to"]) == tmp_path / "CP_patient"
+    assert [p.name for p in tmp_path.iterdir() if p.is_dir()] == ["CP_patient"]
+
+
+def test_clip_preview_needs_a_registration_first(client):
+    session_id = _upload(client)
+
+    response = client.get(f"/api/sessions/{session_id}/clip-preview")
+
+    # the geometry is expressed in the registered frame, so before /align
+    # there is no frame to express it in - a 409, not an empty answer.
+    assert response.status_code == 409
+    assert "align" in response.json()["detail"]
+
+
+def test_clip_preview_describes_both_targets_after_align(client, landmarks_payload):
+    # what the viewer draws between "align" and "preprocess mesh": both
+    # regions at once, so the user can see the one they are NOT on.
+    session_id = _upload(client)
+    assert _run_align(client, session_id, {"target": "cranium", "landmarks": landmarks_payload}) == "done"
+
+    cranium = client.get(f"/api/sessions/{session_id}/clip-preview", params={"target": "cranium"})
+    face = client.get(f"/api/sessions/{session_id}/clip-preview", params={"target": "face"})
+
+    assert cranium.status_code == 200, cranium.text
+    assert face.status_code == 200, face.text
+    cranial_planes = {p["name"]: p for p in cranium.json()["planes"]}
+    assert set(cranial_planes) == {"landmark_plane", "rear_neck_plane"}
+    assert cranial_planes["landmark_plane"]["boundary"] is True
+    assert cranium.json()["spheres"][0]["radius"] == pytest.approx(175.0)
+    facial = face.json()
+    assert [p["name"] for p in facial["planes"]] == ["depth_plane"]
+    assert facial["spheres"][0]["radius"] > 0
+
+
+def test_clip_preview_corrects_for_the_frame_actually_on_screen(client, landmarks_payload):
+    # aligned on the cranium, asking about the face: the facial numbers are
+    # written for a sellion-at-origin frame, which is NOT the frame the
+    # displayed mesh is in, so the endpoint has to shift them. the bug this
+    # covers drew the facial plane through empty space next to the head.
+    session_id = _upload(client)
+    assert _run_align(client, session_id, {"target": "cranium", "landmarks": landmarks_payload}) == "done"
+    on_cranial_mesh = client.get(f"/api/sessions/{session_id}/clip-preview", params={"target": "face"}).json()
+
+    # now align the same mesh on the face, where those numbers are native
+    assert _run_align(client, session_id, {"target": "face", "landmarks": landmarks_payload}) == "done"
+    on_facial_mesh = client.get(f"/api/sessions/{session_id}/clip-preview", params={"target": "face"}).json()
+
+    # same region, two frames - the sellion shift apart, nothing else
+    shift = np.asarray(on_cranial_mesh["planes"][0]["origin"]) - np.asarray(on_facial_mesh["planes"][0]["origin"])
+    assert np.linalg.norm(shift) > 1.0, "the two frames really are different - otherwise this test proves nothing"
+    assert np.asarray(on_cranial_mesh["spheres"][0]["center"]) - np.asarray(
+        on_facial_mesh["spheres"][0]["center"]
+    ) == pytest.approx(shift, abs=1e-6)
+    assert on_cranial_mesh["spheres"][0]["radius"] == pytest.approx(on_facial_mesh["spheres"][0]["radius"])
+
+
+def test_clip_accepts_an_adjusted_trim_sphere(client, landmarks_payload):
+    # the viewer lets the user move and shrink the trim sphere; a radius
+    # this tight has to actually reach the cut, not just the preview.
+    session_id = _upload(client)
+    body = {
+        "target": "cranium",
+        "landmarks": landmarks_payload,
+        "sphere_center_offset": [0.0, -10.0, 20.0],
+        "sphere_radius": 95.0,
+    }
+    assert _run_clip(client, session_id, body) == "done"
+    tight = client.get(f"/api/sessions/{session_id}/mesh/clipped").content
+
+    session_id = _upload(client)
+    assert _run_clip(client, session_id, {"target": "cranium", "landmarks": landmarks_payload}) == "done"
+    default = client.get(f"/api/sessions/{session_id}/mesh/clipped").content
+
+    assert len(tight) < len(default)
 
 
 def test_save_meshes_before_align_is_a_clear_error(client, tmp_path):
