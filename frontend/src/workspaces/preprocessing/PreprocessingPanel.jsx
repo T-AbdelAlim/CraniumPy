@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { LANDMARK_LABELS, LANDMARK_DESCRIPTIONS, activeLandmarkNames } from "../../lib/landmarks.js";
 import SaveFolderControl from "../../components/SaveFolderControl.jsx";
 import InfoTooltip from "../../components/InfoTooltip.jsx";
@@ -15,6 +15,17 @@ const CRANIUM_METRICS_TEXT = "OFD, BPD, cephalic index, head circumference, volu
 const FACE_METRICS_TEXT =
   "Facial symmetry, forehead angle, ridge protrusion, temporal hollowing, parabolic deviation, frontal bossing.";
 
+// the trim sphere's adjustment axes, named for what moving them does to the
+// head on screen rather than for the axis letter - this is a control you use
+// by watching the sphere, not by doing arithmetic in the registered frame.
+const SPHERE_AXES = [
+  { key: "dx", label: "move left / right" },
+  { key: "dy", label: "move down / up" },
+  { key: "dz", label: "move back / front" },
+];
+
+const BLANK_SPHERE_ADJUST = { dx: 0, dy: 0, dz: 0, radius: null };
+
 export default function PreprocessingPanel({
   target,
   onTargetChange,
@@ -29,6 +40,12 @@ export default function PreprocessingPanel({
   onAlign,
   onAdjustPicks,
   onReset,
+  sphereAdjust,
+  onSphereAdjustChange,
+  onConfirmSphere,
+  sphereConfirmed,
+  sphereDefaultRadius,
+  sphereAdjustAvailable,
   comTranslation,
   onComTranslationChange,
   resampleMode,
@@ -72,6 +89,17 @@ export default function PreprocessingPanel({
   savedMeshesFolder,
   onGoToSaveFolder,
 }) {
+  const [showSphereAdjust, setShowSphereAdjust] = useState(false);
+  // the slider works in real millimetres, and its ends are pinned to the
+  // DEFAULT radius (50%-150% of it) rather than to the current one: a range
+  // derived from the value it contains puts the thumb at the same fraction
+  // of the track no matter what the value is, so it looked stuck in the
+  // middle while the sphere itself resized underneath it. the default is
+  // what this patient and target actually resolve to - fixed for the
+  // cranium, scaled off inter-tragus distance for the face.
+  const sphereRadius = sphereAdjust?.radius ?? sphereDefaultRadius ?? 0;
+  const sphereIsDefault =
+    sphereAdjust.dx === 0 && sphereAdjust.dy === 0 && sphereAdjust.dz === 0 && sphereAdjust.radius === null;
   const names = activeLandmarkNames(useAltFrontal);
   const allPicked = names.every((n) => n in landmarks);
   const alignDisabled = !allPicked || !landmarksChangedSinceAlign || aligning || pipelineRan;
@@ -157,6 +185,63 @@ export default function PreprocessingPanel({
         </button>
       </div>
       <p className="status-line">{alignStatus}</p>
+
+      {sphereAdjustAvailable && (
+        <>
+          <button type="button" className="disclosure-toggle" onClick={() => setShowSphereAdjust((v) => !v)}>
+            adjust clipping sphere
+          </button>
+          {showSphereAdjust && (
+            <div className="template-controls">
+              {SPHERE_AXES.map(({ key, label }) => (
+                <Fragment key={key}>
+                  <label htmlFor={`sphere-${key}`}>{label}</label>
+                  <input
+                    id={`sphere-${key}`}
+                    type="range"
+                    min="-60"
+                    max="60"
+                    step="1"
+                    value={sphereAdjust[key]}
+                    onChange={(e) => onSphereAdjustChange({ ...sphereAdjust, [key]: Number(e.target.value) })}
+                  />
+                </Fragment>
+              ))}
+              <label htmlFor="sphere-radius">radius</label>
+              <input
+                id="sphere-radius"
+                type="range"
+                min={Math.round((sphereDefaultRadius ?? 0) * 0.5)}
+                max={Math.round((sphereDefaultRadius ?? 0) * 1.5)}
+                step="1"
+                value={Math.round(sphereRadius)}
+                onChange={(e) => onSphereAdjustChange({ ...sphereAdjust, radius: Number(e.target.value) })}
+              />
+            </div>
+          )}
+          {showSphereAdjust && (
+            <>
+              <p className={sphereConfirmed ? "status-line" : "hint"}>
+                {sphereConfirmed
+                  ? `clipping with this sphere: radius ${Math.round(sphereRadius)}mm, centre moved ` +
+                    `${sphereAdjust.dx}, ${sphereAdjust.dy}, ${sphereAdjust.dz}mm`
+                  : "not applied yet - confirm to clip with this sphere"}
+              </p>
+              <button type="button" onClick={onConfirmSphere} disabled={sphereConfirmed}>
+                confirm sphere
+              </button>
+              <button
+                type="button"
+                className="button-subtle"
+                onClick={() => onSphereAdjustChange(BLANK_SPHERE_ADJUST)}
+                disabled={sphereIsDefault}
+              >
+                reset sphere
+              </button>
+            </>
+          )}
+        </>
+      )}
 
       <label className="checkbox">
         <input type="checkbox" checked={comTranslation} onChange={(e) => onComTranslationChange(e.target.checked)} />
