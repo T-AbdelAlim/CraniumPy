@@ -46,6 +46,8 @@ _TARGET_SCOPED_DEFAULTS: dict[str, Any] = {
     "registered_landmarks": None,
     "registered_transform": None,
     "aligned_mesh": None,
+    "source_landmarks": None,
+    "source_alt_frontal_landmark": None,
     "sellion_clipped_mesh": None,
     "clipped_mesh": None,
     "used_alt_frontal": False,
@@ -108,6 +110,15 @@ class Session:
     # own field specifically so the saved _rg.ply still reflects what
     # "align" actually produced. set by /align, untouched by /clip.
     aligned_mesh: trimesh.Trimesh | None = None
+    # the landmarks EXACTLY as the user picked them, in the raw scan's own
+    # coordinates - registered_landmarks above is the same points after the
+    # rigid transform, so neither can be recovered from the other without
+    # also carrying the transform. kept so the saved _rg_landmarks.json can
+    # report both frames (see api/results_bundle.py's _build_mesh_files),
+    # which is what lets an "align only" export stand on its own as a
+    # re-usable registration record.
+    source_landmarks: np.ndarray | None = None
+    source_alt_frontal_landmark: np.ndarray | None = None
 
     # post repair+clip+boundary-cleanup, pre-resample - what /clip actually
     # produces. cleared (along with everything below) by /clip or

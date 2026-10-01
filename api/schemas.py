@@ -55,6 +55,32 @@ class AlignRequest(BaseModel):
     alt_frontal_landmark: LandmarkPoint | None = None
 
 
+class ClipPreviewPlane(BaseModel):
+    """one plane the clip cuts with, in the registered frame. boundary marks
+    the plane that defines the region itself (the landmark plane for
+    cranium, the depth plane for face) as opposed to the ones that only
+    strip stray scan junk - the frontend draws that one prominently and the
+    rest faintly. see craniumpy_core.clipping.clip_preview_geometry."""
+
+    name: str
+    normal: list[float]
+    origin: list[float]
+    boundary: bool
+
+
+class ClipPreviewSphere(BaseModel):
+    name: str
+    center: list[float]
+    radius: float
+    keep_inside: bool
+
+
+class ClipPreviewResponse(BaseModel):
+    target: Literal["cranium", "face"]
+    planes: list[ClipPreviewPlane]
+    spheres: list[ClipPreviewSphere]
+
+
 class RegisteredTransformResponse(BaseModel):
     """the rigid transform (rotation + translation) the last successful
     /align produced for the currently-displayed frame - lets the frontend
@@ -93,6 +119,11 @@ class ClipRequest(BaseModel):
     clipping: ClippingConfig = ClippingConfig()
     repair: bool = True
     repair_method: Literal["pymeshfix", "trimesh"] = "pymeshfix"
+    # the trim sphere as the user left it in the viewer's "adjust clipping
+    # sphere" control, in the registered frame - null/null means the tuned
+    # default (see craniumpy_core.clipping.adjusted_trim_sphere).
+    sphere_center_offset: list[float] | None = Field(default=None, min_length=3, max_length=3)
+    sphere_radius: float | None = Field(default=None, gt=0)
 
 
 class NicpConfig(BaseModel):
@@ -245,6 +276,11 @@ class SaveRequest(BaseModel):
     include_measurements: bool = True
     include_asymmetry: bool = True
     include_meshes: bool = True
+    # only consulted by /save/meshes, and only for a save triggered before
+    # any /clip has run - it names the folder the later, fuller save will
+    # also land in, so the two can't end up as siblings. ignored once a
+    # real ClipRequest exists, which knows this for certain.
+    com_translation: bool | None = None
 
 
 class SaveResultsResponse(BaseModel):

@@ -64,7 +64,7 @@ export default function BatchPicker({ onPathsPicked, status }) {
       onPathsPicked(null, "No .ply/.obj/.stl found in the files you dropped");
       return;
     }
-    const nativePaths = await waitForNativeDropPaths();
+    const nativePaths = await waitForNativeDropPaths(meshNames);
     const resolved = meshNames.filter((n) => nativePaths?.[n]).map((n) => nativePaths[n]);
     if (resolved.length === 0) {
       onPathsPicked(null, "Couldn't resolve a real file path for the dropped file(s) - this needs the desktop app.");

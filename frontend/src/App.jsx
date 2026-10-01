@@ -21,6 +21,7 @@ import {
   startRun,
   pollStatus,
   getRegisteredTransform,
+  getClipPreview,
   fetchShippedTemplates,
   templateMeshUrl,
   customTemplateMeshUrl,
@@ -96,6 +97,28 @@ function meshDisplayKey(sid, target, descriptor) {
 }
 
 const NICP_DEFAULTS = { alphaStart: 200, alphaEnd: 1, alphaSteps: 20, gamma: 1.0, distThreshold: 10.0, innerIters: 3 };
+
+// the trim sphere as it comes out of the backend's own tuning. dx/dy/dz are
+// a displacement in the registered frame; radius null means "whatever the
+// default works out to for this patient and target" (the cranial default is
+// a fixed 175mm, the facial one scales off inter-tragus distance), which is
+// why the panel reads the real number back off the preview geometry rather
+// than hardcoding one.
+const BLANK_SPHERE_ADJUST = { dx: 0, dy: 0, dz: 0, radius: null };
+
+function sphereAdjustToOverlay(adjust) {
+  return { offset: [adjust.dx, adjust.dy, adjust.dz], radius: adjust.radius };
+}
+
+// null rather than [0,0,0]/default, so an untouched sphere sends nothing at
+// all to /clip and the backend keeps using its own numbers.
+function sphereAdjustToRequest(adjust) {
+  const moved = adjust.dx !== 0 || adjust.dy !== 0 || adjust.dz !== 0;
+  return {
+    sphereCenterOffset: moved ? [adjust.dx, adjust.dy, adjust.dz] : null,
+    sphereRadius: adjust.radius ?? null,
+  };
+}
 
 // the fields that genuinely differ per IMAGE rather than per patient - reset
 // to blank on a fresh upload even in "same patient, new image" mode (see
@@ -183,6 +206,15 @@ function App() {
   // workspace's own live state, silently blanking a timepoint that had
   // been working fine.
   const [stagedLongitudinalMeshes, setStagedLongitudinalMeshes] = useState([]);
+  // the batch handed to the NEXT LongitudinalWorkspace mount, moved here at
+  // the same moment stagedLongitudinalMeshes is cleared. the two have to be
+  // separate: clearing the staged array is what stops a consumed batch
+  // being replayed later (see handleLoadStagedWorkspace), but the clear and
+  // the workspace switch happen in ONE handler, so they land in one React
+  // batch - the remount then read the already-emptied array and "load
+  // staged workspace" came up blank every single time, which is what made
+  // staging look like it had stopped working altogether.
+  const [stagedMeshesForMount, setStagedMeshesForMount] = useState([]);
   // shown once a switch to "longitudinal" is about to actually commit (see
   // handleAppModeChange) while stagedLongitudinalMeshes isn't empty - see
   // StagedWorkspaceDialog.jsx.
@@ -232,6 +264,10 @@ function App() {
   function isSessionHeldElsewhere(id) {
     if (id == null) return false;
     if (stagedLongitudinalMeshes.some((m) => m.sessionId === id)) return true;
+    // in flight between the staged array and the workspace's own snapshot -
+    // a short window, but the one a "stage, then open the next patient"
+    // sequence lands in.
+    if (stagedMeshesForMount.some((m) => m.sessionId === id)) return true;
     return !!longitudinalSnapshot?.slots?.some((s) => s.sessionId === id);
   }
 
@@ -372,6 +408,9 @@ function App() {
     // on top of the workspace's own live state - including ones that have
     // since been closed (e.g. Per-patient closes its current session on the
     // next upload), silently blanking a timepoint that was working fine.
+    // handed over first, since the clear below takes effect in the same
+    // render as the switch - see stagedMeshesForMount.
+    setStagedMeshesForMount(stagedLongitudinalMeshes);
     setStagedLongitudinalMeshes([]);
     setAppMode("longitudinal");
   }
@@ -383,6 +422,7 @@ function App() {
     // batch is still "acting on" it. leaving it in place would silently
     // re-inject the very meshes just declined the next time something else
     // gets staged and this workspace is revisited.
+    setStagedMeshesForMount([]);
     setStagedLongitudinalMeshes([]);
     setAppMode("longitudinal");
   }
@@ -428,6 +468,44 @@ function App() {
   const [landmarksChangedSinceAlign, setLandmarksChangedSinceAlign] = useState(true);
   const [adjustingInAlignedFrame, setAdjustingInAlignedFrame] = useState(false);
   const [registeredTransform, setRegisteredTransform] = useState(null);
+
+  // the clip preview is a pre-commit aid: it's there between "align" and
+  // "preprocess mesh", and once the clip has actually happened it would
+  // only describe a cut that's already been made, so it stays gone for the
+  // rest of this mesh's life (cleared again on reset/upload, which put the
+  // user back before that decision).
+  const clipPreviewSuppressedRef = useRef(false);
+
+  // the geometry behind the preview, kept so the panel can show the trim
+  // sphere's real (patient-dependent, for the face) default radius in mm.
+  const [clipPreviewGeometry, setClipPreviewGeometry] = useState(null);
+  // how far the user has moved/resized that sphere, in the registered
+  // frame. radius null = whatever the backend's default works out to. this
+  // is sent to /clip verbatim, so the drawn sphere IS the one that cuts.
+  const [sphereAdjust, setSphereAdjust] = useState(BLANK_SPHERE_ADJUST);
+  const sphereAdjustRef = useRef(sphereAdjust);
+  sphereAdjustRef.current = sphereAdjust;
+  // dragging a slider shows a proposal; the clip only cuts with it once
+  // it's been confirmed. until then - and again after any further change -
+  // the sphere sent to /clip is the tuned default, which is what the panel
+  // says in as many words rather than leaving it to be inferred from a
+  // drawing.
+  const [sphereConfirmed, setSphereConfirmed] = useState(false);
+
+  function handleSphereAdjustChange(next) {
+    setSphereAdjust(next);
+    setSphereConfirmed(false);
+  }
+
+
+  // the overlay's disc callback is installed imperatively and then outlives
+  // the render that installed it, so it has to reach handleTargetChange
+  // through a ref that's refreshed every render. calling the captured
+  // closure directly would run a handleTargetChange that still believes
+  // nothing has been aligned yet - which sends the switch down the blank
+  // "never aligned" path and silently drops the preview.
+  const handleTargetChangeRef = useRef(null);
+  handleTargetChangeRef.current = handleTargetChange;
   const [pipelineRan, setPipelineRan] = useState(false);
   // true when analysisResults came from "skip preprocessing" (the uploaded
   // mesh treated as already registered - see handleSkipPreprocessing) rather
@@ -448,6 +526,11 @@ function App() {
   const [nicpParams, setNicpParams] = useState(NICP_DEFAULTS);
   const [runningPipeline, setRunningPipeline] = useState(false);
   const [runStarted, setRunStarted] = useState(false);
+
+  // the clip-sphere controls go the moment "preprocess mesh" is pressed,
+  // not when the run finishes - the clip is already under way by then, and
+  // a slider that still moves says otherwise.
+  const sphereAdjustAvailable = clipPreviewGeometry !== null && alignSucceeded && !runStarted && !pipelineRan;
   const [runProgress, setRunProgress] = useState(0);
   const [runStatus, setRunStatus] = useState("");
   const [runError, setRunError] = useState(false);
@@ -640,7 +723,7 @@ function App() {
     }
     setDropStatus("Uploading...");
     try {
-      const nativePaths = await waitForNativeDropPaths();
+      const nativePaths = await waitForNativeDropPaths(names);
       const resolvedPaths = nativePaths && names.every((n) => nativePaths[n]) ? names.map((n) => nativePaths[n]) : null;
 
       const { sessionId: newSessionId } = resolvedPaths ? await openFromPaths(resolvedPaths) : await uploadSession(files);
@@ -776,6 +859,43 @@ function App() {
     setExportAnalysisStatus("");
     setExportCohortStatus("");
     setSkipPreprocessingMode(false);
+    clipPreviewSuppressedRef.current = false;
+    setClipPreviewGeometry(null);
+    setSphereAdjust(BLANK_SPHERE_ADJUST);
+    setSphereConfirmed(false);
+    viewerRef.current?.hideClipPreview();
+  }
+
+  // the sphere is the one part of the preview the user can drag around, and
+  // it has to answer immediately - this moves and rescales the drawn sphere
+  // in place rather than rebuilding the overlay on every slider tick.
+  useEffect(() => {
+    viewerRef.current?.updateClipSphere(sphereAdjustToOverlay(sphereAdjust));
+  }, [sphereAdjust]);
+
+  // the registered frame is the frame the clip geometry is expressed in,
+  // so right after align is the one moment the planes can be drawn
+  // honestly. both regions go up at once - clicking the unselected one's
+  // disc is just another way to switch target (see clipPreviewOverlay.js).
+  async function refreshClipPreview(activeTarget) {
+    if (clipPreviewSuppressedRef.current || !sessionId || !viewerRef.current) return;
+    try {
+      const [cranium, face] = await Promise.all([
+        getClipPreview(sessionId, "cranium"),
+        getClipPreview(sessionId, "face"),
+      ]);
+      setClipPreviewGeometry({ cranium, face });
+      viewerRef.current?.showClipPreview(
+        { cranium, face },
+        { selectedTarget: activeTarget, onSelectTarget: (next) => handleTargetChangeRef.current?.(next) },
+      );
+      // a re-show (target switch, restored target) rebuilds the sphere at
+      // its default size - put the user's adjustment back on it.
+      viewerRef.current?.updateClipSphere(sphereAdjustToOverlay(sphereAdjustRef.current));
+    } catch {
+      // it's a preview - failing to draw it must never read as a failure
+      // of the align it hangs off, so this stays silent.
+    }
   }
 
   // desktop-only: opens the native folder dialog and remembers the choice
@@ -811,7 +931,7 @@ function App() {
     if (!isDesktopApp()) return;
     setSaveMeshesStatus("Saving...");
     try {
-      const { saved_to: savedTo } = await saveMeshes(sessionId, saveDestDir);
+      const { saved_to: savedTo } = await saveMeshes(sessionId, saveDestDir, comTranslation);
       setSaveMeshesStatus(`Saved to ${savedTo}`);
       setLastSavedMeshesFolder(savedTo);
     } catch (err) {
@@ -1115,6 +1235,12 @@ function App() {
   // picks themselves never flip back to "not yet aligned" over this.
   async function handleTargetChange(newTarget) {
     if (newTarget === target) return;
+    // the two targets' trim spheres are arrived at differently (a fixed
+    // 175mm against a multiple of this patient's inter-tragus distance), so
+    // carrying an adjustment across would mean something else on arrival.
+    setSphereAdjust(BLANK_SPHERE_ADJUST);
+    sphereAdjustRef.current = BLANK_SPHERE_ADJUST;
+    setSphereConfirmed(false);
     const oldTarget = target;
     const outgoingSnapshot = captureTargetSnapshot();
     setTargetSnapshots((prev) => ({ ...prev, [oldTarget]: outgoingSnapshot }));
@@ -1180,6 +1306,16 @@ function App() {
           }
           setMeshRevision((n) => n + 1);
         }
+      }
+      // "restored" only means this target has been visited before - for a
+      // target that was aligned and no further, the registered mesh is
+      // exactly what's back on screen, so the preview belongs back on it
+      // too. anything past the clip is a cut already made, and the preview
+      // would only describe it in the past tense.
+      if (!incomingSnapshot.pipelineRan && incomingSnapshot.meshStage === "registered") {
+        await refreshClipPreview(newTarget);
+      } else {
+        viewerRef.current?.hideClipPreview();
       }
       return;
     }
@@ -1295,6 +1431,7 @@ function App() {
         setAdjustingInAlignedFrame(false);
         setLandmarksChangedSinceAlign(false);
         setAlignStatus("Rigid alignment: ✓");
+        await refreshClipPreview(alignTarget);
         await autoSaveMeshes();
       }
     } catch (err) {
@@ -1317,6 +1454,9 @@ function App() {
   }
 
   async function handleRunPipeline() {
+    // the clip is being committed - the preview has done its job
+    clipPreviewSuppressedRef.current = true;
+    viewerRef.current?.hideClipPreview();
     setRunningPipeline(true);
     setRunStarted(true);
     setRunError(false);
@@ -1347,6 +1487,9 @@ function App() {
         landmarks: LANDMARK_NAMES.map((n) => landmarks[n]),
         altFrontalLandmark: useAltFrontal ? landmarks[ALT_FRONTAL_NAME] : undefined,
         comTranslation,
+        // unconfirmed means unapplied: nothing is sent and the backend
+        // cuts with its own tuned sphere.
+        ...sphereAdjustToRequest(sphereConfirmed ? sphereAdjust : BLANK_SPHERE_ADJUST),
       });
       const clipResult = await pollStatus(sessionId, onStage);
       if (clipResult.status !== "done") return;
@@ -1850,7 +1993,7 @@ function App() {
           workspace={
             <LongitudinalWorkspace
               onSnapshotChange={setLongitudinalSnapshot}
-              initialStagedMeshes={loadStagedIntoLongitudinal ? stagedLongitudinalMeshes : []}
+              initialStagedMeshes={loadStagedIntoLongitudinal ? stagedMeshesForMount : []}
               initialSnapshot={loadSnapshotIntoLongitudinal ? longitudinalSnapshot : null}
             />
           }
@@ -1910,6 +2053,12 @@ function App() {
             onAlign={() => handleAlign()}
             onAdjustPicks={handleAdjustPicks}
             onReset={handleReset}
+            sphereAdjust={sphereAdjust}
+            onSphereAdjustChange={handleSphereAdjustChange}
+            onConfirmSphere={() => setSphereConfirmed(true)}
+            sphereConfirmed={sphereConfirmed}
+            sphereDefaultRadius={clipPreviewGeometry?.[target]?.spheres?.[0]?.radius ?? null}
+            sphereAdjustAvailable={sphereAdjustAvailable}
             comTranslation={comTranslation}
             onComTranslationChange={setComTranslation}
             resampleMode={resampleMode}

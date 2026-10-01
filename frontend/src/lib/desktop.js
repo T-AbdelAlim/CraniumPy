@@ -66,10 +66,18 @@ export async function openFolderNative(path, onError) {
 // desktop/app.py's _register_native_drop, which is what actually resolves
 // it and calls this) - a plain browser drop only ever exposes File
 // objects, never a real path, same limitation pick_file's own docstring
-// calls out for a bare <input type=file>. one pending call at a time is
-// all this ever needs (drags are user-paced, not concurrent), so a single
-// resolver slot is enough - no per-drop correlation id.
-let pendingNativeDropResolve = null;
+// calls out for a bare <input type=file>.
+//
+// a LIST of waiters, not the single slot this used to keep. "drags are
+// user-paced, not concurrent" turned out to be wrong in exactly the case
+// that matters: building up a set of meshes by dropping several in quick
+// succession (the Mean Shape workspace's whole workflow). a second waiter
+// registering before the first one's paths came back overwrote the slot,
+// and the first promise was then left to be garbage collected without
+// ever settling - its `await` never returned, so that drop silently
+// vanished with its handler stuck mid-flight and nothing on screen to say
+// so. every waiter registered here settles, one way or the other.
+let pendingNativeDropWaiters = [];
 // paths that arrived before anything was waiting for them. pywebview's own
 // drop listener round-trips through Python before calling back in
 // (app.py's on_drop -> evaluate_js), so its timing against the plain-JS
@@ -84,15 +92,28 @@ const NATIVE_DROP_GRACE_MS = 2000;
 
 if (typeof window !== "undefined") {
   window.__cranioSuiteNativeDrop = (pathsByName) => {
-    if (pendingNativeDropResolve) {
-      const resolve = pendingNativeDropResolve;
-      pendingNativeDropResolve = null;
-      resolve(pathsByName);
-      return;
-    }
-    recentNativeDropPaths = pathsByName;
+    // merged rather than replaced, within the grace window: several files
+    // dropped as separate quick drags each arrive as their own call here,
+    // and a waiter asking about one of them shouldn't have its answer
+    // wiped by the next one landing.
+    const stillFresh = Date.now() - recentNativeDropAt < NATIVE_DROP_GRACE_MS;
+    recentNativeDropPaths = { ...(stillFresh && recentNativeDropPaths ? recentNativeDropPaths : {}), ...pathsByName };
     recentNativeDropAt = Date.now();
+    // a waiter only takes the entries for the filenames IT was dropped, so
+    // handing the whole accumulated map to everyone waiting is safe; one
+    // still short of a name it needs keeps waiting for a later call.
+    pendingNativeDropWaiters = pendingNativeDropWaiters.filter((waiter) => {
+      if (!hasEveryName(recentNativeDropPaths, waiter.names)) return true;
+      waiter.resolve(recentNativeDropPaths);
+      return false;
+    });
   };
+}
+
+function hasEveryName(paths, names) {
+  if (!paths) return false;
+  if (!names || names.length === 0) return true;
+  return names.every((n) => paths[n]);
 }
 
 // races the native resolution above against a short timeout, so a plain
@@ -101,24 +122,30 @@ if (typeof window !== "undefined") {
 // {filename: fullPath} on a match within time, null otherwise (including
 // immediately, in the web app, where there's no native bridge to wait on
 // at all).
-export function waitForNativeDropPaths(timeoutMs = 1500) {
+// names is what this particular drop actually carried, so an answer can
+// be recognised as complete rather than merely present - without it a
+// waiter would take whatever happened to be in the buffer from the drop
+// BEFORE it and report its own files as unresolvable. callers that don't
+// care (nothing does today) can leave it out and take the first answer.
+export function waitForNativeDropPaths(names = null, timeoutMs = 1500) {
   if (!isDesktopApp()) return Promise.resolve(null);
-  // already arrived (see the grace buffer above). a stale set from an
-  // earlier drop can't be mistaken for this one: the caller only uses
-  // these paths when EVERY dropped filename is present in the map (see
-  // App.jsx's handleFilesDropped), and falls back to a plain upload
-  // otherwise.
-  if (recentNativeDropPaths && Date.now() - recentNativeDropAt < NATIVE_DROP_GRACE_MS) {
-    const paths = recentNativeDropPaths;
-    recentNativeDropPaths = null;
-    return Promise.resolve(paths);
+  // already arrived (see the grace buffer above) - but only good enough if
+  // it covers every file in THIS drop.
+  if (Date.now() - recentNativeDropAt < NATIVE_DROP_GRACE_MS && hasEveryName(recentNativeDropPaths, names)) {
+    return Promise.resolve(recentNativeDropPaths);
   }
   return new Promise((resolve) => {
-    pendingNativeDropResolve = resolve;
+    const waiter = { names, resolve };
+    pendingNativeDropWaiters.push(waiter);
     setTimeout(() => {
-      if (pendingNativeDropResolve !== resolve) return;
-      pendingNativeDropResolve = null;
-      resolve(null);
+      const i = pendingNativeDropWaiters.indexOf(waiter);
+      if (i === -1) return; // already answered
+      pendingNativeDropWaiters.splice(i, 1);
+      // whatever did arrive, even if it's short of this drop's full set -
+      // the caller decides what to do with a partial answer, and that's
+      // strictly better than telling it nothing resolved at all.
+      const partial = Date.now() - recentNativeDropAt < NATIVE_DROP_GRACE_MS ? recentNativeDropPaths : null;
+      resolve(partial);
     }, timeoutMs);
   });
 }

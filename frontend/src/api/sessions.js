@@ -113,11 +113,27 @@ export async function getRegisteredTransform(sessionId) {
   return response.json(); // {rotation: 3x3 row-major, translation: [x,y,z]}
 }
 
+// the planes and spheres the clip would use for `target`, in the registered
+// frame - computed by the same module the real clip uses, so the preview
+// can't disagree with it. 409 until /align has run.
+export async function getClipPreview(sessionId, target) {
+  const response = await fetch(`/api/sessions/${sessionId}/clip-preview?target=${encodeURIComponent(target)}`);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json(); // {target, planes: [...], spheres: [...]}
+}
+
 // register + repair + clip + boundary cleanup - the first of run-pipeline's
 // two chained calls (see startRun below).
-export async function startClip(sessionId, { target, landmarks, altFrontalLandmark, comTranslation }) {
+export async function startClip(
+  sessionId,
+  { target, landmarks, altFrontalLandmark, comTranslation, sphereCenterOffset, sphereRadius },
+) {
   const body = { target, landmarks, com_translation: comTranslation, repair: true };
   if (altFrontalLandmark) body.alt_frontal_landmark = altFrontalLandmark;
+  // omitted entirely when untouched, so the backend keeps its own tuned
+  // trim sphere rather than being handed a round-tripped copy of it
+  if (sphereCenterOffset) body.sphere_center_offset = sphereCenterOffset;
+  if (sphereRadius) body.sphere_radius = sphereRadius;
   const response = await fetch(`/api/sessions/${sessionId}/clip`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -157,11 +173,15 @@ export async function startRun(sessionId, { nVertices, nicp }) {
 // carry a .status so a caller can tell "no real source path" (400, e.g. a
 // plain browser session with nothing to write next to) apart from a real
 // failure worth surfacing - see autoSaveMeshes in App.jsx, its only caller.
-export async function saveMeshes(sessionId, destDir) {
+// comTranslation only matters for a save triggered before any clip has
+// run: it's part of the patient folder's name, so telling the backend what
+// the checkbox currently says keeps that early save and the later, fuller
+// one in the same folder instead of two siblings.
+export async function saveMeshes(sessionId, destDir, comTranslation) {
   const response = await fetch(`/api/sessions/${sessionId}/save/meshes`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ dest_dir: destDir || null }),
+    body: JSON.stringify({ dest_dir: destDir || null, com_translation: comTranslation ?? null }),
   });
   if (!response.ok) {
     const error = new Error(await response.text());

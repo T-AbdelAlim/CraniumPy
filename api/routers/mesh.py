@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import trimesh
@@ -16,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from trimesh.resolvers import ZipResolver
 
-from craniumpy_core import cohort, pipeline
+from craniumpy_core import clipping, cohort, pipeline
 from craniumpy_core.asymmetry import calculate_asymmetry
 from craniumpy_core.craniometrics import frontal_bossing, hc_slice_polygon
 from craniumpy_core.io import load_mesh, mesh_to_glb, strip_uninteresting_vertex_colors
@@ -27,7 +28,7 @@ from api.results_bundle import (
     build_analysis_bundle,
     build_meshes_bundle,
     build_results_bundle,
-    results_folder_name,
+    zip_download_name,
     write_analysis_to_folder,
     write_meshes_to_folder,
     write_results_to_folder,
@@ -36,6 +37,7 @@ from api.schemas import (
     AlignRequest,
     AnalyzeRequest,
     AsymmetryResponse,
+    ClipPreviewResponse,
     ClipRequest,
     ClipUndoResponse,
     CraniometricsResponse,
@@ -343,6 +345,9 @@ def start_align(session_id: str, request: AlignRequest) -> StatusResponse:
         # overwrites this the same way it overwrites registered_mesh, so
         # nothing here can go stale once a real clip happens.
         session.used_alt_frontal = request.target == "cranium" and alt_frontal is not None
+        # the picks in the raw scan's own frame - see Session.source_landmarks
+        session.source_landmarks = landmarks
+        session.source_alt_frontal_landmark = alt_frontal
 
         session.active_target = request.target
         session.report_progress("done", "")
@@ -365,6 +370,35 @@ def get_registered_transform(session_id: str) -> RegisteredTransformResponse:
     return RegisteredTransformResponse(
         rotation=np.asarray(transform.rotation).tolist(), translation=np.asarray(transform.translation).tolist()
     )
+
+
+@router.get("/{session_id}/clip-preview", response_model=ClipPreviewResponse)
+def get_clip_preview(session_id: str, target: Literal["cranium", "face"] = "cranium") -> ClipPreviewResponse:
+    """the planes/spheres a /clip for `target` would cut this session's
+    registered mesh with - for drawing the clip in the viewer before the
+    user commits to it. takes `target` as a query param rather than reading
+    session.active_target, because the Per-patient workspace draws BOTH
+    regions at once (the selected one prominently, the other faintly) so
+    the user can see and pick between them.
+
+    the frame the registered mesh is actually sitting in is
+    session.active_target's, not necessarily the requested target's - the
+    two registrations differ by a translation (see
+    clipping.preview_frame_offset), so asking for the face region while
+    the cranial registration is on screen has to be corrected or the
+    facial plane lands in thin air. that correction is what `frame` does.
+
+    409 before /align for the same reason /registered-transform does:
+    there's no registered frame to express the geometry in yet."""
+    session = _get_session(session_id)
+    if session.registered_landmarks is None:
+        raise HTTPException(status_code=409, detail="no registration yet -- run /align first")
+    geometry = clipping.clip_preview_geometry(
+        session.registered_landmarks,
+        target,
+        frame=session.active_target or target,
+    )
+    return ClipPreviewResponse(**geometry)
 
 
 @router.post("/{session_id}/clip", response_model=StatusResponse)
@@ -406,6 +440,10 @@ def start_clip(session_id: str, request: ClipRequest) -> StatusResponse:
         # go stale against this request's landmarks (also means /clip
         # works standalone, without /align ever having been called).
         session.aligned_mesh = _pure_align(session.mesh, landmarks, alt_frontal, request.target, session.report_progress).mesh
+        # same reasoning as the aligned_mesh recompute above: /clip works
+        # standalone, so it can't rely on /align having recorded these.
+        session.source_landmarks = landmarks
+        session.source_alt_frontal_landmark = alt_frontal
 
         if request.repair:
             cache_key = (
@@ -441,6 +479,8 @@ def start_clip(session_id: str, request: ClipRequest) -> StatusResponse:
                 clip_mode=clip_cfg.mode,
                 manual_plane_normal=manual_normal,
                 manual_plane_origin=manual_origin,
+                sphere_center_offset=request.sphere_center_offset,
+                sphere_radius=request.sphere_radius,
                 on_progress=session.report_progress,
             )
             session.sellion_registered_mesh = clip_result.sellion_registered_mesh
@@ -482,6 +522,8 @@ def start_clip(session_id: str, request: ClipRequest) -> StatusResponse:
                 n_vertices=None,
                 repair=False,
                 com_translation=request.com_translation,
+                sphere_center_offset=request.sphere_center_offset,
+                sphere_radius=request.sphere_radius,
                 on_progress=session.report_progress,
             )
             session.sellion_clipped_mesh = None
@@ -1046,7 +1088,7 @@ def download_results_bundle(session_id: str, metadata: dict[str, str] = Depends(
     r = session.result
     request: AnalyzeRequest = r["request"]
     config = _config_with_nicp(request.model_dump(), session)
-    folder_name = results_folder_name(session.original_filename, request.target, config)
+    folder_name = zip_download_name(session.original_filename, request.target, config)
 
     zip_bytes = build_results_bundle(
         original_filename=session.original_filename,
@@ -1139,25 +1181,26 @@ def _require_completed_run(session: Session) -> ClipRequest:
     return session.last_clip_config
 
 
-def _resolve_meshes_save_config(session: Session) -> tuple[str, dict]:
+def _resolve_meshes_save_config(session: Session, com_translation: bool | None = None) -> tuple[str, dict]:
     """target + a results_folder_name-shaped config for /save/meshes -
     from the real ClipRequest a completed /clip (then /run) produced when
     one exists (unchanged from before), else built from what /align alone
     already knows (session.active_target, session.used_alt_frontal - see
     start_align, which now sets both), for a save triggered right after
-    /align with no /clip/run yet. com_translation is genuinely undecided at
+    /align with no /clip/run yet. com_translation hasn't been ACTED on at
     that point - it's a /clip-time option, chosen further down the
-    Preprocessing panel than the Align button - so it's guessed True, the
-    same default this app's frontend state and ClipRequest itself both
-    already start on: the common case (nobody's touched that checkbox)
-    lands in exactly the folder /clip+/run's own later save also uses, so
-    the two saves just add to the same folder over time; someone who
-    unchecks it before running ends up with two sibling folders instead of
-    one - a minor, self-explanatory rough edge on what's fundamentally a
-    provisional, pre-Run save, not worth more machinery to close."""
+    Preprocessing panel than the Align button - but the caller has it on
+    screen and passes it (SaveRequest.com_translation), so the pre-clip
+    save still names the same folder the later /clip+/run save will use
+    and the two add to one folder rather than ending up as siblings. a
+    caller that doesn't say falls back to True, the default this app's
+    frontend state and ClipRequest itself both already start on."""
     if session.last_clip_config is not None:
         return session.last_clip_config.target, session.last_clip_config.model_dump()
-    return session.active_target, {"alt_frontal_landmark": session.used_alt_frontal, "com_translation": True}
+    return session.active_target, {
+        "alt_frontal_landmark": session.used_alt_frontal,
+        "com_translation": True if com_translation is None else com_translation,
+    }
 
 
 @router.get("/{session_id}/bundle/meshes")
@@ -1165,7 +1208,7 @@ def download_meshes_bundle(session_id: str):
     session = _get_session(session_id)
     clip_request = _require_completed_run(session)
     config = clip_request.model_dump()
-    folder_name = results_folder_name(session.original_filename, clip_request.target, config)
+    folder_name = zip_download_name(session.original_filename, clip_request.target, config)
 
     zip_bytes = build_meshes_bundle(
         original_filename=session.original_filename,
@@ -1184,11 +1227,12 @@ def download_meshes_bundle(session_id: str):
 
 @router.post("/{session_id}/save/meshes", response_model=SaveResultsResponse)
 def save_meshes_to_source_folder(session_id: str, save_request: SaveRequest = SaveRequest()) -> SaveResultsResponse:
-    """writes whatever mesh files are ready into a
-    CP_{stem}_{C|F}_{3|4}[_CoM]/ folder inside the destination folder - just
-    _rg.ply right after /align alone, then _rg_{C|F}.ply (and _rg_{C|F}N.ply
-    once a NICP fit exists too) once /clip+/run have also completed, into
-    that same folder (see _resolve_meshes_save_config/write_meshes_to_folder).
+    """writes whatever mesh files are ready into a CP_{stem}[_4][_CoM]/
+    folder inside the destination folder - just _rg.ply and its landmark
+    record right after /align alone, then the region's own subfolder with
+    _rg_{C|F}.ply (and _rg_{C|F}N.ply once a NICP fit exists too) once
+    /clip+/run have also completed, into that same patient folder (see
+    _resolve_meshes_save_config/write_meshes_to_folder).
     the lighter-weight save that doesn't need a full craniometrics/asymmetry
     pass (see /save for "everything, including the analysis report").
     desktop-only, same as /save - the frontend's own caller (App.jsx's
@@ -1202,7 +1246,7 @@ def save_meshes_to_source_folder(session_id: str, save_request: SaveRequest = Sa
     dest_dir = _resolve_dest_dir(session, save_request)
     if session.aligned_mesh is None:
         raise HTTPException(status_code=409, detail="align the mesh first")
-    target, config = _resolve_meshes_save_config(session)
+    target, config = _resolve_meshes_save_config(session, save_request.com_translation)
 
     results_dir = write_meshes_to_folder(
         dest_dir=dest_dir,
@@ -1212,6 +1256,17 @@ def save_meshes_to_source_folder(session_id: str, save_request: SaveRequest = Sa
         target=target,
         config=config,
         nicp_mesh=session.nicp_result_mesh,
+        source_landmarks=session.source_landmarks,
+        # the DISPLAY-frame landmarks, matching the frame aligned_mesh (the
+        # _rg.ply written beside them) is posed in - see _pure_align.
+        registered_landmarks=session.registered_landmarks,
+        source_alt_frontal_landmark=session.source_alt_frontal_landmark,
+        used_alt_frontal=session.used_alt_frontal,
+        # the real setting when a clip has actually run, false otherwise -
+        # never the folder-naming guess above.
+        com_translation=bool(getattr(session.last_clip_config, "com_translation", False))
+        if session.last_clip_config is not None
+        else False,
     )
     return SaveResultsResponse(saved_to=str(results_dir))
 
@@ -1229,7 +1284,7 @@ def download_analysis_bundle(
     r = session.result
     request: AnalyzeRequest = r["request"]
     config = _config_with_nicp(request.model_dump(), session)
-    folder_name = results_folder_name(session.original_filename, request.target, config)
+    folder_name = zip_download_name(session.original_filename, request.target, config)
     craniometrics, asymmetry, metopic, frontal_bossing = _apply_export_selection(
         r["craniometrics"], r["asymmetry"], r.get("metopic"), r.get("frontal_bossing"),
         include_measurements=export_selection["include_measurements"],
@@ -1266,9 +1321,8 @@ def save_analysis_to_source_folder(session_id: str, save_request: SaveRequest = 
     CP_{stem}_{C|F}_{3|4}[_CoM]/analysis/ subfolder inside the destination
     folder, creating the mesh folder (and its mesh files) first if it
     doesn't exist yet - see results_bundle.write_analysis_to_folder, and
-    the user-facing requirement it implements: exporting analysis before
-    ever separately saving meshes should still produce the meshes, not
-    just the report. desktop-only, same as /save - the frontend falls back
+    the behavior it implements: exporting analysis before ever separately
+    saving meshes should still produce the meshes, not just the report. desktop-only, same as /save - the frontend falls back
     to /bundle/analysis when this 400s."""
     session = _get_session(session_id)
     dest_dir = _resolve_dest_dir(session, save_request)

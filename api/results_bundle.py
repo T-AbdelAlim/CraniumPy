@@ -60,18 +60,47 @@ def stem_from_filename(filename: str) -> str:
     return shorten_stem(stem)
 
 
-def results_folder_name(original_filename: str, target: str, config: dict) -> str:
-    """CP_{C|F}[4]_{stem}[_CoM] - what actually went into this run, not a
-    generic "_results" suffix: landmark count (a "4" folded into the target
-    letter when an alt_frontal_landmark was given, see
-    pipeline.analyze_cranial) and whether center-of-mass correction ran. two
-    runs with different settings on the same file land in different folders
-    instead of one overwriting the other, and the name tells you which is
-    which without opening report.json."""
+# what a region of interest is called on disk. spelled out rather than
+# abbreviated to the C/F the FILE names use - a folder is something a person
+# navigates, and "face_and_forehead" needs no key to read.
+REGION_FOLDERS = {"cranium": "cranium", "face": "face_and_forehead"}
+
+
+def patient_folder_name(original_filename: str, config: dict) -> str:
+    """CP_{stem}[_4][_CoM] - one folder per mesh, holding everything derived
+    from it. deliberately carries nothing about which region was analysed:
+    the rigid registration and its landmark record are the same work
+    whichever region follows, so cranial and facial runs on one scan belong
+    in one folder, not two side by side.
+
+    what it does carry is anything that changes the registration itself and
+    would otherwise silently overwrite a previous run - landmark count (the
+    "4" when an alt_frontal_landmark was given, see pipeline.analyze_cranial)
+    and whether center-of-mass correction ran."""
     stem = stem_from_filename(original_filename)
-    target_suffix = ("C" if target == "cranium" else "F") + ("4" if config.get("alt_frontal_landmark") else "")
+    landmarks_suffix = "_4" if config.get("alt_frontal_landmark") else ""
     com_suffix = "_CoM" if config.get("com_translation") else ""
-    return f"CP_{target_suffix}_{stem}{com_suffix}"
+    return f"CP_{stem}{landmarks_suffix}{com_suffix}"
+
+
+def region_folder_name(target: str) -> str:
+    return REGION_FOLDERS.get(target, target)
+
+
+def results_folder_name(original_filename: str, target: str, config: dict) -> str:
+    """where one region's results live, relative to the destination:
+    {patient folder}/{region}. a relative path rather than a single name
+    since part 9/10's split (see write_meshes_to_folder /
+    write_analysis_to_folder) - pathlib and zip entry names both take the
+    separator as-is, so callers that join it onto a directory need no
+    change."""
+    return f"{patient_folder_name(original_filename, config)}/{region_folder_name(target)}"
+
+
+def zip_download_name(original_filename: str, target: str, config: dict) -> str:
+    """the same thing as a single filename, for a Content-Disposition where
+    a path separator has no business being."""
+    return results_folder_name(original_filename, target, config).replace("/", "_")
 
 
 # figures are drawn twice: once into a standalone Figure that gets saved as
@@ -1499,21 +1528,52 @@ def _build_mesh_files(
     target: str,
     config: dict,
     nicp_mesh: trimesh.Trimesh | None = None,
+    source_landmarks: np.ndarray | None = None,
+    registered_landmarks: np.ndarray | None = None,
+    source_alt_frontal_landmark: np.ndarray | None = None,
+    used_alt_frontal: bool = False,
+    com_translation: bool | None = None,
 ) -> tuple[str, dict[str, bytes]]:
-    """(folder_name, {filename: bytes}) - the two mesh files, {stem}_rg.ply
-    / _rg_{C|F}.ply, plus a third _rg_{C|F}N.ply when nicp_mesh is given -
-    the topology-consistent template fit ("fit template" in the UI), kept
-    alongside the patient's own clipped/resampled mesh rather than in place
-    of it. {C|F} is cranial/facial, same convention as results_folder_name.
+    """(patient_folder, {path: bytes}) - paths relative to that folder, not
+    bare filenames, because the two kinds of output belong in different
+    places:
+
+        CP_{stem}[_CoM]/{stem}_rg.ply          the rigid registration
+        CP_{stem}[_CoM]/{stem}_rg_landmarks.json
+        CP_{stem}[_CoM]/{region}/meshes/{stem}_rg_{C|F}.ply
+
+    _rg.ply and its landmark record are the same work for either region -
+    pressing align commits to no region at all - so they sit at the top and
+    a later run on the other region joins the same folder instead of
+    starting a second one beside it. choosing a region and preprocessing is
+    what creates the region subfolder. _rg_{C|F}N.ply joins the latter when
+    nicp_mesh is given - the topology-consistent template fit ("fit
+    template" in the UI), kept alongside the patient's own clipped/
+    resampled mesh rather than in place of it.
+
+    one consequence worth knowing: a facial registration is shifted so the
+    sellion sits at the origin and a cranial one isn't (see
+    pipeline.register), so aligning for the other region rewrites the top
+    level _rg.ply in that region's frame. the landmark record names the
+    target it was written for, so the file is never ambiguous about which.
 
     final_mesh is None for a save triggered right after /align, before
     /clip+/run have ever produced a final mesh to go with it (see
     api/routers/mesh.py's save_meshes_to_source_folder) - just the one
     _rg.ply file comes out in that case, still into the same folder a
     later, fuller save (once /run has actually completed) writes the rest
-    into."""
+    into.
+
+    the landmark args add a {stem}_rg_landmarks.json next to _rg.ply
+    recording the registration that produced it, in both the raw scan's
+    frame (as picked) and the registered frame - neither is derivable from
+    the other without the transform, and an _rg mesh is only re-usable
+    later (batch preprocessing, re-running a different target) if it
+    carries its own landmarks. skipped entirely when they aren't
+    available, so callers that don't have them are unaffected."""
     stem = stem_from_filename(original_filename)
-    folder = results_folder_name(original_filename, target, config)
+    folder = patient_folder_name(original_filename, config)
+    region = f"{region_folder_name(target)}/meshes"
 
     # bare geometry only, no visual/UV - registered_mesh still carries
     # texture data at this point (register() deliberately keeps it, for the
@@ -1530,10 +1590,85 @@ def _build_mesh_files(
     target_suffix = "C" if target == "cranium" else "F"
     files = {f"{stem}_rg.ply": registered_export.export(file_type="ply")}
     if final_mesh is not None:
-        files[f"{stem}_rg_{target_suffix}.ply"] = final_mesh.export(file_type="ply")
+        files[f"{region}/{stem}_rg_{target_suffix}.ply"] = final_mesh.export(file_type="ply")
     if nicp_mesh is not None:
-        files[f"{stem}_rg_{target_suffix}N.ply"] = nicp_mesh.export(file_type="ply")
+        files[f"{region}/{stem}_rg_{target_suffix}N.ply"] = nicp_mesh.export(file_type="ply")
+
+    landmarks_json = _build_landmarks_json(
+        target, config, source_landmarks, registered_landmarks,
+        source_alt_frontal_landmark, used_alt_frontal, com_translation,
+    )
+    if landmarks_json is not None:
+        files[f"{stem}_rg_landmarks.json"] = landmarks_json
     return folder, files
+
+
+# the order the 3 mandatory picks are always in, everywhere in this app -
+# see api/schemas.py's AnalyzeRequest.landmarks and lib/landmarks.js.
+_LANDMARK_NAMES = ("sellion", "left_tragus", "right_tragus")
+
+
+def _build_landmarks_json(
+    target: str,
+    config: dict,
+    source_landmarks: np.ndarray | None,
+    registered_landmarks: np.ndarray | None,
+    source_alt_frontal_landmark: np.ndarray | None,
+    used_alt_frontal: bool,
+    com_translation: bool | None,
+) -> bytes | None:
+    """the _rg_landmarks.json body, or None when there's nothing to write.
+
+    "registered" is in the frame the _rg.ply beside it is saved in, so the
+    two always agree. that matters for the alt-frontal case: registration
+    doesn't ADD a fourth point, it SUBSTITUTES the alt frontal for sellion
+    in the landmark triangle (see api/routers/mesh.py's _pure_align), and
+    the resulting mesh is posed around that substituted point. so when the
+    alt frontal was used, the registered block reports it under
+    "alt_frontal" and leaves "sellion" null - sellion genuinely has no
+    tracked coordinate in that frame. "picked" always has all the real
+    picks, since those are in the raw scan's own frame where nothing was
+    substituted.
+
+    com_translation describes the PIPELINE run, not the _rg mesh beside it:
+    _rg is always the pure rigid landmark alignment with no centre-of-mass
+    nudge, so this is here to say how the _rg_{C|F} mesh in the same folder
+    was produced. passed explicitly rather than read off `config` because
+    an align-only save has no clip config yet, and the placeholder one it
+    gets instead carries a GUESSED com_translation (see
+    api/routers/mesh.py's _resolve_meshes_save_config - it guesses so the
+    folder name matches the eventual run's). a guess is fine for naming a
+    folder; asserting it as fact in a provenance record is not."""
+    if source_landmarks is None and registered_landmarks is None:
+        return None
+
+    def pt(v) -> list | None:
+        return [round(float(x), 4) for x in np.asarray(v, dtype=np.float64)] if v is not None else None
+
+    picked = {}
+    if source_landmarks is not None:
+        rows = np.asarray(source_landmarks, dtype=np.float64)
+        picked = {name: pt(rows[i]) for i, name in enumerate(_LANDMARK_NAMES)}
+        picked["alt_frontal"] = pt(source_alt_frontal_landmark)
+
+    registered = {}
+    if registered_landmarks is not None:
+        rows = np.asarray(registered_landmarks, dtype=np.float64)
+        registered = {
+            "sellion": None if used_alt_frontal else pt(rows[0]),
+            "left_tragus": pt(rows[1]),
+            "right_tragus": pt(rows[2]),
+            "alt_frontal": pt(rows[0]) if used_alt_frontal else None,
+        }
+
+    payload = {
+        "datetime": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "target": target,
+        "com_translation": bool(config.get("com_translation", False)) if com_translation is None else com_translation,
+        "picked": picked,
+        "registered": registered,
+    }
+    return json.dumps(payload, indent=2).encode("utf-8")
 
 
 def _build_analysis_files(
@@ -1694,6 +1829,13 @@ def _zip_files(files_by_prefix: dict[str, dict[str, bytes]]) -> bytes:
     return buf.getvalue()
 
 
+def _flattened(files: dict[str, bytes]) -> dict[str, bytes]:
+    """drops the subfolders off _build_mesh_files' keys, for the two
+    original one-shot exports that have always put everything from a run in
+    a single directory (see build_results_bundle) and keep doing so."""
+    return {name.rsplit("/", 1)[-1]: content for name, content in files.items()}
+
+
 def build_meshes_bundle(
     original_filename: str,
     registered_mesh: trimesh.Trimesh,
@@ -1704,10 +1846,10 @@ def build_meshes_bundle(
 ) -> bytes:
     """zip bytes for the mesh files (two, or three when a NICP fit exists -
     see _build_mesh_files) - the browser-download side of "save meshes"
-    (part 9). nested under {folder}/meshes/, matching write_meshes_to_folder's
-    own on-disk layout."""
+    (part 9). laid out exactly as write_meshes_to_folder puts them on
+    disk, so a downloaded zip and a desktop save unpack to the same tree."""
     folder, files = _build_mesh_files(original_filename, registered_mesh, final_mesh, target, config, nicp_mesh)
-    return _zip_files({f"{folder}/meshes": files})
+    return _zip_files({folder: files})
 
 
 def write_meshes_to_folder(
@@ -1718,18 +1860,34 @@ def write_meshes_to_folder(
     target: str,
     config: dict,
     nicp_mesh: trimesh.Trimesh | None = None,
+    source_landmarks: np.ndarray | None = None,
+    registered_landmarks: np.ndarray | None = None,
+    source_alt_frontal_landmark: np.ndarray | None = None,
+    used_alt_frontal: bool = False,
+    com_translation: bool | None = None,
 ) -> Path:
     """writes the mesh files (one right after /align with nothing further
     yet, two once /clip+/run have produced a final mesh too, three when a
-    NICP fit also exists - see _build_mesh_files) into dest_dir/{folder}/
-    meshes/ - the desktop side of "save meshes" (part 9), sibling to
-    write_analysis_to_folder's own analysis/ subfolder. returns the
-    meshes/ folder written."""
-    folder, files = _build_mesh_files(original_filename, registered_mesh, final_mesh, target, config, nicp_mesh)
-    results_dir = dest_dir / folder / "meshes"
-    results_dir.mkdir(parents=True, exist_ok=True)
+    NICP fit also exists - see _build_mesh_files), plus the
+    _rg_landmarks.json record when landmarks are given, into the patient
+    folder dest_dir/{folder}/ - the desktop side of "save meshes" (part 9).
+    _build_mesh_files decides which of them land at the top and which in
+    the region's own meshes/ subfolder; returns the patient folder, which
+    is the one worth opening since a save right after align has no region
+    subfolder in it yet."""
+    folder, files = _build_mesh_files(
+        original_filename, registered_mesh, final_mesh, target, config, nicp_mesh,
+        source_landmarks=source_landmarks,
+        registered_landmarks=registered_landmarks,
+        source_alt_frontal_landmark=source_alt_frontal_landmark,
+        used_alt_frontal=used_alt_frontal,
+        com_translation=com_translation,
+    )
+    results_dir = dest_dir / folder
     for name, content in files.items():
-        (results_dir / name).write_bytes(content)
+        path = results_dir / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
     return results_dir
 
 
@@ -1764,7 +1922,7 @@ def build_analysis_bundle(
     their own sections wherever they're used (see _build_analysis_files) -
     that's how the "measurements"/"asymmetry" checkboxes work, no separate
     flag needed here; the router just passes None for whichever's unticked."""
-    folder = results_folder_name(original_filename, target, config)
+    patient_folder = patient_folder_name(original_filename, config)
     mesh_files = (
         _build_mesh_files(original_filename, registered_mesh, final_mesh, target, config, nicp_mesh)[1]
         if include_meshes
@@ -1774,9 +1932,12 @@ def build_analysis_bundle(
         original_filename, final_mesh, landmarks, target, craniometrics, asymmetry, config, sellion_mesh, sellion_landmarks,
         metopic, frontal_bossing, metadata,
     )
-    files_by_prefix = {f"{folder}/analysis": analysis_files}
+    # the mesh files already carry their own place in the tree (top level
+    # for the registration, region/meshes for the clipped result), so they
+    # go under the patient folder as-is; analysis is region-specific.
+    files_by_prefix = {f"{results_folder_name(original_filename, target, config)}/analysis": analysis_files}
     if mesh_files:
-        files_by_prefix[f"{folder}/meshes"] = mesh_files
+        files_by_prefix[patient_folder] = mesh_files
     return _zip_files(files_by_prefix)
 
 
@@ -1854,12 +2015,12 @@ def build_results_bundle(
     the separate save-meshes/export-analysis split - part 9/10 - and keeps
     its existing flat layout for backward compatibility rather than
     adopting their nested analysis/ convention)."""
-    folder, mesh_files = _build_mesh_files(original_filename, registered_mesh, final_mesh, target, config, nicp_mesh)
-    analysis_files = _build_analysis_files(
+    _folder, mesh_files = _build_mesh_files(original_filename, registered_mesh, final_mesh, target, config, nicp_mesh)
+    folder = results_folder_name(original_filename, target, config)
+    return _zip_files({folder: {**_flattened(mesh_files), **_build_analysis_files(
         original_filename, final_mesh, landmarks, target, craniometrics, asymmetry, config, sellion_mesh, sellion_landmarks,
         metopic, frontal_bossing, metadata,
-    )
-    return _zip_files({folder: {**mesh_files, **analysis_files}})
+    )}})
 
 
 def write_results_to_folder(
@@ -1886,12 +2047,13 @@ def write_results_to_folder(
     stays flat rather than nesting analysis/ like part 9/10's split
     functions do). cohort_xlsx_path behaves the same as on
     write_analysis_to_folder - see _upsert_cohort_xlsx."""
-    folder, mesh_files = _build_mesh_files(original_filename, registered_mesh, final_mesh, target, config, nicp_mesh)
+    _folder, mesh_files = _build_mesh_files(original_filename, registered_mesh, final_mesh, target, config, nicp_mesh)
+    mesh_files = _flattened(mesh_files)
     analysis_files = _build_analysis_files(
         original_filename, final_mesh, landmarks, target, craniometrics, asymmetry, config, sellion_mesh, sellion_landmarks,
         metopic, frontal_bossing, metadata,
     )
-    results_dir = dest_dir / folder
+    results_dir = dest_dir / results_folder_name(original_filename, target, config)
     results_dir.mkdir(parents=True, exist_ok=True)
     for name, content in {**mesh_files, **analysis_files}.items():
         (results_dir / name).write_bytes(content)
