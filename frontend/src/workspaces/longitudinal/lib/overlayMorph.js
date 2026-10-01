@@ -6,7 +6,7 @@
 // LongitudinalMorphViewer.jsx: resampleStageOverlays runs ONCE per stage,
 // when the morph sequence loads; lerpStageOverlays runs every frame, on
 // data that's already fixed-shape and cheap to interpolate.
-import { resamplePolylineByArcLength, resampleByU, lerpPoints, lerpPoint, lerpScalar } from "../../../three/resamplePolyline.js";
+import { resamplePolylineByArcLength, canonicalizeSagittalProfile, canonicalizeClosedRing, resampleByU, lerpPoints, lerpPoint, lerpScalar } from "../../../three/resamplePolyline.js";
 
 const HC_POLYGON_SAMPLES = 48;
 const METOPIC_CONTOUR_SAMPLES = 48;
@@ -23,7 +23,12 @@ export function resampleStageOverlays(measurementsResponse) {
   const craniometrics = m.craniometrics
     ? {
         hcPolygon: m.craniometrics.hc_slice_polygon && m.craniometrics.hc_slice_polygon.length > 2
-          ? resamplePolylineByArcLength(m.craniometrics.hc_slice_polygon, HC_POLYGON_SAMPLES, true)
+          ? resamplePolylineByArcLength(
+              // see canonicalizeClosedRing - fixes the ring's start/winding so it can't spin or mirror mid-morph
+              canonicalizeClosedRing(m.craniometrics.hc_slice_polygon, m.craniometrics.front_opt),
+              HC_POLYGON_SAMPLES,
+              true,
+            )
           : null,
         frontOpt: m.craniometrics.front_opt,
         occOpt: m.craniometrics.occ_opt,
@@ -54,11 +59,16 @@ export function resampleStageOverlays(measurementsResponse) {
         sellion: m.frontal_bossing.sellion,
         frontalPoint: m.frontal_bossing.frontal_point,
         horizontal: m.frontal_bossing.horizontal,
-        profile: m.frontal_bossing.profile && m.frontal_bossing.profile.length > 1
-          ? resamplePolylineByArcLength(m.frontal_bossing.profile, FRONTAL_BOSSING_PROFILE_SAMPLES, false)
-          : null,
+        profile: null,
       }
     : null;
+  if (frontalBossing && m.frontal_bossing.profile && m.frontal_bossing.profile.length > 1) {
+    // see canonicalizeSagittalProfile - without this the walk direction/start
+    // can differ between two timepoints and the lerp swings the line across the head
+    const { points, closed } = canonicalizeSagittalProfile(m.frontal_bossing.profile, m.frontal_bossing.sellion);
+    const resampled = resamplePolylineByArcLength(points, FRONTAL_BOSSING_PROFILE_SAMPLES, closed);
+    frontalBossing.profile = closed && resampled.length ? [...resampled, resampled[0]] : resampled;
+  }
 
   return { craniometrics, metopic, frontalBossing };
 }
