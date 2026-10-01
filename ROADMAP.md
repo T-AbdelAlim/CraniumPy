@@ -3,6 +3,7 @@
 ## Implemented
 * Rigid, landmark-based registration (3 landmarks, plus an optional 4th secondary frontal landmark for the displayed/saved mesh) - picking/clearing the 4th landmark auto-selects the matching shipped template
 * Staged align / adjust-picks / run-pipeline workflow, with re-registration on landmark adjustment
+* Clip preview: after "align", the clip boundary plane and trim spheres are drawn on the aligned mesh for both regions (click a region's boundary disc to select it), with an adjustable/resizable trim sphere confirmed before "run pipeline" - drawn from the same constants the real clip uses, so the preview can't drift from the cut
 * Mesh repair (PyMeshFix) and resampling to a target vertex count
 * Center-of-mass correction (validated, optional)
 * Non-rigid template registration (NICP), as an optional post-processing step - live fit preview, adjustable stiffness schedule, gives every processed patient the shipped template's own topology for downstream shape analysis
