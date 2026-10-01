@@ -363,10 +363,10 @@ def _select_forehead_half(arc: np.ndarray, sellion: np.ndarray) -> np.ndarray:
     sellion's height, so which one happens to be a hair higher is
     essentially arbitrary jitter from resampling/decimation, not a real
     front/back signal) - meaning it could silently walk from the occiput
-    end and report an occipital point as the "forehead" one. reported as:
-    the same landmarks giving a correct frontal-bossing angle on one run
-    and a clearly-wrong one (pointing at the back of the head) on another,
-    depending on nothing the user changed.
+    end and report an occipital point as the "forehead" one. symptom: the
+    same landmarks giving a correct frontal-bossing angle on one run and a
+    clearly-wrong one (pointing at the back of the head) on another,
+    depending on nothing that was changed between runs.
 
     splits the arc at its own highest point (the vertex/crown - the one
     unambiguous landmark on it) into its two monotonic halves, then keeps
