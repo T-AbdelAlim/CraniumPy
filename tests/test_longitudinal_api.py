@@ -207,3 +207,45 @@ def test_save_video_rename_keeps_both_files(client, tmp_path):
     assert (folder / "morph_animation_none.webm").read_bytes() == b"first"
     assert (folder / "morph_animation_none_2.webm").read_bytes() == b"second"
     assert (folder / "morph_animation_none_3.webm").read_bytes() == b"third"
+
+
+def _heatmap_request(tmp_path, templates, **extra):
+    return {
+        "stages": [
+            {"ref": {"template": name}, "label": f"Timepoint {i}", "index": i} for i, name in enumerate(templates)
+        ],
+        "dest_dir": str(tmp_path),
+        "folder_name": "p_morph_t0_t2",
+        **extra,
+    }
+
+
+def test_heatmap_figures_writes_n_minus_one_pngs_into_a_heatmaps_folder(client, tmp_path):
+    response = client.post(
+        "/api/longitudinal/heatmap-figures",
+        json=_heatmap_request(tmp_path, ["clipped_template_xy"] * 3),
+    )
+
+    assert response.status_code == 200, response.text
+    folder = tmp_path / "p_morph_t0_t2" / "heatmaps"
+    assert Path(response.json()["saved_to"]) == folder
+    assert response.json()["files"] == ["heatmap_t0_to_t1.png", "heatmap_t1_to_t2.png"]
+    assert sorted(p.name for p in folder.iterdir()) == response.json()["files"]
+    assert (folder / "heatmap_t0_to_t1.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_heatmap_figures_needs_at_least_two_stages(client, tmp_path):
+    response = client.post(
+        "/api/longitudinal/heatmap-figures", json=_heatmap_request(tmp_path, ["clipped_template_xy"])
+    )
+
+    assert response.status_code == 400
+
+
+def test_heatmap_figures_topology_mismatch_is_a_clear_error(client, tmp_path):
+    response = client.post(
+        "/api/longitudinal/heatmap-figures",
+        json=_heatmap_request(tmp_path, ["clipped_template_xy", "template_face"]),
+    )
+
+    assert response.status_code == 400

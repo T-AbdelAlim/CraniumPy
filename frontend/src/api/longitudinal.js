@@ -91,6 +91,26 @@ export async function saveTrendsExport(xLabels, series, destDir, folderName) {
   return response.json(); // {saved_to}
 }
 
+// 3D Morphing's "export heatmap figures" button (desktop-only) - stages are
+// [{ref, label, index}] in sequence order, ref in the {sessionId, stage}
+// shape slotStageRef builds. the backend writes one 300dpi front-view PNG per
+// consecutive pair (n stages -> n-1 figures) into
+// destDir/folderName/heatmaps/ - see api/routers/longitudinal.py's
+// heatmap_figures.
+export async function saveHeatmapFigures(stages, destDir, folderName) {
+  const response = await fetch("/api/longitudinal/heatmap-figures", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      stages: stages.map((s) => ({ ref: meshRefBody(s.ref), label: s.label, index: s.index })),
+      dest_dir: destDir,
+      folder_name: folderName,
+    }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json(); // {saved_to, files}
+}
+
 // 3D Morphing's "export video" button, desktop variant - the recording
 // itself only exists as an in-browser MediaRecorder Blob (see
 // MorphControl.jsx's handleExportVideo), so this just uploads those bytes
