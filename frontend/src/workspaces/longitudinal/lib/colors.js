@@ -1,18 +1,18 @@
 // per-slot palette for the Longitudinal workspace - each timepoint gets its
-// own hue family so its 3D overlays (HC ring/BPD/OFD, metopic contour,
+// own colour family so its 3D overlays (HC ring/BPD/OFD, metopic contour,
 // frontal bossing profile) and its legend swatch all read as the same
-// "thing" across the comparison, distinct from every other slot's. slot 0
-// (baseline) is warm, slot 1 (follow-up) is cool - matching the red/blue
-// baseline-vs-follow-up convention already used elsewhere in this app (see
-// api/results_bundle.py's longitudinal_comparison_report_pdf) - additional
-// slots (N>2) cycle through the rest of a fixed, readable 6-color set.
+// "thing" across the comparison, distinct from every other slot's. all
+// drawn from the Erasmus MC blues (navy, light blue, accent) and their
+// tints/shades; slots past six repeat.
 const PALETTE = [
-  { swatch: "#2563eb", hc: 0xd1453d, bpd: 0x2563eb, ofd: 0x16a34a }, // baseline - matches existing default overlay colors
-  { swatch: "#d1453d", hc: 0xea580c, bpd: 0xd1453d, ofd: 0xf59e0b }, // follow-up - warm family, distinct from baseline's
-  { swatch: "#16a34a", hc: 0x0891b2, bpd: 0x16a34a, ofd: 0x0d9488 },
-  { swatch: "#7c3aed", hc: 0xa855f7, bpd: 0x7c3aed, ofd: 0xc026d3 },
-  { swatch: "#0891b2", hc: 0x2563eb, bpd: 0x0891b2, ofd: 0x0e7490 },
-  { swatch: "#ea580c", hc: 0xf59e0b, bpd: 0xea580c, ofd: 0xd97706 },
+  // the baseline keeps the single-patient view's own measurement colours, so
+  // the two read the same; later timepoints use one shade family each
+  { swatch: "#86d2ee", hc: 0xd1453d, bpd: 0x2563eb, ofd: 0x16a34a },
+  { swatch: "#1f8fc7", hc: 0x1f8fc7, bpd: 0x5fb3d9, ofd: 0x15688f },
+  { swatch: "#e1f4fc", hc: 0xe1f4fc, bpd: 0xbfe6f6, ofd: 0x9fd2ea },
+  { swatch: "#5b75d6", hc: 0x5b75d6, bpd: 0x8fa0e0, ofd: 0x3d58c4 },
+  { swatch: "#b8c2e8", hc: 0xb8c2e8, bpd: 0xd4dbf2, ofd: 0x9aa7d6 },
+  { swatch: "#4fb6dd", hc: 0x4fb6dd, bpd: 0x86d2ee, ofd: 0x2a7fb0 },
 ];
 
 export function slotColor(index) {
@@ -49,4 +49,4 @@ export function frontalBossingColors(index) {
 // the same color on every mesh it's shown on, so a mismatched
 // correspondence (the same color landing somewhere totally different)
 // jumps out immediately.
-export const CORRESPONDENCE_MARKER_COLORS = [0xe63946, 0x1d4ed8, 0x16a34a, 0xf59e0b, 0x9333ea];
+export const CORRESPONDENCE_MARKER_COLORS = [0x86d2ee, 0x1f8fc7, 0xe1f4fc, 0x5b75d6, 0xb8c2e8];

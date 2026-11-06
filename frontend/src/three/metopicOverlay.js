@@ -12,9 +12,9 @@ import * as THREE from "three";
 // two distinct, legend-matched palettes in the same viewer.
 const DEFAULT_METOPIC_COLORS = {
   contour: 0x3a3a3a,
-  parabola: 0x2563eb,
+  parabola: 0x1f8fc7,
   central: 0xd1453d,
-  temporal: 0x0891b2,
+  temporal: 0x86d2ee,
   frontalAngle: 0x16a34a,
   midline: 0x999999,
 };

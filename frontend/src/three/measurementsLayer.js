@@ -26,7 +26,7 @@ export function heatmapMaxAbs(heatmap) {
   return Math.max(...heatmap.map(Math.abs), 1e-6);
 }
 
-// white (0) -> --accent-teal (max) sequential scale, for heatmaps that are
+// white (0) -> Erasmus MC accent blue (max) sequential scale, for heatmaps that are
 // an unsigned MAGNITUDE (e.g. the cohort mean-shape's inter-patient spread
 // - how far a point wandered, with no "direction") rather than a signed
 // deviation. deliberately NOT the diverging blue-white-red scale below,
@@ -35,7 +35,7 @@ export function heatmapMaxAbs(heatmap) {
 // same gamma<1 shaping as divergingColor, for the same reason (push
 // moderate values toward saturation sooner instead of washing out near
 // white in the middle of the range).
-const SEQUENTIAL_MAX_COLOR = new THREE.Color(0x178c83);
+const SEQUENTIAL_MAX_COLOR = new THREE.Color(0x1f8fc7);
 function sequentialColor(t) {
   const clamped = Math.max(0, Math.min(1, t)) ** 0.6;
   return new THREE.Color(1, 1, 1).lerp(SEQUENTIAL_MAX_COLOR, clamped);

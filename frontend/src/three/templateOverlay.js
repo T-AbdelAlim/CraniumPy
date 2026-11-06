@@ -57,7 +57,7 @@ export function addTemplateOverlay({ sceneBag, templateObject, meshObject, marke
     if (!child.isMesh) return;
     child.geometry.computeVertexNormals();
     child.material = new THREE.MeshStandardMaterial({
-      color: 0x60a5fa,
+      color: 0x86d2ee,
       transparent: true,
       opacity: 0.35,
       side: THREE.DoubleSide,
@@ -82,7 +82,7 @@ export function addTemplateOverlay({ sceneBag, templateObject, meshObject, marke
   const axisDefs = [
     { dir: new THREE.Vector3(1, 0, 0), color: 0xff4d4d, label: "X", span },
     { dir: new THREE.Vector3(0, 1, 0), color: 0x4dff88, label: "Y", span: span * 1.3 },
-    { dir: new THREE.Vector3(0, 0, 1), color: 0x4d9fff, label: "Z", span },
+    { dir: new THREE.Vector3(0, 0, 1), color: 0x86d2ee, label: "Z", span },
   ];
   const labelSize = span * 0.084;
   for (const { dir, color, label, span: axisSpan } of axisDefs) {
@@ -97,8 +97,8 @@ export function addTemplateOverlay({ sceneBag, templateObject, meshObject, marke
   }
   sceneBag.scene.add(axesObject);
 
-  const cogMeshMarker = addCogMarker(sceneBag, meshCentroid, 0xffa500, markerRadius * 1.4);
-  const cogTemplateMarker = addCogMarker(sceneBag, templateCentroid, 0x60a5fa, markerRadius * 1.4);
+  const cogMeshMarker = addCogMarker(sceneBag, meshCentroid, 0x1f8fc7, markerRadius * 1.4);
+  const cogTemplateMarker = addCogMarker(sceneBag, templateCentroid, 0x86d2ee, markerRadius * 1.4);
 
   const lineGeo = new THREE.BufferGeometry().setFromPoints([meshCentroid, templateCentroid]);
   const cogLine = new THREE.Line(lineGeo, new THREE.LineDashedMaterial({ color: 0xffffff, dashSize: 3, gapSize: 2 }));
