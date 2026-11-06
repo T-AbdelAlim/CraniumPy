@@ -19,6 +19,7 @@ import trimesh
 
 from craniumpy_core.craniometrics import (
     SliceProfile,
+    _ear_top_height,
     _select_forehead_half,
     _select_slice_index,
     extract_measurements,
@@ -101,6 +102,47 @@ def test_select_slice_index_min_y_floor_excludes_ear_level_slice():
     assert _select_slice_index(profiles) == 1
     # a floor just above the ear landmarks rules that slice out
     assert _select_slice_index(profiles, min_y=10) == 2
+
+
+def _profiles(breadth_by_y, depth=150.0):
+    return [SliceProfile(y=y, depth=depth, breadth=b, x_min=-b / 2, x_max=b / 2, z_min=-depth / 2, z_max=depth / 2)
+            for y, b in breadth_by_y]
+
+
+def test_ear_top_height_finds_where_the_ears_stop_sticking_out():
+    # breadth profile of a real 1-year-old trigonocephaly scan (mm above the
+    # tragus): ears to ~20mm, a waist at 25mm, then the skull widening again
+    profiles = _profiles([(0, 51), (5, 139), (10, 145), (15, 148), (20, 147), (25, 138), (30, 140), (40, 142), (50, 143), (60, 142)])
+    assert _ear_top_height(profiles, tragus_y=0.0) == 20.0
+
+
+def test_ear_top_height_none_without_an_ear_bulge():
+    profiles = _profiles([(0, 60), (5, 120), (10, 124), (20, 130), (30, 134), (40, 137), (50, 138), (60, 137)])
+    assert _ear_top_height(profiles, tragus_y=0.0) is None
+
+
+def test_hc_slice_clears_the_ears_on_a_head_with_a_prominent_brow():
+    # an ellipsoid head, its deepest slice just above the tragus plane (a
+    # protruding brow - typical for trigonocephaly), with an ear on each side
+    # reaching 20mm above the tragus. the slice used to land right there and
+    # measure BPD from ear to ear.
+    head = trimesh.creation.icosphere(subdivisions=5, radius=1.0)
+    head.apply_scale([65.0, 90.0, 80.0])
+    head.apply_translation([0, 0, 0])
+    brow = trimesh.creation.icosphere(subdivisions=3, radius=12.0)
+    brow.apply_translation([0, 8, 76])
+    ears = []
+    for side in (-1, 1):
+        ear = trimesh.creation.box(extents=[24, 36, 18])
+        ear.apply_translation([side * 72, 2, -5])
+        ears.append(ear)
+    mesh = trimesh.util.concatenate([head, brow, *ears])
+    mesh = trimesh.intersections.slice_mesh_plane(mesh, plane_normal=[0, 1, 0], plane_origin=[0, 0, 0], cap=False)
+    landmarks = np.array([[0.0, 0.0, 80.0], [65.0, 0.0, 0.0], [-65.0, 0.0, 0.0]])
+
+    m = extract_measurements(mesh, landmarks=landmarks)
+    assert m.slice_height >= 25
+    assert m.breadth_mm < 2 * 65 + 1  # the skull, not the ears
 
 
 def test_select_slice_index_min_y_noop_when_nothing_eligible():
