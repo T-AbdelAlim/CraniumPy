@@ -140,3 +140,15 @@ def test_load_measurement_export_xlsx_tolerates_a_missing_legend_sheet(tmp_path)
     columns, rows, legend_rows = load_measurement_export_xlsx(path)
     assert columns == ["identifier", "Width (W)"]
     assert legend_rows == []
+
+
+def test_resolve_matches_the_fitted_mesh_a_batch_measured():
+    from craniumpy_core.facial_cohort_link import resolve_cohort_ids_by_filename
+
+    rows = [
+        {"cohort_id": "C00001", "file_path": "/scans/a.obj", "target": "cranium", "nicp_mesh_path": "/out/a_rg_CN.ply"},
+        {"cohort_id": "C00002", "file_path": "/scans/a.obj", "target": "face", "nicp_mesh_path": "/out/a_rg_FN.ply"},
+    ]
+    result = resolve_cohort_ids_by_filename(rows, ["a_rg_FN.ply"])
+    assert result.matched == {"a_rg_FN.ply": "C00002"}
+    assert not result.unmatched and not result.ambiguous

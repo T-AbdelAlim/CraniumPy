@@ -356,6 +356,38 @@ def test_upsert_cohort_xlsx_replaces_row_with_matching_file_path_instead_of_dupl
     assert rows[0]["cohort_id"] == "C00001"
 
 
+def test_upsert_cohort_xlsx_keeps_a_cranial_and_a_frontal_row_for_the_same_file(tmp_path):
+    cohort_path = tmp_path / "cohort.xlsx"
+    meta = {"file_name": "a.ply", "file_path": "/data/a.ply", "patient_id": "MRN-1"}
+    _upsert_cohort_xlsx(cohort_path, _metrics_row("cranium", meta, _config(), _craniometrics(), None, None, None))
+    _upsert_cohort_xlsx(cohort_path, _metrics_row("face", meta, _config(), None, _asymmetry(), None, None))
+    # re-exporting either one still replaces just its own row
+    _upsert_cohort_xlsx(cohort_path, _metrics_row("cranium", meta, _config(), _craniometrics(), None, None, None))
+
+    rows = _read_cohort(cohort_path)
+    assert sorted((r["cohort_id"], r["target"]) for r in rows) == [("C00001", "cranium"), ("C00002", "face")]
+    mapping = _read_mapping(cohort_path)
+    assert sorted((r["cohort_id"], r["target"], r["file_path"]) for r in mapping) == [
+        ("C00001", "cranium", "/data/a.ply"), ("C00002", "face", "/data/a.ply"),
+    ]
+
+
+def test_upsert_cohort_xlsx_takes_over_a_mapping_row_written_without_a_target(tmp_path):
+    from api.results_bundle import _upsert_rows
+
+    cohort_path = tmp_path / "cohort.xlsx"
+    meta = {"file_name": "a.ply", "file_path": "/data/a.ply"}
+    legacy = {k: v for k, v in _metrics_row("cranium", meta, _config(), _craniometrics(), None, None, None).items()}
+    _upsert_rows(cohort_path, {"cohort_id": "C00001", **{k: v for k, v in legacy.items() if k not in ("file_name", "file_path")}},
+                 key_fn=lambda r: r.get("cohort_id", ""))
+    _upsert_rows(_id_mapping_path(cohort_path), {"cohort_id": "C00001", "file_name": "a.ply", "file_path": "/data/a.ply"})
+
+    _upsert_cohort_xlsx(cohort_path, _metrics_row("cranium", meta, _config(), _craniometrics(), None, None, None))
+
+    assert [r["cohort_id"] for r in _read_cohort(cohort_path)] == ["C00001"]
+    assert [(r["cohort_id"], r["target"]) for r in _read_mapping(cohort_path)] == [("C00001", "cranium")]
+
+
 def test_upsert_cohort_xlsx_falls_back_to_file_name_when_file_path_blank(tmp_path):
     cohort_path = tmp_path / "cohort.xlsx"
     first = _metrics_row("cranium", {"file_name": "a.ply"}, _config(), _craniometrics(), None, None, None)
