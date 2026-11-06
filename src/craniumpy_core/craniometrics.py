@@ -221,14 +221,56 @@ def find_hc_slice_height(
     intentionally doesn't do the >60cm circumference re-search
     (_circumference_search) - that's a circumference-reporting quirk (see
     this module's docstring), not part of "which height is the HC slice"."""
+    profiles = _scan_slices(mesh, slice_d)
     min_y = None
     if landmarks is not None:
         landmarks = np.asarray(landmarks)
-        min_y = float(max(landmarks[1][1], landmarks[2][1])) + ear_safety_margin_mm
+        tragus_y = float(max(landmarks[1][1], landmarks[2][1]))
+        min_y = tragus_y + ear_safety_margin_mm
+        ear_top = _ear_top_height(profiles, tragus_y)
+        if ear_top is not None:
+            min_y = max(min_y, ear_top + ear_safety_margin_mm)
 
-    profiles = _scan_slices(mesh, slice_d)
     index = _select_slice_index(profiles, slice_d, min_y=min_y)
     return profiles[index].y
+
+
+def _ear_top_height(
+    profiles: list[SliceProfile],
+    tragus_y: float,
+    waist_from_mm: float = 10.0,
+    waist_to_mm: float = 50.0,
+    bulge_mm: float = 5.0,
+) -> float | None:
+    """the highest slice above the tragus where the ears still stick out.
+    the ears make the slices around the tragus wider than the skull just
+    above them, so going up from the tragus the breadth narrows to a
+    "waist" where the ears end before the skull widens again towards the
+    parietal eminences. the waist is the narrowest slice between
+    waist_from_mm and waist_to_mm above the tragus; everything below it
+    that is more than bulge_mm wider than the waist is ear. None when
+    nothing below the waist bulges like that (a head whose ears were
+    clipped away, or whose breadth only grows upwards).
+
+    a fixed margin above the tragus doesn't clear the ears: the tragus sits
+    halfway up the ear, and the helix reaches 20-30mm above it on a child's
+    head. on a head whose depth barely changes with height - typical for a
+    trigonocephalic forehead, where the brow ridge makes the lowest slices
+    the deepest - the deepest-slice search then settled right at ear level,
+    so BPD was measured ear to ear and the circumference ran around the
+    pinnae (about 155 mm and 55-60 cm on 1-year-olds). the ears show up as
+    exactly that kind of breadth bulge, so it's what's looked for here."""
+    ys = np.array([p.y for p in profiles], dtype=float)
+    breadths = np.array([p.breadth for p in profiles], dtype=float)
+    waist_range = (ys >= tragus_y + waist_from_mm) & (ys <= tragus_y + waist_to_mm) & (breadths > 0)
+    if not waist_range.any():
+        return None
+    candidates = np.nonzero(waist_range)[0]
+    waist = candidates[np.argmin(breadths[candidates])]
+    ear = (ys >= tragus_y) & (ys < ys[waist]) & (breadths > breadths[waist] + bulge_mm)
+    if not ear.any():
+        return None
+    return float(ys[ear].max())
 
 
 def extract_measurements(
