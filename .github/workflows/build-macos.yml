@@ -13,12 +13,14 @@ on:
 jobs:
   build:
     strategy:
+      # one architecture failing shouldn't cancel the other's build
+      fail-fast: false
       matrix:
-        # macos-13 = Intel runner, macos-14 = Apple Silicon - building both
+        # macos-15-intel = Intel runner, macos-14 = Apple Silicon - building both
         # since a pyinstaller build only targets whatever CPU it's built
         # on, not a universal2 binary, and users could have either.
         include:
-          - runner: macos-13
+          - runner: macos-15-intel
             arch: intel
           - runner: macos-14
             arch: apple-silicon
