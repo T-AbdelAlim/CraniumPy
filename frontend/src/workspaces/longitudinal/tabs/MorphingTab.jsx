@@ -105,8 +105,19 @@ export default function MorphingTab({ slots, exportDestDir, onExportDestDirChang
   function ensureSequenceLoaded(key, urls) {
     if (loadedKeyRef.current === key && loadPromiseRef.current) return loadPromiseRef.current;
     loadedKeyRef.current = key;
-    loadPromiseRef.current = morphViewerRef.current.loadSequence(urls);
-    return loadPromiseRef.current;
+    const promise = morphViewerRef.current.loadSequence(urls);
+    loadPromiseRef.current = promise;
+    // a failed load mustn't stay memoized - every later attempt for the
+    // same timepoints (picking an overlay, re-ticking a timepoint) would
+    // just get the same rejected promise back and the morph could never
+    // recover without leaving the workspace.
+    promise.catch(() => {
+      if (loadPromiseRef.current === promise) {
+        loadedKeyRef.current = null;
+        loadPromiseRef.current = null;
+      }
+    });
+    return promise;
   }
 
   useEffect(() => {

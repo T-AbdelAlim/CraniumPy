@@ -34,11 +34,14 @@ export default function PreprocessingPanel({
   landmarks,
   alignSucceeded,
   landmarksChangedSinceAlign,
-  aligning,
   pipelineRan,
   alignStatus,
   onAlign,
   onAdjustPicks,
+  onBackToClipStep,
+  canGoBackToClipStep,
+  pipelineBusy,
+  runSettingsChanged,
   onReset,
   sphereAdjust,
   onSphereAdjustChange,
@@ -55,7 +58,6 @@ export default function PreprocessingPanel({
   nicpParams,
   onNicpParamsChange,
   onRunPipeline,
-  runningPipeline,
   runStarted,
   runProgress,
   runStatus,
@@ -73,7 +75,6 @@ export default function PreprocessingPanel({
   templateOffset,
   templateStatus,
   onFitTemplate,
-  fittingTemplate,
   nicpFitStarted,
   nicpProgress,
   nicpStatus,
@@ -102,21 +103,27 @@ export default function PreprocessingPanel({
     sphereAdjust.dx === 0 && sphereAdjust.dy === 0 && sphereAdjust.dz === 0 && sphereAdjust.radius === null;
   const names = activeLandmarkNames(useAltFrontal);
   const allPicked = names.every((n) => n in landmarks);
-  const alignDisabled = !allPicked || !landmarksChangedSinceAlign || aligning || pipelineRan;
-  const adjustDisabled = !alignSucceeded || pipelineRan;
-  // landmark positions lock in once a run has completed (align/adjust
-  // picks stay disabled above), but target/com-translation/resample are
-  // still fair game to tweak and re-run without redoing the align step -
-  // /clip and /run always re-derive registration fresh from the current
-  // landmarks + target, so there's nothing stale to invalidate here.
-  const runDisabled = !alignSucceeded || landmarksChangedSinceAlign || runningPipeline;
+  // align/adjust picks stay available after a run: either one takes this
+  // target back to the aligned, not-yet-clipped step (App.jsx's
+  // handleAlign/handleAdjustPicks), so changing a landmark never needs
+  // "reset" and its lost picks any more. target/com-translation/resample
+  // can still be changed and re-run without re-aligning - /clip and /run
+  // always re-derive registration from the current landmarks + target.
+  const alignDisabled = !allPicked || !landmarksChangedSinceAlign || pipelineBusy;
+  const adjustDisabled = !alignSucceeded || pipelineBusy;
+  const runDisabled = !alignSucceeded || landmarksChangedSinceAlign || pipelineBusy;
   const [showNicpAdvanced, setShowNicpAdvanced] = useState(false);
   const [stageTimepoint, setStageTimepoint] = useState("t0");
   const [stagedNote, setStagedNote] = useState("");
 
-  function handleStage() {
-    onStageForLongitudinal(stageTimepoint);
-    setStagedNote(`staged as ${stageTimepoint} (${target})`);
+  async function handleStage() {
+    setStagedNote("staging...");
+    try {
+      await onStageForLongitudinal(stageTimepoint);
+      setStagedNote(`staged as ${stageTimepoint} (${target})`);
+    } catch (err) {
+      setStagedNote(`couldn't stage: ${err.message}`);
+    }
   }
 
   function renderItem(name) {
@@ -141,6 +148,7 @@ export default function PreprocessingPanel({
             type="radio"
             name="target"
             checked={target === "cranium"}
+            disabled={pipelineBusy}
             onChange={() => onTargetChange("cranium")}
             className="visually-hidden"
           />
@@ -153,6 +161,7 @@ export default function PreprocessingPanel({
             type="radio"
             name="target"
             checked={target === "face"}
+            disabled={pipelineBusy}
             onChange={() => onTargetChange("face")}
             className="visually-hidden"
           />
@@ -180,10 +189,15 @@ export default function PreprocessingPanel({
         <button type="button" onClick={onAdjustPicks} disabled={adjustDisabled}>
           adjust picks
         </button>
-        <button type="button" onClick={onReset}>
+        <button type="button" onClick={onReset} disabled={pipelineBusy}>
           reset
         </button>
       </div>
+      {canGoBackToClipStep && (
+        <button type="button" className="button-subtle" onClick={onBackToClipStep} disabled={pipelineBusy}>
+          back to clip step (keeps landmarks)
+        </button>
+      )}
       <p className="status-line">{alignStatus}</p>
 
       {sphereAdjustAvailable && (
@@ -277,6 +291,9 @@ export default function PreprocessingPanel({
       <button type="button" onClick={onRunPipeline} disabled={runDisabled}>
         preprocess mesh
       </button>
+      {runSettingsChanged && (
+        <p className="hint">settings changed since this result was made - press "preprocess mesh" again to apply them</p>
+      )}
       {runStarted && (
         <>
           <div className={runError ? "progress-bar error" : "progress-bar"}>
@@ -402,7 +419,7 @@ export default function PreprocessingPanel({
             interested in Longitudinal analysis (comparing this patient across timepoints)? point correspondence
             requires a NICP fit - stage this mesh for Longitudinal once the fit below completes.
           </p>
-          <button type="button" onClick={onFitTemplate} disabled={fittingTemplate}>
+          <button type="button" onClick={onFitTemplate} disabled={pipelineBusy}>
             fit template (NICP) - same topology across every patient
           </button>
           {nicpFitStarted && (

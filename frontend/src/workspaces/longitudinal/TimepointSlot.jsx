@@ -93,9 +93,7 @@ export default function TimepointSlot({ slot, onChange, viewerRef, colorIndex, c
       setMeasurements(m);
       setStage("ready");
       setStatus("");
-      onChange({
-        ...slot, sessionId: sid, stage: stageForRef, target: measureTarget, measurements: m, ready: true,
-      });
+      onChange({ sessionId: sid, stage: stageForRef, target: measureTarget, measurements: m, ready: true });
     } catch (err) {
       setStatus(`measurement failed: ${err.message}`);
       setStage("upload");
@@ -126,8 +124,14 @@ export default function TimepointSlot({ slot, onChange, viewerRef, colorIndex, c
       setStatus("No .ply/.obj/.stl found in the files you dropped");
       return;
     }
-    const { sessionId: sid } = await uploadSession(files);
-    await handleUploaded({ sessionId: sid, meshLabel: primaryMeshFile(names) ?? "" });
+    try {
+      setStatus("uploading...");
+      const { sessionId: sid } = await uploadSession(files);
+      await handleUploaded({ sessionId: sid, meshLabel: primaryMeshFile(names) ?? "" });
+    } catch (err) {
+      setStatus(`upload failed: ${err.message}`);
+      setStage("upload");
+    }
   }
 
   function onFilesDropped(files) {
@@ -151,7 +155,7 @@ export default function TimepointSlot({ slot, onChange, viewerRef, colorIndex, c
     setStatus("");
     setMeasurements(null);
     setDetectedTargetNote(null);
-    onChange({ ...slot, sessionId: null, ready: false, measurements: null });
+    onChange({ sessionId: null, ready: false, measurements: null });
   }
 
   return (
@@ -174,7 +178,7 @@ export default function TimepointSlot({ slot, onChange, viewerRef, colorIndex, c
             className="longitudinal-slot-label-input"
             value={slot.label}
             placeholder="add a label..."
-            onChange={(e) => onChange({ ...slot, label: e.target.value })}
+            onChange={(e) => onChange({ label: e.target.value })}
           />
         </div>
         {canRemove && (

@@ -134,8 +134,12 @@ export default function CompareTab({ slots, onSlotsChange, linkCameras, onLinkCa
   // straight through to setSlots (onSlotsChange IS setSlots, see
   // LongitudinalWorkspace.jsx) makes each patch apply against the true
   // latest state instead.
+  //
+  // merged into the slot rather than replacing it: a slot that finishes
+  // measuring only knows what it changed, and replacing the whole slot
+  // with its own (mount-time) copy threw away a label typed meanwhile.
   function updateSlot(index, patch) {
-    onSlotsChange((prev) => prev.map((s, i) => (i === index ? patch : s)));
+    onSlotsChange((prev) => prev.map((s, i) => (i === index ? { ...s, ...patch } : s)));
   }
 
   function removeLastSlot() {
