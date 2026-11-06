@@ -169,3 +169,49 @@ def test_nicp_boundary_vertices_match_only_target_boundary_not_a_closer_interior
     dist_to_truth = np.linalg.norm(deformed[0] - true_corner)
     dist_to_trap = np.linalg.norm(deformed[0] - trap)
     assert dist_to_truth < dist_to_trap
+
+
+def test_factorize_spd_solves_like_spsolve():
+    from scipy import sparse
+    from scipy.sparse.linalg import spsolve
+
+    from craniumpy_core.registration.nicp import _factorize_spd
+
+    rng = np.random.default_rng(0)
+    a = sparse.random(300, 300, density=0.02, random_state=1, format="csr")
+    spd = (a.T @ a + sparse.identity(300) * 0.5).tocsc()
+    rhs = rng.normal(size=(300, 3))
+    assert np.allclose(_factorize_spd(spd)(rhs), spsolve(spd, rhs), atol=1e-10)
+
+
+def test_nicp_solver_shortcuts_give_the_plain_normal_equations_result():
+    # nicp() reuses a factorization while the correspondence set holds and
+    # assembles A^T A from precomputed halves - it has to land exactly where
+    # solving the full normal equations every pass does.
+    from scipy import sparse
+    from scipy.sparse.linalg import spsolve
+    from scipy.spatial import cKDTree
+
+    from craniumpy_core.registration.nicp import _build_data_term, _build_stiffness
+
+    source = _sphere(subdivisions=2)
+    target = _sphere(radius=55.0, subdivisions=3)
+    alphas = np.linspace(50, 1, 4)
+
+    src_v = np.asarray(source.vertices, dtype=np.float64)
+    n = len(src_v)
+    kron_mg, _ = _build_stiffness(source.faces, n, 1.0)
+    d = _build_data_term(src_v)
+    x = np.tile(np.vstack([np.eye(3), [0, 0, 0]]), (n, 1)).astype(np.float64)
+    tree = cKDTree(target.vertices)
+    for alpha in alphas:
+        for _ in range(3):
+            dist, idx = tree.query(d @ x)
+            w = (dist <= 10.0).astype(np.float64)
+            wd = sparse.diags(w) @ d
+            a = sparse.vstack([alpha * kron_mg, wd]).tocsr()
+            x = spsolve((a.T @ a).tocsc(), wd.T @ (w[:, None] * np.asarray(target.vertices)[idx]))
+    expected = d @ x
+
+    actual = nicp(source, target, alphas=alphas, gamma=1.0, dist_threshold=10.0, inner_iters=3)
+    assert np.allclose(actual, expected, atol=1e-8)
