@@ -653,16 +653,18 @@ def test_switch_target_while_job_running_returns_409(client, landmarks_payload):
 
 
 def test_repair_only_runs_once_across_repeated_clips(client, landmarks_payload, monkeypatch):
-    import craniumpy_core.pipeline as pipeline_module
+    # counted one level up from pipeline.repair_mesh, which now runs in a
+    # worker process (api/repair_worker.py) a monkeypatch can't reach
+    from api.routers import mesh as mesh_router
 
-    real_repair = pipeline_module.repair_mesh
+    real_build = mesh_router._build_repair
     call_count = {"n": 0}
 
     def counting_repair(*args, **kwargs):
         call_count["n"] += 1
-        return real_repair(*args, **kwargs)
+        return real_build(*args, **kwargs)
 
-    monkeypatch.setattr(pipeline_module, "repair_mesh", counting_repair)
+    monkeypatch.setattr(mesh_router, "_build_repair", counting_repair)
 
     session_id = _upload(client)
     assert _run_clip(client, session_id, {"target": "cranium", "landmarks": landmarks_payload}) == "done"

@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from trimesh.resolvers import ZipResolver
 
+from api import repair_worker
 from craniumpy_core import clipping, cohort, pipeline
 from craniumpy_core.asymmetry import calculate_asymmetry
 from craniumpy_core.craniometrics import frontal_bossing, hc_slice_polygon
@@ -92,6 +93,31 @@ def _pure_align(
         alt_landmarks = np.array([alt_frontal, landmarks[1], landmarks[2]])
         return pipeline.register(mesh, alt_landmarks, target="cranium", com_translation=False, on_progress=on_progress)
     return pipeline.register(mesh, landmarks, target=target, com_translation=False, on_progress=on_progress)
+
+
+def _repair_key(repair_method: str, clip_mode: str | None, landmarks: np.ndarray, alt_frontal: np.ndarray | None) -> tuple:
+    """what a repaired mesh depends on - see Session.repair_cache. no
+    target: the rough crop repair runs on doesn't depend on it."""
+    return (
+        repair_method,
+        clip_mode,
+        tuple(np.asarray(landmarks).flatten().tolist()),
+        tuple(np.asarray(alt_frontal).tolist()) if alt_frontal is not None else None,
+    )
+
+
+def _build_repair(
+    mesh: trimesh.Trimesh,
+    landmarks: np.ndarray,
+    alt_frontal: np.ndarray | None,
+    repair_method: str,
+    clip_mode: str | None,
+) -> trimesh.Trimesh:
+    """the rough landmark-based crop (skipped for a manual clip, whose plane
+    has nothing to do with the landmarks) followed by the repair itself -
+    shared by /clip and the background prefetch /align starts. runs in a
+    worker process, see api/repair_worker.py for why."""
+    return repair_worker.repair(mesh, landmarks, alt_frontal, repair_method, clip_mode)
 
 
 def _resolve_nicp_config(nicp: NicpConfig | None) -> pipeline.NicpTemplateConfig | None:
@@ -258,6 +284,7 @@ async def upload_mesh(files: list[UploadFile]) -> UploadResponse:
     mesh = _load_mesh_from_upload(primary_name, contents_by_name)
 
     session = store.create(mesh, original_filename=primary_name)
+    repair_worker.warm_up()
     return UploadResponse(session_id=session.id, vertex_count=len(mesh.vertices), face_count=len(mesh.faces))
 
 
@@ -274,6 +301,7 @@ def open_mesh_from_paths(request: OpenFromPathsRequest) -> UploadResponse:
 
     primary_path = next(p for p in request.paths if Path(p).name == primary_name)
     session = store.create(mesh, original_filename=primary_name, source_dir=Path(primary_path).parent)
+    repair_worker.warm_up()
     return UploadResponse(session_id=session.id, vertex_count=len(mesh.vertices), face_count=len(mesh.faces))
 
 
@@ -350,6 +378,15 @@ def start_align(session_id: str, request: AlignRequest) -> StatusResponse:
         session.source_alt_frontal_landmark = alt_frontal
 
         session.active_target = request.target
+        session.drop_target_snapshots_from_other_landmarks(landmarks)
+        # the repair "preprocess mesh" will need is already fully determined
+        # by these picks - get it going while the user checks the preview.
+        # same defaults the frontend's /clip always sends (see ClipRequest).
+        prefetch_alt = alt_frontal if request.target == "cranium" else None
+        session.prefetch_repair(
+            _repair_key("pymeshfix", None, landmarks, prefetch_alt),
+            lambda: _build_repair(session.mesh, landmarks, prefetch_alt, "pymeshfix", None),
+        )
         session.report_progress("done", "")
         return None
 
@@ -406,8 +443,8 @@ def start_clip(session_id: str, request: ClipRequest) -> StatusResponse:
     """register + repair + clip + boundary cleanup, no resample, no
     measurement - the fast-ish, re-runnable half of what used to be one
     monolithic /analyze. repeated calls (different plane, different clip
-    mode, toggling alt-frontal) reuse session.repaired_mesh instead of
-    re-running pymeshfix every time - see Session.repaired_mesh and
+    mode, toggling alt-frontal, switching target) reuse a cached repair instead
+    of re-running pymeshfix every time - see Session.repair_cache and
     pipeline.register_and_clip_cranial's docstring. always invalidates
     whatever a previous /clip or /run produced (see
     Session.clear_clip_result), so /run must be called again afterward.
@@ -446,24 +483,13 @@ def start_clip(session_id: str, request: ClipRequest) -> StatusResponse:
         session.source_alt_frontal_landmark = alt_frontal
 
         if request.repair:
-            cache_key = (
-                request.repair_method,
-                request.target,
-                clip_cfg.mode,
-                tuple(landmarks.flatten().tolist()),
-                tuple(alt_frontal.tolist()) if alt_frontal is not None else None,
+            key = _repair_key(request.repair_method, clip_cfg.mode, landmarks, alt_frontal)
+            session.report_progress("repair", f"repairing mesh ({request.repair_method})")
+            repaired = session.cached_repair(
+                key, lambda: _build_repair(session.mesh, landmarks, alt_frontal, request.repair_method, clip_cfg.mode)
             )
-            if session.repaired_mesh is None or session.repaired_mesh_cache_key != cache_key:
-                repair_input = session.mesh
-                if clip_cfg.mode != "manual":
-                    session.report_progress("repair", "computing bounds")
-                    repair_input = pipeline.rough_bounding_clip(session.mesh, landmarks, alt_frontal_landmark=alt_frontal)
-                session.report_progress("repair", f"repairing mesh ({request.repair_method})")
-                session.repaired_mesh = pipeline.repair_mesh(repair_input, method=request.repair_method)
-                session.repaired_mesh_cache_key = cache_key
         else:
-            session.repaired_mesh = session.mesh
-            session.repaired_mesh_cache_key = None
+            repaired = session.mesh
 
         if request.target == "cranium":
             # sellion (mandatory, above) always drives the actual
@@ -472,7 +498,7 @@ def start_clip(session_id: str, request: ClipRequest) -> StatusResponse:
             # pipeline.register_and_clip_cranial's docstring for why
             # these can't be the same knob.
             clip_result = pipeline.register_and_clip_cranial(
-                session.repaired_mesh,
+                repaired,
                 landmarks,
                 alt_frontal_landmark=alt_frontal,
                 com_translation=request.com_translation,
@@ -494,7 +520,7 @@ def start_clip(session_id: str, request: ClipRequest) -> StatusResponse:
             # facial: unaffected by alt_frontal_landmark (cranium-only,
             # see ClipRequest) - single registration, same as always.
             reg = pipeline.register(
-                session.repaired_mesh,
+                repaired,
                 landmarks,
                 target=request.target,
                 com_translation=request.com_translation,
@@ -960,6 +986,27 @@ def get_nicp_result_mesh(session_id: str):
         raise HTTPException(status_code=409, detail="no completed template fit yet -- run /run with nicp first")
     glb_bytes = mesh_to_glb(session.nicp_result_mesh)
     return Response(content=glb_bytes, media_type="model/gltf-binary")
+
+
+@router.post("/{session_id}/freeze-nicp", response_model=UploadResponse)
+def freeze_nicp_result(session_id: str) -> UploadResponse:
+    """copies the finished template fit into a session of its own, for the
+    Longitudinal workspace to hold on to. a staged timepoint used to point
+    straight at the patient session's live nicp_result_mesh, so anything
+    done to that session afterwards - re-running the pipeline (which clears
+    the fit), fitting again, switching it to the other target, closing it
+    for the next upload - silently changed or emptied the timepoint. the
+    copy is template-sized, so holding it costs very little."""
+    session = _get_session(session_id)
+    if session.nicp_result_mesh is None:
+        raise HTTPException(status_code=409, detail="no completed template fit yet -- run /run with nicp first")
+    fitted = session.nicp_result_mesh.copy()
+    frozen = store.create(fitted, original_filename=session.original_filename, source_dir=session.source_dir)
+    frozen.result_mesh = fitted
+    frozen.nicp_result_mesh = fitted
+    frozen.last_nicp_config = session.last_nicp_config
+    frozen.active_target = session.active_target
+    return UploadResponse(session_id=frozen.id, vertex_count=len(fitted.vertices), face_count=len(fitted.faces))
 
 
 @router.get("/{session_id}/mesh/{stage}")

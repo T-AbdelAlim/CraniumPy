@@ -7,6 +7,7 @@ web version.
 """
 
 import json
+import multiprocessing
 import os
 import platform
 import subprocess
@@ -241,4 +242,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    # mesh repair runs in a worker process (api/repair_worker.py) - in the
+    # packaged exe that worker is this same executable started again, and
+    # this is what lets it run the worker instead of opening a second window.
+    multiprocessing.freeze_support()
     main()
