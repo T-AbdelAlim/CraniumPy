@@ -2,7 +2,8 @@
 
 ## Implemented
 * Rigid, landmark-based registration (3 landmarks, plus an optional 4th secondary frontal landmark for the displayed/saved mesh) - picking/clearing the 4th landmark auto-selects the matching shipped template
-* Staged align / adjust-picks / run-pipeline workflow, with re-registration on landmark adjustment
+* Staged align / adjust-picks / run-pipeline workflow, with re-registration on landmark adjustment and a "back to clip step" that keeps the landmarks
+* Mesh repair started in the background on align, shared between targets, and run in a worker process so the app stays responsive
 * Clip preview: after "align", the clip boundary plane and trim spheres are drawn on the aligned mesh for both regions (click a region's boundary disc to select it), with an adjustable/resizable trim sphere confirmed before "run pipeline" - drawn from the same constants the real clip uses, so the preview can't drift from the cut
 * Mesh repair (PyMeshFix) and resampling to a target vertex count
 * Center-of-mass correction (validated, optional)
@@ -18,7 +19,7 @@
 * Reporting: a JSON report (every measurement plus a settings block - target, landmark count, center-of-mass correction, NICP template), a vector PDF report (asymmetry section always last) pairing each measurement with a plain-language explanation, and a per-patient Excel summary (real numeric cells, formatted as an Excel table) - filenames tagged `_cranial`/`_frontal` by target
 * Cohort export (desktop-only): accumulates rows across sessions into a shared Excel file, keyed on source file so a re-export updates rather than duplicates; each distinct file gets a sequential cohort ID, with the patient ID <-> cohort ID mapping kept in a separate, local-only file - a first step on "de-identification helper" below
 * Cohort analysis workspace: a second top-level mode for exploring an accumulated cohort spreadsheet - filtering/stratifying, user-defined derived metrics, real statistical tests (Welch's/Mann-Whitney, ANOVA/Kruskal-Wallis, picked by group count) with explainers and doc links, plots, and a formatted Excel export of any comparison
-* 3D mean shape across NICP-fitted patients sharing the same template: an inter-patient spread heatmap, a signed diff heatmap against a reference template, the same craniometrics/asymmetry/forehead-morphology suite run on the averaged shape, a +/-1 SD spread ribbon (HC ring, metopic contour, sagittal profile) shown live in the 3D viewer or shaded into a mean-shape PDF report, and a named mesh export
+* 3D mean shape across NICP-fitted patients sharing the same template: an inter-patient spread heatmap, a signed diff heatmap against a reference template, the same craniometrics/asymmetry/forehead-morphology suite run on the averaged shape, a +/-1 SD spread ribbon (HC ring, metopic contour, sagittal profile) shown live in the 3D viewer, and a named mesh export
 * Results saving: local folder (desktop app) or zip download (web app), with a JSON report and 2D measurement/asymmetry/forehead-morphology figures
 * Textured mesh support (.obj + .mtl + texture), with wireframe/texture toggles
 * Cross-platform: web app + standalone desktop app (Windows .exe, macOS .app)
