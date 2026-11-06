@@ -17,8 +17,8 @@ import * as THREE from "three";
 // piece of the preview the user can actually move and resize (see
 // setClipPreviewSphere), which only makes sense for the active region.
 
-const SELECTED_COLOR = 0xd1453d; // --hc, the same red the app uses elsewhere
-const UNSELECTED_COLOR = 0x8a949f;
+const SELECTED_COLOR = 0x86d2ee; // Erasmus MC light blue
+const UNSELECTED_COLOR = 0x7684b0;
 
 // the boundary plane is the region's actual edge, so it gets real presence;
 // the trim sphere only strips stray scan junk and stays faint. all of it

@@ -11,7 +11,7 @@ import * as THREE from "three";
 // default palette - overridable per call (see addFrontalBossingOverlay's
 // colors param) so the Longitudinal workspace can draw two timepoints'
 // profiles in two distinct, legend-matched palettes in the same viewer.
-const DEFAULT_FRONTAL_BOSSING_COLORS = { profile: 0x999999, angle: 0xea580c, reference: 0xb0b0b0 };
+const DEFAULT_FRONTAL_BOSSING_COLORS = { profile: 0xb6c3e2, angle: 0x86d2ee, reference: 0x7684b0 };
 
 function toVec3(p) {
   return new THREE.Vector3(p.x, p.y, p.z);

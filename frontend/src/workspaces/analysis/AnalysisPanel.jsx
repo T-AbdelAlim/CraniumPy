@@ -47,8 +47,8 @@ function metopicChartData(metopic) {
     kappaIdeal: clip(kappaIdealFull),
     bands: [
       { x0: metopic.central_window[0], x1: metopic.central_window[1], color: "#d1453d" },
-      { x0: metopic.left_temporal_window[0], x1: metopic.left_temporal_window[1], color: "#0891b2" },
-      { x0: metopic.right_temporal_window[0], x1: metopic.right_temporal_window[1], color: "#0891b2" },
+      { x0: metopic.left_temporal_window[0], x1: metopic.left_temporal_window[1], color: "#86d2ee" },
+      { x0: metopic.right_temporal_window[0], x1: metopic.right_temporal_window[1], color: "#86d2ee" },
     ],
   };
 }
@@ -176,7 +176,7 @@ export default function AnalysisPanel({
       {showFrontalBossing && (
         <>
           <p className="hint">
-            frontal bossing - sellion to forehead-point angle (orange), drawn live on the mesh.
+            frontal bossing - sellion to forehead-point angle (light blue), drawn live on the mesh.
           </p>
           <table className="measurements-table">
             <tbody>
@@ -234,7 +234,7 @@ export default function AnalysisPanel({
         <>
           <p className="hint">
             forehead contour at the HC slice height - fitted parabola (blue), central ridge (red), temporal regions
-            (teal), frontal angle construction (green) drawn live on the mesh.
+            (light blue), frontal angle construction (green) drawn live on the mesh.
           </p>
           <table className="measurements-table">
             <tbody>

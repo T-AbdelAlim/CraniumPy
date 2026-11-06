@@ -16,7 +16,7 @@ const MEAN_SHAPE_EXPLAINER =
 const SPREAD_EXPLAINER =
   "per-vertex mean distance (mm) from that vertex's own average position, across the patients in this group - " +
   "how much a given point on the surface varies from patient to patient. this is INTER-PATIENT shape spread " +
-  "(always positive, teal scale) - not a per-patient asymmetry measure, and not a direction (compare the " +
+  "(always positive, white to blue) - not a per-patient asymmetry measure, and not a direction (compare the " +
   "reference-diff view below, or the Analysis workspace's own asymmetry heatmap).";
 
 const REFERENCE_EXPLAINER =
@@ -34,9 +34,9 @@ const MEASUREMENTS_EXPLAINER =
   "describe the AVERAGE shape, not any real patient - see the Stratify tab for the group's own scalar spread.";
 
 const SPREAD_BAND_OVERLAY_EXPLAINER =
-  "shows the same +/-1 SD ribbon(s) the PDF report can shade, live on the mesh here: the sagittal/frontal-bossing " +
-  "band always (orange), plus the HC-ring band (red, cranium groups) or the metopic band (dark gray, face groups) " +
-  "- same underlying data as the report, just rendered as a real 3D ribbon instead of a page in a PDF.";
+  "shows the +/-1 SD ribbon(s) live on the mesh: the sagittal/frontal-bossing band always (light blue), plus the " +
+  "HC-ring band (red, cranium groups) or the metopic band (dark gray, face groups) - how much each of those " +
+  "contours varies patient to patient across the group.";
 
 // colors for the live 3D spread-band ribbons, matching the shading colors
 // the PDF report already uses for the same bands (see results_bundle.py's
@@ -47,7 +47,7 @@ const SPREAD_BAND_OVERLAY_EXPLAINER =
 // render (they never do - one applies to cranium groups, the other to face).
 const HC_RING_BAND_COLOR = 0xd1453d;
 const METOPIC_BAND_COLOR = 0x3a3a3a;
-const SAGITTAL_BAND_COLOR = 0xea580c;
+const SAGITTAL_BAND_COLOR = 0x86d2ee;
 
 // groups rows by nicp_template, keeping only rows with a real nicp_mesh_path
 // (see api/results_bundle.py's _nicp_mesh_path - blank when no NICP fit was

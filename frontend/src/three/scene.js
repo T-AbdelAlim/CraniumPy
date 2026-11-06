@@ -6,7 +6,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 // lifecycle (mount effect, animation loop, resize, cleanup).
 export function createScene(canvas) {
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x14161a);
+  scene.background = new THREE.Color(0x0a1233);
 
   const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 5000);
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -17,7 +17,7 @@ export function createScene(canvas) {
   // strong one - a single directional light was crushing whichever side
   // faced away from it into near-black, which made it hard to see the mesh
   // well enough to place landmarks accurately on that side.
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x2a2e37, 1.3));
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x23316b, 1.3));
   const keyLight = new THREE.DirectionalLight(0xffffff, 0.55);
   keyLight.position.set(1, 1, 1);
   scene.add(keyLight);

@@ -18,7 +18,7 @@ import { addClipPreview, removeClipPreview, setClipPreviewSphere } from "../thre
 // deforming-template color during a live NICP fit - matches the --hc red
 // token already used elsewhere in this app, so "moving/deforming" reads as
 // a consistent color across the UI rather than introducing a new one.
-const NICP_DEFORM_COLOR = 0xd1453d;
+const NICP_DEFORM_COLOR = 0x1f8fc7;
 // same beige plainMaterial() (three/meshDisplay.js) uses - the target/
 // patient mesh's node dots use this regardless of whatever material the
 // mesh actually has on (plain, textured, vertex-colored) - this is a

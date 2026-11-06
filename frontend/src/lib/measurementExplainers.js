@@ -53,7 +53,7 @@ export const GRAPH_EXPLAINERS = {
   curvature:
     "How sharply the contour bends at each point (solid line, positive = bulging outward), against the ideal " +
     "parabola's own curvature there (dashed line). A spike inside the red (ridge) shading, above the dashed " +
-    "line, is a localized ridge; a rise inside the teal (temple) shading is a hollow flattening back out. " +
+    "line, is a localized ridge; a rise inside the light blue (temple) shading is a hollow flattening back out. " +
     "The plain, unshaded stretches at the very left/right ends aren't part of any measured window - a sharp " +
     "spike only out there is almost always the mesh's own clip-boundary edge, not a real anatomical feature.",
   deviation:

@@ -56,24 +56,24 @@ export const ALL_TREND_METRICS = TREND_METRIC_GROUPS.flatMap((g) => g.metrics);
 const TREND_METRIC_COLOR_PALETTE = [
   "#16a34a", // --ofd - depth_mm
   "#2563eb", // --bpd - breadth_mm
-  "#7c3aed", // cephalic_index
+  "#86d2ee", // cephalic_index
   "#d1453d", // --hc - circumference_cm
-  "#ea580c", // mesh_volume_cc
-  "#0891b2", // frontal_bossing angle
-  "#c026d3", // asymmetry index
-  "#0d9488", // metopic frontal angle
-  "#f59e0b", // forehead width
-  "#4ade80", // midline curvature concentration
-  "#a855f7", // midline max curvature
-  "#dc2626", // ridge protrusion
-  "#0e7490", // ridge area
-  "#65a30d", // ridge area normalized
-  "#e11d48", // left temporal hollowing
-  "#1d4ed8", // right temporal hollowing
-  "#9333ea", // mean temporal hollowing
-  "#b45309", // left max temporal depth
-  "#0369a1", // right max temporal depth
-  "#be185d", // parabolic deviation index
+  "#1f8fc7", // mesh_volume_cc
+  "#e1f4fc", // frontal_bossing angle
+  "#5b75d6", // asymmetry index
+  "#b8c2e8", // metopic frontal angle
+  "#4fb6dd", // forehead width
+  "#9aa7d6", // midline curvature concentration
+  "#2a7fb0", // midline max curvature
+  "#c9ecf8", // ridge protrusion
+  "#3d58c4", // ridge area
+  "#a7dcf2", // ridge area normalized
+  "#7684b0", // left temporal hollowing
+  "#5fc1e6", // right temporal hollowing
+  "#d4dbf2", // mean temporal hollowing
+  "#1a6a96", // left max temporal depth
+  "#8fa0e0", // right max temporal depth
+  "#bfe6f6", // parabolic deviation index
 ];
 
 export function trendMetricColor(metricId) {

@@ -1,7 +1,8 @@
 // distinct, readable-on-dark colors for up to 8 stratify groups - cycles if
 // there are more (no attempt at a "nice" categorical palette beyond that,
 // this cohort workspace isn't trying to be a full charting library).
-const PALETTE = ["#2f6fed", "#d1453d", "#178c83", "#e0a52c", "#7c5ce7", "#22a6a1", "#f28c45", "#8b5cf6"];
+// Erasmus MC blues: light blue, accent, pale, and tints/shades of the navy
+const PALETTE = ["#86d2ee", "#1f8fc7", "#e1f4fc", "#5b75d6", "#b8c2e8", "#4fb6dd", "#9aa7d6", "#7684b0"];
 
 // dependency-free inline-SVG scatter plot - points is [{x, y, group}], group
 // optional (falls back to a single un-colored series when the caller didn't
