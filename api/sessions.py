@@ -27,6 +27,9 @@ import trimesh
 JobStatus = Literal["idle", "running", "done", "error"]
 
 _executor = ThreadPoolExecutor(max_workers=2)
+# background mesh repairs started by /align (see Session.prefetch_repair) -
+# one at a time, so a prefetch never competes with another for the CPU.
+_repair_executor = ThreadPoolExecutor(max_workers=1)
 
 # every Session field whose value describes "the align/clip/run pipeline for
 # THIS target", as opposed to the raw uploaded mesh itself - swapped out
@@ -38,8 +41,6 @@ _executor = ThreadPoolExecutor(max_workers=2)
 # (report_progress always reassigns a fresh one - see below), so sharing this
 # one default object across resets is safe.
 _TARGET_SCOPED_DEFAULTS: dict[str, Any] = {
-    "repaired_mesh": None,
-    "repaired_mesh_cache_key": None,
     "sellion_registered_mesh": None,
     "sellion_registered_landmarks": None,
     "registered_mesh": None,
@@ -81,10 +82,17 @@ class Session:
     # tweak. what actually gets repaired is a rough, landmark-based pre-clip
     # of the raw mesh now (see pipeline.rough_bounding_clip), not the raw
     # mesh itself, so the cache key has to cover the landmarks/alt-frontal/
-    # target/clip-mode that crop depends on too, not just repair_method -
-    # rebuilt whenever repaired_mesh_cache_key no longer matches.
-    repaired_mesh: trimesh.Trimesh | None = None
-    repaired_mesh_cache_key: tuple | None = None
+    # clip-mode that crop depends on too, not just repair_method. the crop
+    # doesn't depend on the target, so neither does this: it lives on the
+    # session rather than in the per-target state, and switching from the
+    # face to the cranium with the same picks reuses the same repair
+    # instead of running pymeshfix a second time. keyed by repair_cache_key
+    # below, holding the last couple of keys used (cranium with and without
+    # a 4th landmark, say).
+    repair_cache: dict[tuple, trimesh.Trimesh] = field(default_factory=dict)
+    # repairs started ahead of time by /align (see prefetch_repair), by key
+    _repair_pending: dict[tuple, Future] = field(default_factory=dict, repr=False)
+    _repair_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     # set first by /align (raw mesh, no repair/CoM), then overwritten by
     # /clip with the repaired + (optionally) CoM-nudged version it actually
@@ -240,6 +248,59 @@ class Session:
                 setattr(self, name, default)
         self.nicp_preview_mesh = None
         return snapshot is not None
+
+    def prefetch_repair(self, key: tuple, build: Callable[[], trimesh.Trimesh]) -> None:
+        """starts building the repair for `key` in the background, so that
+        by the time the clip asks for it (cached_repair) it's usually done.
+        /align calls this: everything the repair depends on is fixed the
+        moment the picks are aligned, and the user spends a while looking
+        at the clip preview before committing - time pymeshfix can use. a
+        no-op if that key is already cached or on its way."""
+        with self._repair_lock:
+            if key in self.repair_cache or key in self._repair_pending:
+                return
+            self._repair_pending[key] = _repair_executor.submit(build)
+
+    def cached_repair(self, key: tuple, build: Callable[[], trimesh.Trimesh]) -> trimesh.Trimesh:
+        """the repaired mesh for `key` - from the cache, from a background
+        prefetch (waiting for it to finish), or built here with `build`.
+        keeps the two most recent keys - enough for going back and forth
+        between targets or toggling the 4th landmark, without holding a
+        full-resolution mesh per landmark adjustment."""
+        with self._repair_lock:
+            mesh = self.repair_cache.pop(key, None)
+            pending = self._repair_pending.pop(key, None)
+        if mesh is None and pending is not None:
+            # still queued behind an older prefetch: not worth the wait,
+            # build it right here instead.
+            if pending.cancel():
+                pending = None
+            else:
+                try:
+                    mesh = pending.result()
+                except Exception:  # noqa: BLE001 - a failed prefetch just means building it here, which reports its own error
+                    mesh = None
+        if mesh is None:
+            mesh = build()
+        with self._repair_lock:
+            self.repair_cache[key] = mesh
+            while len(self.repair_cache) > 2:
+                self.repair_cache.pop(next(iter(self.repair_cache)))
+        return mesh
+
+    def drop_target_snapshots_from_other_landmarks(self, landmarks: np.ndarray) -> None:
+        """forgets the other target's saved scene once the landmarks have
+        moved - it was built from the old picks, and restoring it later
+        would show (and export) a registration that no longer matches the
+        landmarks on screen. called by /align, the one place new picks take
+        effect. a scene built from the same picks is kept, which is what
+        lets switching target and back restore it instantly."""
+        for target, snapshot in list(self.target_snapshots.items()):
+            if target == self.active_target:
+                continue
+            previous = snapshot.get("source_landmarks")
+            if previous is None or np.shape(previous) != np.shape(landmarks) or not np.allclose(previous, landmarks):
+                del self.target_snapshots[target]
 
     def switch_active_target(self, new_target: str) -> bool:
         """the one place a target switch actually happens: snapshots
