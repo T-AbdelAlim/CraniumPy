@@ -99,6 +99,23 @@ def keep_largest_component(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
     return max(components, key=lambda c: len(c.faces))
 
 
+def keep_component_at(mesh: trimesh.Trimesh, point) -> trimesh.Trimesh:
+    """keeps the connected component closest to `point` (the largest of them
+    if several touch it), drops the rest. for a clip that should keep a
+    known anatomical region - the face, around sellion - where "largest"
+    isn't a safe stand-in: on a scan with a lot of chest or shoulder in front
+    of the body, the facial clip's cuts can separate the face from a chest
+    region that's bigger than the face itself."""
+    components = mesh.split(only_watertight=False)
+    if len(components) <= 1:
+        return mesh
+    point = np.asarray(point, dtype=np.float64).reshape(1, 3)
+    distances = [float(np.min(np.linalg.norm(np.asarray(c.vertices) - point, axis=1))) for c in components]
+    nearest = min(distances)
+    candidates = [c for c, d in zip(components, distances) if d <= nearest + 1.0]
+    return max(candidates, key=lambda c: len(c.faces))
+
+
 def _face_aspect_ratios(mesh: trimesh.Trimesh) -> np.ndarray:
     """longest-edge-squared over area, normalized so an equilateral triangle
     scores 1.0 - the standard triangle quality metric. climbs fast for thin
@@ -223,6 +240,82 @@ def _relax_boundary_loops_once(mesh: trimesh.Trimesh, factor: float) -> trimesh.
     return mesh
 
 
+def _loops_from_edges(edges: np.ndarray, boundary_group: np.ndarray) -> list[np.ndarray]:
+    """_boundary_loops on plain arrays - the same chain walk, fed the
+    already-found boundary edges instead of a mesh."""
+    if len(boundary_group) == 0:
+        return []
+    next_vertex = dict(edges[boundary_group].tolist())
+    loops = []
+    visited: set[int] = set()
+    for start in next_vertex:
+        if start in visited:
+            continue
+        loop = [start]
+        visited.add(start)
+        cur = next_vertex.get(start)
+        closed = False
+        while cur is not None:
+            if cur == start:
+                closed = True
+                break
+            if cur in visited:
+                break
+            loop.append(cur)
+            visited.add(cur)
+            cur = next_vertex.get(cur)
+        if closed and len(loop) >= 4:
+            loops.append(np.array(loop, dtype=np.int64))
+    return loops
+
+
+def _aspect_ratios(vertices: np.ndarray, faces: np.ndarray) -> np.ndarray:
+    v = vertices[faces]
+    a = np.linalg.norm(v[:, 0] - v[:, 1], axis=1)
+    b = np.linalg.norm(v[:, 1] - v[:, 2], axis=1)
+    c = np.linalg.norm(v[:, 2] - v[:, 0], axis=1)
+    s = (a + b + c) / 2
+    area = np.sqrt(np.maximum(s * (s - a) * (s - b) * (s - c), 1e-12))
+    longest = np.maximum(np.maximum(a, b), c)
+    return (longest**2) / (4 * np.sqrt(3) * np.maximum(area, 1e-12))
+
+
+def _edge_groups(faces: np.ndarray, n_vertices: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """one sort of the face edges, giving what group_rows(edges_sorted, 1)
+    and group_rows(edges_sorted, 2) would: the open-boundary edges (used by
+    one face) and the interior edge pairs (used by exactly two). each edge
+    is keyed on (larger, smaller) vertex index, the order trimesh's own row
+    hash sorts in, so the boundary edges come out in the same order - that
+    order decides which loop a pinch vertex is walked into."""
+    edges = faces[:, [0, 1, 1, 2, 2, 0]].reshape(-1, 2)
+    lo = np.minimum(edges[:, 0], edges[:, 1])
+    hi = np.maximum(edges[:, 0], edges[:, 1])
+    keys = hi * np.int64(n_vertices) + lo
+    order = np.argsort(keys, kind="stable")
+    sorted_keys = keys[order]
+    starts = np.flatnonzero(np.r_[True, sorted_keys[1:] != sorted_keys[:-1]])
+    counts = np.diff(np.r_[starts, len(keys)])
+    boundary = order[starts[counts == 1]]
+    pair_starts = starts[counts == 2]
+    pairs = np.stack([order[pair_starts], order[pair_starts + 1]], axis=1)
+    return edges, boundary, pairs
+
+
+def _single_component(n_faces: int, pairs: np.ndarray) -> bool:
+    """whether every face is reachable from every other through a shared
+    edge - the same face adjacency trimesh's split() walks (an edge used by
+    exactly two faces), just without building any meshes to find out."""
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+
+    if len(pairs) == 0:
+        return n_faces <= 1
+    adjacency = pairs // 3
+    graph = coo_matrix((np.ones(len(adjacency)), (adjacency[:, 0], adjacency[:, 1])), shape=(n_faces, n_faces))
+    count, _ = connected_components(graph, directed=False)
+    return count == 1
+
+
 def clean_boundary(
     mesh: trimesh.Trimesh, rounds: int = 30, max_aspect_ratio: float = 3.0, smooth_factor: float = 0.5
 ) -> trimesh.Trimesh:
@@ -248,13 +341,52 @@ def clean_boundary(
     a sliver (retreating the loop by one vertex right there instead of
     letting the next step smooth an already-collapsing triangle), repeat.
     converges to a boundary of close-to-equilateral triangles after a few
-    dozen rounds, dropping a small fraction of the mesh's faces total."""
+    dozen rounds, dropping a small fraction of the mesh's faces total.
+
+    each round is exactly _relax_boundary_loops_once followed by one
+    trim_boundary_slivers pass, but run on plain vertex/face arrays: the
+    mesh-object version rebuilt every trimesh cache (and split the mesh
+    into components) several times a round, which made this the slowest
+    part of a clip. the boundary edges are found once a round and shared
+    by the relax and the trim (relaxing moves vertices, not connectivity),
+    vertices are renumbered the same way submesh() does it, and the rare
+    trim that actually breaks the mesh apart is handed to
+    keep_largest_component itself, so the result is the same mesh."""
+    vertices = np.array(mesh.vertices, dtype=np.float64)
+    faces = np.array(mesh.faces, dtype=np.int64)
+    groups = None
     for _ in range(rounds):
-        if not _boundary_loops(mesh):
+        edges, boundary_group, _pairs = groups or _edge_groups(faces, len(vertices))
+        groups = None
+        loops = _loops_from_edges(edges, boundary_group)
+        if not loops:
             break
-        mesh = _relax_boundary_loops_once(mesh, smooth_factor)
-        mesh = trim_boundary_slivers(mesh, max_aspect_ratio=max_aspect_ratio, max_passes=1)
-    return mesh
+
+        for loop in loops:
+            n = len(loop)
+            idx = np.arange(n)
+            midpoint = (vertices[loop[(idx - 1) % n]] + vertices[loop[(idx + 1) % n]]) / 2
+            vertices[loop] = vertices[loop] + smooth_factor * (midpoint - vertices[loop])
+
+        # only faces on the open boundary can be dropped, so only theirs
+        # are measured.
+        boundary_faces = np.unique(boundary_group // 3)
+        drop = np.zeros(len(faces), dtype=bool)
+        drop[boundary_faces[_aspect_ratios(vertices, faces[boundary_faces]) > max_aspect_ratio]] = True
+        if not drop.any():
+            continue
+
+        faces = faces[~drop]
+        used, inverse = np.unique(faces.reshape(-1), return_inverse=True)
+        vertices = vertices[used]
+        faces = inverse.reshape(-1, 3)
+        groups = _edge_groups(faces, len(vertices))
+        if not _single_component(len(faces), groups[2]):
+            kept = keep_largest_component(trimesh.Trimesh(vertices=vertices, faces=faces, process=False))
+            vertices = np.array(kept.vertices, dtype=np.float64)
+            faces = np.array(kept.faces, dtype=np.int64)
+            groups = None
+    return trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
 
 
 def resample_mesh(mesh: trimesh.Trimesh, n_vertices: int, method: ResampleMethod = "quadric") -> trimesh.Trimesh:

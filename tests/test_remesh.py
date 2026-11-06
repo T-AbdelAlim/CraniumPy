@@ -54,8 +54,10 @@ import trimesh
 from PIL import Image
 
 from craniumpy_core.io import load_mesh
+from craniumpy_core.clipping import cranial_clip
 from craniumpy_core.remesh import (
     _boundary_face_mask,
+    _boundary_loops,
     _face_aspect_ratios,
     _relax_boundary_loops_once,
     clean_boundary,
@@ -67,6 +69,8 @@ from craniumpy_core.remesh import (
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TEST_MESH_PATH = REPO_ROOT / "tests" / "fixtures" / "test_mesh.ply"
+# the same picks tests/test_clipping.py clips this mesh with
+CLIP_LANDMARKS = np.array([[0.0, -30.0, 90.0], [55.0, -30.0, 0.0], [-55.0, -30.0, 0.0]])
 
 
 def test_repair_mesh_pymeshfix_reaches_watertight():
@@ -292,3 +296,41 @@ def test_clean_boundary_noop_when_no_open_boundary():
     cleaned = clean_boundary(mesh)
     assert len(cleaned.vertices) == len(mesh.vertices)
     assert len(cleaned.faces) == len(mesh.faces)
+
+
+def _clean_boundary_mesh_by_mesh(mesh, rounds=30, max_aspect_ratio=3.0, smooth_factor=0.5):
+    # clean_boundary as it was first written, one trimesh round trip per
+    # step - the array-based version has to produce exactly this.
+    for _ in range(rounds):
+        if not _boundary_loops(mesh):
+            break
+        mesh = _relax_boundary_loops_once(mesh, smooth_factor)
+        mesh = trim_boundary_slivers(mesh, max_aspect_ratio=max_aspect_ratio, max_passes=1)
+    return mesh
+
+
+def test_clean_boundary_matches_the_mesh_by_mesh_version_exactly():
+    cases = [
+        _near_tangent_single_loop_clip(),
+        _near_tangent_single_loop_clip(subdivisions=4, fraction=0.97),
+        _shallow_angle_clip(),  # fragmented - exercises the split fallback
+        keep_largest_component(cranial_clip(load_mesh(TEST_MESH_PATH), CLIP_LANDMARKS)),
+    ]
+    for mesh in cases:
+        expected = _clean_boundary_mesh_by_mesh(mesh)
+        actual = clean_boundary(mesh)
+        assert np.array_equal(np.asarray(actual.faces), np.asarray(expected.faces))
+        assert np.array_equal(np.asarray(actual.vertices), np.asarray(expected.vertices))
+
+
+def test_keep_component_at_keeps_the_piece_at_the_point_not_the_biggest():
+    from craniumpy_core.remesh import keep_component_at
+
+    small = trimesh.creation.icosphere(subdivisions=2, radius=10.0)
+    big = trimesh.creation.icosphere(subdivisions=4, radius=30.0)
+    big.apply_translation([0, -100, 0])
+    mesh = trimesh.util.concatenate([small, big])
+
+    kept = keep_component_at(mesh, [0, 10, 0])
+    assert len(kept.faces) == len(small.faces)
+    assert keep_component_at(big, [0, 0, 0]) is big  # single component: untouched

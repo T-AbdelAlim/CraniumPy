@@ -24,7 +24,7 @@ from typing import Callable
 import numpy as np
 import trimesh
 from scipy import sparse
-from scipy.sparse.linalg import spsolve
+from scipy.sparse.linalg import splu, spsolve
 from scipy.spatial import cKDTree
 
 DEFAULT_ALPHAS = np.linspace(200, 1, 20)
@@ -92,6 +92,21 @@ def _build_data_term(src_v: np.ndarray) -> sparse.csr_matrix:
     cols = np.arange(n * 4)
     vals = np.hstack([src_v, np.ones((n, 1))]).ravel()
     return sparse.csr_matrix((vals, (rows, cols)), shape=(n, n * 4))
+
+
+def _factorize_spd(matrix: sparse.csc_matrix) -> Callable[[np.ndarray], np.ndarray]:
+    """a reusable solver for the symmetric positive (semi)definite normal
+    equations. SuperLU told the matrix is symmetric (a symmetric ordering,
+    no off-diagonal pivoting) factors it about twice as fast as spsolve's
+    general-matrix defaults and solves it to the same ~1e-9 - there's no
+    sparse Cholesky in scipy, this is the closest thing to one. a
+    numerically singular system (every correspondence rejected at once)
+    falls back to plain spsolve, which is what this always used."""
+    try:
+        lu = splu(matrix, permc_spec="MMD_AT_PLUS_A", diag_pivot_thresh=0.0, options={"SymmetricMode": True})
+    except RuntimeError:
+        return lambda rhs: spsolve(matrix, rhs)
+    return lu.solve
 
 
 def nicp(
@@ -165,13 +180,14 @@ def nicp(
     if tree_boundary is None:
         is_source_boundary[:] = False
 
-    for step, alpha in enumerate(alphas):
-        # alpha is fixed for every inner iteration at this stiffness
-        # level - hoisted out of the inner loop so the (cheap, but not
-        # free) sparse scalar-multiply happens once per outer step
-        # instead of once per correspondence/solve pass.
-        alpha_kron_MG = alpha * kron_MG
+    # the stiffness half of A^T A only ever changes by the alpha^2 factor,
+    # so its product is formed once here instead of once per solve.
+    stiffness_gram = (kron_MG.T @ kron_MG).tocsc()
+    data_gram_cache: tuple[np.ndarray, sparse.csc_matrix] | None = None
+    factor = None
+    factor_key: tuple[float, bytes] | None = None
 
+    for step, alpha in enumerate(alphas):
         for _ in range(inner_iters):
             transformed = D @ X
 
@@ -194,18 +210,25 @@ def nicp(
             W = sparse.diags(w)
             WD = W @ D
 
-            A = sparse.vstack([alpha_kron_MG, WD]).tocsr()
-
-            # normal equations (A^T A) X = A^T B - what CHOLMOD's
-            # cholesky_AAt did, here via a plain sparse LU solve instead.
-            # B is [zeros(4m, 3); w[:,None]*matches] (the stiffness rows
-            # always target zero), so A^T @ B reduces exactly to
-            # WD.T @ (w[:,None]*matches) - computing it directly instead
-            # of the full A^T @ B skips ever multiplying against that
-            # always-zero stiffness block.
-            AtA = (A.T @ A).tocsc()
+            # normal equations (A^T A) X = A^T B, A = [alpha*K; W D] - what
+            # CHOLMOD's cholesky_AAt did. with W a 0/1 diagonal, A^T A is
+            # alpha^2 K^T K + D^T W D. B is [zeros(4m, 3); w[:,None]*matches]
+            # (the stiffness rows always target zero), so A^T @ B reduces
+            # exactly to WD.T @ (w[:,None]*matches).
             AtB = WD.T @ (w[:, None] * matches)
-            X = spsolve(AtA, AtB)
+
+            # the matrix only depends on alpha and which correspondences
+            # survived the distance cut - once the fit settles, the inner
+            # iterations at one stiffness level keep the same set, so the
+            # factorization is reused and only the right-hand side changes.
+            key = (float(alpha), np.packbits(w.astype(bool)).tobytes())
+            if factor is None or key != factor_key:
+                if data_gram_cache is None or not np.array_equal(data_gram_cache[0], w):
+                    data_gram_cache = (w, (WD.T @ WD).tocsc())
+                AtA = (alpha * alpha * stiffness_gram + data_gram_cache[1]).tocsc()
+                factor = _factorize_spd(AtA)
+                factor_key = key
+            X = factor(AtB)
             if X.ndim == 1:
                 X = X.reshape(-1, 3)
 

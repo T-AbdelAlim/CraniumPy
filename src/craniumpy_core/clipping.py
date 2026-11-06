@@ -37,7 +37,7 @@ import numpy as np
 import trimesh
 from trimesh.intersections import slice_mesh_plane
 
-from .remesh import clean_boundary, keep_largest_component
+from .remesh import clean_boundary, keep_component_at, keep_largest_component
 
 # the fixed numbers cranial_clip/facial_clip cut with, named here rather than
 # written inline at the call sites so clip_preview_geometry below reports
@@ -200,7 +200,9 @@ def facial_clip(
         FACIAL_TRIM_SPHERE_CENTER, inter_tragus * FACIAL_TRIM_SPHERE_RADIUS_FACTOR, sphere_center_offset, sphere_radius
     )
     mesh = clip_sphere(mesh, center=center, radius=radius, keep_inside=True)
-    mesh = keep_largest_component(mesh)
+    # the face is the piece the sellion sits on - not necessarily the
+    # biggest one (see remesh.keep_component_at)
+    mesh = keep_component_at(mesh, landmarks[0])
     return clean_boundary(mesh)
 
 
