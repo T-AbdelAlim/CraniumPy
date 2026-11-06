@@ -19,7 +19,9 @@ export default function OverviewTab({ rows, columns }) {
       <div className="cohort-ws-stat-row">
         <div className="cohort-ws-stat">
           <span className="cohort-ws-stat-value">{rows.length}</span>
-          <span className="cohort-ws-stat-label">patients</span>
+          {/* one row per exported scan - a patient with a pre- and a
+              post-op image is two rows */}
+          <span className="cohort-ws-stat-label">scans</span>
         </div>
         <div className="cohort-ws-stat">
           <span className="cohort-ws-stat-value">{columns.length}</span>

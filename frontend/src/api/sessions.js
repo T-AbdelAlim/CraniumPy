@@ -309,6 +309,16 @@ export function nicpPreviewMeshUrl(sessionId) {
 // the finished template-topology mesh from the last completed "fit
 // template" - what the viewer switches to once a fit finishes, see
 // App.jsx's handleFitTemplate.
+// copies the finished template fit into a session of its own, for staging
+// into Longitudinal - see api/routers/mesh.py's freeze_nicp_result for why
+// a staged timepoint can't just point at the live patient session.
+export async function freezeNicpResult(sessionId) {
+  const response = await fetch(`/api/sessions/${sessionId}/freeze-nicp`, { method: "POST" });
+  if (!response.ok) throw new Error(await response.text());
+  const data = await response.json();
+  return { sessionId: data.session_id };
+}
+
 export function nicpResultMeshUrl(sessionId) {
   return `/api/sessions/${sessionId}/mesh/nicp-result`;
 }

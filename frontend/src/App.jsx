@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import Shell from "./components/shell/Shell.jsx";
 import Viewer from "./components/Viewer.jsx";
 import UploadPanel from "./workspaces/data/UploadPanel.jsx";
@@ -8,11 +8,7 @@ import AnalysisPanel from "./workspaces/analysis/AnalysisPanel.jsx";
 import PatientMetadataForm from "./components/PatientMetadataForm.jsx";
 import ConfirmDialog from "./components/ConfirmDialog.jsx";
 import StagedWorkspaceDialog from "./components/StagedWorkspaceDialog.jsx";
-import CohortWorkspace from "./workspaces/cohort/CohortWorkspace.jsx";
-import LongitudinalWorkspace from "./workspaces/longitudinal/LongitudinalWorkspace.jsx";
 import { mergeStagedMeshesIntoSlots } from "./workspaces/longitudinal/lib/slots.js";
-import FacialWorkspace from "./workspaces/facial/FacialWorkspace.jsx";
-import MeanShapeWorkspace from "./workspaces/meanshape/MeanShapeWorkspace.jsx";
 import { listCohortPatients } from "./api/cohort.js";
 import {
   meshUrl,
@@ -22,6 +18,7 @@ import {
   pollStatus,
   getRegisteredTransform,
   getClipPreview,
+  freezeNicpResult,
   fetchShippedTemplates,
   templateMeshUrl,
   customTemplateMeshUrl,
@@ -44,6 +41,18 @@ import { applyTransform, applyInverseTransform } from "./lib/transform.js";
 import { defaultTemplateForTarget, templateChoiceStorageKey, customTemplatePathStorageKey } from "./lib/templates.js";
 import { isDesktopApp, pickFileNative, pickFolderNative, pickExcelFileNative, waitForNativeDropPaths, openFolderNative } from "./lib/desktop.js";
 import { hasMeshFile, hasTextureFile, primaryMeshFile } from "./lib/meshFiles.js";
+
+// the four workspaces beyond a single patient load on first visit rather
+// than up front - most sessions never open some of them, and the initial
+// bundle is what a slow machine waits on before anything shows.
+const CohortWorkspace = lazy(() => import("./workspaces/cohort/CohortWorkspace.jsx"));
+const LongitudinalWorkspace = lazy(() => import("./workspaces/longitudinal/LongitudinalWorkspace.jsx"));
+const FacialWorkspace = lazy(() => import("./workspaces/facial/FacialWorkspace.jsx"));
+const MeanShapeWorkspace = lazy(() => import("./workspaces/meanshape/MeanShapeWorkspace.jsx"));
+
+function LazyWorkspace({ children }) {
+  return <Suspense fallback={<p className="hint">Loading...</p>}>{children}</Suspense>;
+}
 
 const WORKSPACES = [
   { id: "data", label: "Data" },
@@ -276,7 +285,9 @@ function App() {
     if (!isSessionHeldElsewhere(id)) closeSession(id);
   }
 
-  function handleStageForLongitudinal(timepoint) {
+  async function handleStageForLongitudinal(timepoint) {
+    // a frozen copy, not this live session - see /freeze-nicp
+    const { sessionId: frozenSessionId } = await freezeNicpResult(sessionId);
     // re-staging an already-staged timepoint replaces it rather than
     // appending a second entry - without this, staging t1 twice inflated
     // stagedLongitudinalMeshes.length (shown directly as the
@@ -287,7 +298,7 @@ function App() {
     setStagedLongitudinalMeshes((prev) => [
       ...prev.filter((m) => m.timepoint !== timepoint),
       {
-        sessionId,
+        sessionId: frozenSessionId,
         target,
         stage: "nicp_result",
         timepoint,
@@ -445,10 +456,18 @@ function App() {
     );
     displayedMeshKeyRef.current = meshDisplayKey(sessionId, target, descriptor);
     setMeshRevision((n) => n + 1);
+    // the meshRevision bump re-fetches a real run's results, which redraws
+    // the Analysis overlays on this new Viewer - "skip preprocessing"
+    // results aren't re-fetched, so they get the same nudge by hand.
+    if (skipPreprocessingMode) setAnalysisResults((r) => (r ? { ...r } : r));
   }
 
   const [target, setTarget] = useState("cranium");
   const [useAltFrontal, setUseAltFrontal] = useState(false);
+  // the 4th landmark only ever takes part in a cranial registration - kept
+  // picked (and the checkbox kept ticked) while the face is selected, just
+  // not used there.
+  const altFrontalActive = useAltFrontal && target === "cranium";
   const [landmarks, setLandmarks] = useState({}); // always raw-mesh coordinates
   // one captureTargetSnapshot() object per target that's been switched away
   // from this session (see below), reapplied by handleTargetChange when
@@ -470,11 +489,16 @@ function App() {
   const [registeredTransform, setRegisteredTransform] = useState(null);
 
   // the clip preview is a pre-commit aid: it's there between "align" and
-  // "preprocess mesh", and once the clip has actually happened it would
-  // only describe a cut that's already been made, so it stays gone for the
-  // rest of this mesh's life (cleared again on reset/upload, which put the
-  // user back before that decision).
-  const clipPreviewSuppressedRef = useRef(false);
+  // "preprocess mesh" for whichever target is selected, and gone once that
+  // target's clip has actually happened (it would only describe a cut
+  // that's already been made). it's derived from that state by the effect
+  // further down rather than switched on and off by hand - a one-way
+  // "suppressed" flag used to hide it for the rest of the session after
+  // the first run, so the other target's planes never came back, and
+  // nothing redrew it after returning from another workspace.
+  // bumped per draw request, so a slow preview fetch can't paint over a
+  // newer state.
+  const clipPreviewRequestRef = useRef(0);
 
   // the geometry behind the preview, kept so the panel can show the trim
   // sphere's real (patient-dependent, for the face) default radius in mm.
@@ -524,8 +548,18 @@ function App() {
   const [resampleMode, setResampleMode] = useState("none");
   const [vertexCount, setVertexCount] = useState(10000);
   const [nicpParams, setNicpParams] = useState(NICP_DEFAULTS);
+  const currentRunSettings = JSON.stringify({
+    comTranslation,
+    resample: resampleMode === "resample" ? vertexCount : null,
+    sphere: sphereConfirmed ? sphereAdjust : null,
+  });
+
   const [runningPipeline, setRunningPipeline] = useState(false);
   const [runStarted, setRunStarted] = useState(false);
+  // the settings the current result was produced with, compared against
+  // the panel's current ones so a changed checkbox doesn't silently leave
+  // the old result (and its numbers) standing as if it reflected it.
+  const [lastRunSettings, setLastRunSettings] = useState(null);
 
   // the clip-sphere controls go the moment "preprocess mesh" is pressed,
   // not when the run finishes - the clip is already under way by then, and
@@ -859,11 +893,11 @@ function App() {
     setExportAnalysisStatus("");
     setExportCohortStatus("");
     setSkipPreprocessingMode(false);
-    clipPreviewSuppressedRef.current = false;
     setClipPreviewGeometry(null);
     setSphereAdjust(BLANK_SPHERE_ADJUST);
     setSphereConfirmed(false);
-    viewerRef.current?.hideClipPreview();
+    setLastRunSettings(null);
+    hideClipPreview();
   }
 
   // the sphere is the one part of the preview the user can drag around, and
@@ -878,12 +912,14 @@ function App() {
   // honestly. both regions go up at once - clicking the unselected one's
   // disc is just another way to switch target (see clipPreviewOverlay.js).
   async function refreshClipPreview(activeTarget) {
-    if (clipPreviewSuppressedRef.current || !sessionId || !viewerRef.current) return;
+    const request = ++clipPreviewRequestRef.current;
+    if (!sessionId || !viewerRef.current) return;
     try {
       const [cranium, face] = await Promise.all([
         getClipPreview(sessionId, "cranium"),
         getClipPreview(sessionId, "face"),
       ]);
+      if (request !== clipPreviewRequestRef.current) return;
       setClipPreviewGeometry({ cranium, face });
       viewerRef.current?.showClipPreview(
         { cranium, face },
@@ -897,6 +933,23 @@ function App() {
       // of the align it hangs off, so this stays silent.
     }
   }
+
+  function hideClipPreview() {
+    clipPreviewRequestRef.current += 1;
+    viewerRef.current?.hideClipPreview();
+  }
+
+  // the preview belongs on screen exactly while the selected target is
+  // aligned but not yet clipped. meshRevision is in here because loading
+  // any mesh drops the preview (see Viewer.jsx's displayMesh) - a target
+  // switch, a quiet re-align, or a fresh Viewer after coming back from
+  // another workspace all land here and get it redrawn.
+  const clipPreviewWanted = appMode === "patients" && sessionId != null && alignSucceeded && !pipelineRan && !runningPipeline;
+  useEffect(() => {
+    if (clipPreviewWanted) refreshClipPreview(target);
+    else hideClipPreview();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clipPreviewWanted, target, meshRevision]);
 
   // desktop-only: opens the native folder dialog and remembers the choice
   // for both "save meshes" and "export analysis" - null (the default)
@@ -1089,7 +1142,7 @@ function App() {
   function handlePick(point) {
     const raw = alignSucceeded ? applyInverseTransform(point, registeredTransform) : point;
     setLandmarks((prev) => {
-      const name = nextUnpickedLandmark(prev, useAltFrontal);
+      const name = nextUnpickedLandmark(prev, altFrontalActive);
       return name ? { ...prev, [name]: raw } : prev;
     });
     setLandmarksChangedSinceAlign(true);
@@ -1153,6 +1206,7 @@ function App() {
       exportCohortStatus,
       lastSavedAnalysisFolder,
       skipPreprocessingMode,
+      lastRunSettings,
     };
   }
 
@@ -1183,6 +1237,7 @@ function App() {
     setExportCohortStatus(snapshot.exportCohortStatus);
     setLastSavedAnalysisFolder(snapshot.lastSavedAnalysisFolder);
     setSkipPreprocessingMode(snapshot.skipPreprocessingMode);
+    setLastRunSettings(snapshot.lastRunSettings ?? null);
   }
 
   // a target that's never been clipped/run this session - same "nothing
@@ -1212,6 +1267,7 @@ function App() {
     setLastSavedAnalysisFolder(null);
     setExportCohortStatus("");
     setSkipPreprocessingMode(false);
+    setLastRunSettings(null);
   }
 
   // snapshots the OLD target's scene, then either restores NEW target's own
@@ -1245,18 +1301,11 @@ function App() {
     const outgoingSnapshot = captureTargetSnapshot();
     setTargetSnapshots((prev) => ({ ...prev, [oldTarget]: outgoingSnapshot }));
 
-    if (newTarget !== "cranium" && useAltFrontal) {
-      setUseAltFrontal(false);
-      setLandmarks((prev) => {
-        const { [ALT_FRONTAL_NAME]: _drop, ...rest } = prev;
-        return rest;
-      });
-      // the active landmark set just changed (4 points -> 3) - same as
-      // handleUseAltFrontalChange dropping it directly, this makes the
-      // quiet re-align below correctly sit out until the user re-aligns
-      // themselves, instead of silently aligning a stale point set.
-      setLandmarksChangedSinceAlign(true);
-    }
+    // the 4th (secondary frontal) landmark is a cranium-only option, but it
+    // stays picked across a switch to the face - see altFrontalActive. it
+    // used to be deleted here, which marked the alignment stale, so the
+    // face never got its quiet re-align and coming back to the cranium
+    // meant picking subnasale again.
     setTarget(newTarget);
 
     let restored = false;
@@ -1307,15 +1356,17 @@ function App() {
           setMeshRevision((n) => n + 1);
         }
       }
-      // "restored" only means this target has been visited before - for a
-      // target that was aligned and no further, the registered mesh is
-      // exactly what's back on screen, so the preview belongs back on it
-      // too. anything past the clip is a cut already made, and the preview
-      // would only describe it in the past tense.
-      if (!incomingSnapshot.pipelineRan && incomingSnapshot.meshStage === "registered") {
-        await refreshClipPreview(newTarget);
-      } else {
-        viewerRef.current?.hideClipPreview();
+      // the two targets' registrations differ (the facial one is recentred),
+      // so the raw<->aligned conversion picks and drags go through has to
+      // be the one for the target now on screen, not the one left behind.
+      // the clip preview follows from the restored state by itself (see
+      // clipPreviewWanted).
+      if (sessionId) {
+        try {
+          setRegisteredTransform(await getRegisteredTransform(sessionId));
+        } catch {
+          // this target was never aligned - nothing to convert with yet
+        }
       }
       return;
     }
@@ -1347,6 +1398,12 @@ function App() {
 
   function handleUseAltFrontalChange(enabled) {
     setUseAltFrontal(enabled);
+    // the 4th point is picked on the aligned mesh, not on a clipped (and
+    // possibly CoM-shifted) result - so ticking it after a run first goes
+    // back to the clip step, where there's something to click on.
+    if (enabled && pipelineRan && alignSucceeded && !(ALT_FRONTAL_NAME in landmarks)) {
+      handleAlign();
+    }
     if (!enabled && ALT_FRONTAL_NAME in landmarks) {
       setLandmarks((prev) => {
         const { [ALT_FRONTAL_NAME]: _drop, ...rest } = prev;
@@ -1360,8 +1417,22 @@ function App() {
 
   async function handleAdjustPicks() {
     if (!alignSucceeded) return;
+    // picks are adjusted on the aligned mesh - after a run, that means
+    // going back to the clip step first (the result mesh is clipped and
+    // may be CoM-shifted, so a click on it can't be mapped back to the
+    // raw scan with the align transform).
+    if (pipelineRan) await handleAlign();
     setAdjustingInAlignedFrame(true);
     setLandmarksChangedSinceAlign(true);
+  }
+
+  // "back to clip step": re-aligns with the same picks, which discards this
+  // target's clip/run (repair stays cached) and puts the clip preview and
+  // trim-sphere controls back - the way to re-clip with another sphere,
+  // other settings, or adjusted picks without "reset" throwing the
+  // landmarks away.
+  async function handleBackToClipStep() {
+    await handleAlign();
   }
 
   async function handleReset() {
@@ -1407,7 +1478,7 @@ function App() {
       await startAlign(sessionId, {
         target: alignTarget,
         landmarks: LANDMARK_NAMES.map((n) => landmarks[n]),
-        altFrontalLandmark: useAltFrontal ? landmarks[ALT_FRONTAL_NAME] : undefined,
+        altFrontalLandmark: alignTarget === "cranium" && useAltFrontal ? landmarks[ALT_FRONTAL_NAME] : undefined,
       });
       const result = await pollStatus(sessionId, (stage, detail) => {
         if (stage === "error") setAlignStatus(`Error: ${detail}`);
@@ -1427,11 +1498,15 @@ function App() {
         setMeshRevision((n) => n + 1);
         const transform = await getRegisteredTransform(sessionId);
         setRegisteredTransform(transform);
+        // a fresh align throws away this target's clip/run on the backend
+        // (see /align's clear_clip_result), so the frontend goes back to
+        // the same aligned, not-yet-clipped step - this is what "back to
+        // clip step" and re-aligning after a run rely on.
+        applyBlankTargetState();
         setAlignSucceeded(true);
         setAdjustingInAlignedFrame(false);
         setLandmarksChangedSinceAlign(false);
         setAlignStatus("Rigid alignment: ✓");
-        await refreshClipPreview(alignTarget);
         await autoSaveMeshes();
       }
     } catch (err) {
@@ -1454,14 +1529,30 @@ function App() {
   }
 
   async function handleRunPipeline() {
-    // the clip is being committed - the preview has done its job
-    clipPreviewSuppressedRef.current = true;
-    viewerRef.current?.hideClipPreview();
+    // the clip is being committed - the preview has done its job (and stays
+    // hidden from here on through clipPreviewWanted)
+    hideClipPreview();
     setRunningPipeline(true);
     setRunStarted(true);
     setRunError(false);
     setRunProgress(0);
     setRunStatus("");
+    // /clip throws away everything a previous run of this target produced
+    // on the backend - the result mesh, its measurements, and any template
+    // fit. leaving the frontend's copies in place meant a re-run kept
+    // offering "continue with the NICP mesh" and "stage for Longitudinal"
+    // for a fit that no longer existed.
+    setPipelineRan(false);
+    setSkipPreprocessingMode(false);
+    setAnalysisResults(null);
+    setShowTemplateOverlay(false);
+    setShowingNicpResult(false);
+    setNicpResultReady(false);
+    setNicpFitStarted(false);
+    setNicpProgress(0);
+    setNicpStatus("");
+    setNicpError(false);
+    const settingsForThisRun = currentRunSettings;
 
     let lastPercent = 0;
     function onStage(stage, detail) {
@@ -1485,7 +1576,7 @@ function App() {
       await startClip(sessionId, {
         target,
         landmarks: LANDMARK_NAMES.map((n) => landmarks[n]),
-        altFrontalLandmark: useAltFrontal ? landmarks[ALT_FRONTAL_NAME] : undefined,
+        altFrontalLandmark: altFrontalActive ? landmarks[ALT_FRONTAL_NAME] : undefined,
         comTranslation,
         // unconfirmed means unapplied: nothing is sent and the backend
         // cuts with its own tuned sphere.
@@ -1507,10 +1598,10 @@ function App() {
           await viewerRef.current.displayMesh(meshUrl(sessionId, "result"), { selectionHasTexture });
           displayedMeshKeyRef.current = meshDisplayKey(sessionId, target, "result");
         }
-        setShowingNicpResult(false);
         setMeshRevision((n) => n + 1);
         setRunProgress(100);
         setRunStatus("Run complete: ✓");
+        setLastRunSettings(settingsForThisRun);
         await autoSaveMeshes();
       }
     } catch (err) {
@@ -1867,7 +1958,7 @@ function App() {
   const showAlignedLandmarks =
     alignSucceeded &&
     !pipelineRan &&
-    (adjustingInAlignedFrame || (useAltFrontal && !landmarks[ALT_FRONTAL_NAME]));
+    (adjustingInAlignedFrame || (altFrontalActive && !landmarks[ALT_FRONTAL_NAME]));
   const displayLandmarks = !alignSucceeded
     ? landmarks
     : showAlignedLandmarks
@@ -1875,6 +1966,12 @@ function App() {
       : {};
 
   const onPreprocessingTab = activeWorkspace === "preprocessing";
+  // picking/dragging only means something on the raw or aligned mesh - a
+  // clipped result can't be mapped back to the raw scan (see handlePick)
+  const pickingAllowed = onPreprocessingTab && !(pipelineRan && alignSucceeded);
+  const pipelineBusy = aligning || runningPipeline || fittingTemplate;
+  const runSettingsChanged =
+    pipelineRan && !skipPreprocessingMode && lastRunSettings != null && lastRunSettings !== currentRunSettings;
   const onAnalysisTab = activeWorkspace === "analysis";
   const inspectorTitle = onPreprocessingTab ? "Preprocessing" : onAnalysisTab ? "Analysis" : "Data";
 
@@ -1907,10 +2004,12 @@ function App() {
           onAppModeChange={handleAppModeChange}
           workspaces={[]}
           workspace={
-            <CohortWorkspace
-              onSnapshotChange={setCohortSnapshot}
-              initialSnapshot={loadSnapshotIntoCohort ? cohortSnapshot : null}
-            />
+            <LazyWorkspace>
+              <CohortWorkspace
+                onSnapshotChange={setCohortSnapshot}
+                initialSnapshot={loadSnapshotIntoCohort ? cohortSnapshot : null}
+              />
+            </LazyWorkspace>
           }
           inspectorTitle={null}
           inspector={null}
@@ -1935,10 +2034,12 @@ function App() {
           onAppModeChange={handleAppModeChange}
           workspaces={[]}
           workspace={
-            <FacialWorkspace
-              onSnapshotChange={setFacialSnapshot}
-              initialSnapshot={loadSnapshotIntoFacial ? facialSnapshot : null}
-            />
+            <LazyWorkspace>
+              <FacialWorkspace
+                onSnapshotChange={setFacialSnapshot}
+                initialSnapshot={loadSnapshotIntoFacial ? facialSnapshot : null}
+              />
+            </LazyWorkspace>
           }
           inspectorTitle={null}
           inspector={null}
@@ -1963,10 +2064,12 @@ function App() {
           onAppModeChange={handleAppModeChange}
           workspaces={[]}
           workspace={
-            <MeanShapeWorkspace
-              onSnapshotChange={setMeanShapeSnapshot}
-              initialSnapshot={loadSnapshotIntoMeanShape ? meanShapeSnapshot : null}
-            />
+            <LazyWorkspace>
+              <MeanShapeWorkspace
+                onSnapshotChange={setMeanShapeSnapshot}
+                initialSnapshot={loadSnapshotIntoMeanShape ? meanShapeSnapshot : null}
+              />
+            </LazyWorkspace>
           }
           inspectorTitle={null}
           inspector={null}
@@ -1991,11 +2094,13 @@ function App() {
           onAppModeChange={handleAppModeChange}
           workspaces={[]}
           workspace={
-            <LongitudinalWorkspace
-              onSnapshotChange={setLongitudinalSnapshot}
-              initialStagedMeshes={loadStagedIntoLongitudinal ? stagedMeshesForMount : []}
-              initialSnapshot={loadSnapshotIntoLongitudinal ? longitudinalSnapshot : null}
-            />
+            <LazyWorkspace>
+              <LongitudinalWorkspace
+                onSnapshotChange={setLongitudinalSnapshot}
+                initialStagedMeshes={loadStagedIntoLongitudinal ? stagedMeshesForMount : []}
+                initialSnapshot={loadSnapshotIntoLongitudinal ? longitudinalSnapshot : null}
+              />
+            </LazyWorkspace>
           }
           inspectorTitle={null}
           inspector={null}
@@ -2042,16 +2147,19 @@ function App() {
           <PreprocessingPanel
             target={target}
             onTargetChange={handleTargetChange}
-            useAltFrontal={useAltFrontal}
+            useAltFrontal={altFrontalActive}
             onUseAltFrontalChange={handleUseAltFrontalChange}
             landmarks={landmarks}
             alignSucceeded={alignSucceeded}
             landmarksChangedSinceAlign={landmarksChangedSinceAlign}
-            aligning={aligning}
             pipelineRan={pipelineRan}
             alignStatus={alignStatus}
             onAlign={() => handleAlign()}
             onAdjustPicks={handleAdjustPicks}
+            onBackToClipStep={handleBackToClipStep}
+            canGoBackToClipStep={pipelineRan && alignSucceeded && !skipPreprocessingMode}
+            pipelineBusy={pipelineBusy}
+            runSettingsChanged={runSettingsChanged}
             onReset={handleReset}
             sphereAdjust={sphereAdjust}
             onSphereAdjustChange={handleSphereAdjustChange}
@@ -2068,7 +2176,6 @@ function App() {
             nicpParams={nicpParams}
             onNicpParamsChange={setNicpParams}
             onRunPipeline={handleRunPipeline}
-            runningPipeline={runningPipeline}
             runStarted={runStarted}
             runProgress={runProgress}
             runStatus={runStatus}
@@ -2086,7 +2193,6 @@ function App() {
             templateOffset={templateOffset}
             templateStatus={templateStatus}
             onFitTemplate={handleFitTemplate}
-            fittingTemplate={fittingTemplate}
             nicpFitStarted={nicpFitStarted}
             nicpProgress={nicpProgress}
             nicpStatus={nicpStatus}
@@ -2154,8 +2260,8 @@ function App() {
             textureEnabled={textureEnabled}
             landmarks={displayLandmarks}
             landmarkColors={LANDMARK_COLORS}
-            onPick={onPreprocessingTab ? handlePick : undefined}
-            onDrag={onPreprocessingTab ? handleDrag : undefined}
+            onPick={pickingAllowed ? handlePick : undefined}
+            onDrag={pickingAllowed ? handleDrag : undefined}
             onFilesDropped={handleFilesDroppedGate}
           />
           {sessionId == null && !dropStatus && <p className="hint overlay">Upload a mesh to begin.</p>}
@@ -2172,7 +2278,7 @@ function App() {
           {fittingTemplate && (
             <div className="viewer-legend">
               <div className="viewer-legend-row">
-                <span className="viewer-legend-swatch" style={{ background: "#d1453d" }} />
+                <span className="viewer-legend-swatch" style={{ background: "#1f8fc7" }} />
                 deforming template
               </div>
               <div className="viewer-legend-row">
@@ -2189,7 +2295,7 @@ function App() {
           {!fittingTemplate && onPreprocessingTab && showTemplateOverlay && templateOffset && (
             <div className="viewer-legend">
               <div className="viewer-legend-row">
-                <span className="viewer-legend-swatch" style={{ background: "#60a5fa" }} />
+                <span className="viewer-legend-swatch" style={{ background: "#86d2ee" }} />
                 template
               </div>
               <div className="viewer-legend-row">
