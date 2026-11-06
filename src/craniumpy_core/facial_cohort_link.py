@@ -40,10 +40,14 @@ def resolve_cohort_ids_by_filename(mapping_rows: list[dict[str, str]], measureme
         if not cohort_id:
             continue
         file_path = row.get("file_path", "")
-        basename = Path(file_path).name if file_path else row.get("file_name", "")
-        if not basename:
-            continue
-        candidates_by_basename.setdefault(basename, []).append(cohort_id)
+        names = {Path(file_path).name if file_path else row.get("file_name", "")}
+        # the batch measures template-fitted meshes (*_rg_FN.ply), so its
+        # filenames are the fitted mesh's, recorded per row as nicp_mesh_path -
+        # matching on the original scan's name alone never found them
+        if row.get("nicp_mesh_path"):
+            names.add(Path(row["nicp_mesh_path"]).name)
+        for basename in names - {""}:
+            candidates_by_basename.setdefault(basename, []).append(cohort_id)
 
     matched: dict[str, str] = {}
     unmatched: list[str] = []

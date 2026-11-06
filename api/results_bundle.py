@@ -929,9 +929,26 @@ def _row_key(row: dict[str, str]) -> str:
     """the identity a cohort/mapping row is matched and upserted on -
     file_path, falling back to file_name if blank (the closest thing to a
     stable per-mesh identity available without asking the user to type one
-    in). shared by _upsert_cohort_xlsx and its id-mapping companion so a
-    session's cohort row and mapping row are always keyed the same way."""
-    return row.get("file_path") or row.get("file_name") or ""
+    in), plus the target. shared by _upsert_cohort_xlsx and its id-mapping
+    companion so a session's cohort row and mapping row are always keyed
+    the same way.
+
+    the target is part of it because one scan is routinely exported twice,
+    once per target (a cranial and a frontal analysis of the same file) -
+    keyed on the file alone, the second export overwrote the first one's
+    row, so a cohort only ever held whichever target was exported last."""
+    file_key = row.get("file_path") or row.get("file_name") or ""
+    target = row.get("target", "")
+    return f"{file_key}|{target}" if target else file_key
+
+
+def _same_file_without_target(existing: dict[str, str], row: dict[str, str]) -> bool:
+    """an id-mapping row written before mapping rows carried a target: it
+    stands for whichever export of that file came last, so the next export
+    of the file takes it over (keeping its cohort_id) rather than leaving a
+    stale duplicate behind."""
+    file_key = row.get("file_path") or row.get("file_name") or ""
+    return not existing.get("target") and bool(file_key) and _row_key(existing) == file_key
 
 
 def _upsert_rows(path: Path, row: dict[str, str], key_fn: Callable[[dict[str, str]], str] = _row_key) -> None:
@@ -1142,6 +1159,10 @@ def _upsert_cohort_xlsx(cohort_path: Path, row: dict[str, str]) -> None:
         _, existing_cohort_rows = _read_xlsx_rows(cohort_path)
         key = _row_key(row)
         existing_id = next((r.get("cohort_id", "") for r in existing_mapping_rows if _row_key(r) == key), "")
+        if not existing_id:
+            existing_id = next(
+                (r.get("cohort_id", "") for r in existing_mapping_rows if _same_file_without_target(r, row)), ""
+            )
         # minted from whichever of the two files' own ids goes higher, not
         # just the mapping file's - a cohort file that ever ends up without
         # a matching (or fully in-sync) mapping file next to it
@@ -1163,10 +1184,15 @@ def _upsert_cohort_xlsx(cohort_path: Path, row: dict[str, str]) -> None:
             "file_name": row.get("file_name", ""),
             "file_path": row.get("file_path", ""),
             "nicp_mesh_path": row.get("nicp_mesh_path", ""),
+            "target": row.get("target", ""),
             "date_of_birth": row.get("date_of_birth", ""),
             "date_of_intervention": row.get("date_of_intervention", ""),
         }
-        _upsert_rows(mapping_path, mapping_row)
+        _upsert_rows(
+            mapping_path,
+            mapping_row,
+            key_fn=lambda r: _row_key(mapping_row) if _same_file_without_target(r, mapping_row) else _row_key(r),
+        )
 
 
 # short, parent-facing one-liners for the metrics actually shown on the PDF
