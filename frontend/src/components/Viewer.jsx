@@ -15,6 +15,11 @@ import { addCorrespondenceMarkers, removeCorrespondenceMarkers } from "../three/
 import { addFacialMeasurementLines, removeFacialMeasurementLines } from "../three/facialMeasurementOverlay.js";
 import { addClipPreview, removeClipPreview, setClipPreviewSphere } from "../three/clipPreviewOverlay.js";
 
+// landmarks are drawn twice the size of the measurement markers - they're
+// what gets clicked and alt-dragged, and at the shared size they all but
+// vanish on a scan that includes the shoulders.
+const LANDMARK_MARKER_SCALE = 2;
+
 // deforming-template color during a live NICP fit - matches the --hc red
 // token already used elsewhere in this app, so "moving/deforming" reads as
 // a consistent color across the UI rather than introducing a new one.
@@ -187,7 +192,9 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
   useEffect(() => {
     const sceneBag = sceneBagRef.current;
     if (!sceneBag) return;
-    syncLandmarkMarkers({ sceneBag, markersRef, landmarks, colors: landmarkColors, radius: meshStateRef.current.markerRadius });
+    syncLandmarkMarkers({
+      sceneBag, markersRef, landmarks, colors: landmarkColors, radius: meshStateRef.current.markerRadius * LANDMARK_MARKER_SCALE,
+    });
   }, [landmarks, landmarkColors]);
 
   // ctrl/cmd-click to place, alt-drag to reposition. listeners attach once
