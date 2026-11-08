@@ -11,6 +11,19 @@ class LandmarkPoint(BaseModel):
     z: float
 
 
+class AutoLandmarksResponse(BaseModel):
+    """automated landmarking result, in the uploaded scan's own coordinates
+    (same frame as manually picked landmarks). flags holds a short reason
+    per landmark that should be checked by hand."""
+
+    sellion: LandmarkPoint
+    left_tragus: LandmarkPoint
+    right_tragus: LandmarkPoint
+    subnasale: LandmarkPoint
+    scores: dict[str, float]
+    flags: dict[str, str]
+
+
 class ClippingConfig(BaseModel):
     # leave as None to get the usual clip for the target (cranial for cranium,
     # facial for face). "manual" needs both plane fields below - comes from

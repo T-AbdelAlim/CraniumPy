@@ -514,6 +514,11 @@ label.checkbox:has(input:disabled) {
   color: var(--primary);
 }
 
+.landmark-flag {
+  display: block;
+  color: var(--warning);
+}
+
 .landmark-sep {
   color: var(--text-muted);
 }

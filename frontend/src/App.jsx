@@ -34,6 +34,7 @@ import {
   saveAnalysis,
   analysisBundleUrl,
   switchTarget,
+  detectLandmarks,
 } from "./api/sessions.js";
 import { LANDMARK_NAMES, ALT_FRONTAL_NAME, LANDMARK_COLORS, nextUnpickedLandmark } from "./lib/landmarks.js";
 import { heatmapMaxAbs } from "./three/measurementsLayer.js";
@@ -469,6 +470,11 @@ function App() {
   // not used there.
   const altFrontalActive = useAltFrontal && target === "cranium";
   const [landmarks, setLandmarks] = useState({}); // always raw-mesh coordinates
+  // last automated landmarking result for this scan: its subnasale fills the
+  // secondary frontal landmark if that gets ticked later, and flags marks
+  // points worth checking by hand (cleared per point once it's dragged)
+  const [autoLandmarks, setAutoLandmarks] = useState(null);
+  const [autoLandmarking, setAutoLandmarking] = useState(false);
   // one captureTargetSnapshot() object per target that's been switched away
   // from this session (see below), reapplied by handleTargetChange when
   // switching back - so returning to a target already processed shows
@@ -862,6 +868,7 @@ function App() {
 
   function resetPreprocessingState() {
     setLandmarks({});
+    setAutoLandmarks(null);
     setTargetSnapshots({});
     setAlignSucceeded(false);
     setAdjustingInAlignedFrame(false);
@@ -1151,6 +1158,11 @@ function App() {
   function handleDrag(name, point) {
     const raw = alignSucceeded ? applyInverseTransform(point, registeredTransform) : point;
     setLandmarks((prev) => ({ ...prev, [name]: raw }));
+    setAutoLandmarks((prev) => {
+      if (!prev?.flags?.[name]) return prev;
+      const { [name]: _checked, ...flags } = prev.flags;
+      return { ...prev, flags };
+    });
     setLandmarksChangedSinceAlign(true);
   }
 
@@ -1396,8 +1408,40 @@ function App() {
     setMeshRevision((n) => n + 1);
   }
 
+  async function handleAutoLandmarks() {
+    setAutoLandmarking(true);
+    setAlignStatus("finding landmarks...");
+    try {
+      const found = await detectLandmarks(sessionId);
+      const placed = { sellion: found.sellion, left_tragus: found.left_tragus, right_tragus: found.right_tragus };
+      if (altFrontalActive) placed[ALT_FRONTAL_NAME] = found.subnasale;
+      const flags = { ...found.flags };
+      if (flags.subnasale) flags[ALT_FRONTAL_NAME] = flags.subnasale;
+      setLandmarks(placed);
+      setAutoLandmarks({ subnasale: found.subnasale, flags });
+      setLandmarksChangedSinceAlign(true);
+      const toCheck = Object.keys(flags).filter((n) => n in placed);
+      setAlignStatus(
+        toCheck.length
+          ? `landmarks placed - check the marked ${toCheck.length === 1 ? "point" : "points"} before aligning`
+          : "landmarks placed - check them, then align",
+      );
+    } catch (err) {
+      setAlignStatus(`automated landmarking failed: ${err.message}`);
+    } finally {
+      setAutoLandmarking(false);
+    }
+  }
+
   function handleUseAltFrontalChange(enabled) {
     setUseAltFrontal(enabled);
+    // the subnasale from automated landmarking fills the 4th point straight
+    // away instead of waiting for a click
+    if (enabled && autoLandmarks && !(ALT_FRONTAL_NAME in landmarks)) {
+      setLandmarks((prev) => ({ ...prev, [ALT_FRONTAL_NAME]: autoLandmarks.subnasale }));
+      setLandmarksChangedSinceAlign(true);
+      return;
+    }
     // the 4th point is picked on the aligned mesh, not on a clipped (and
     // possibly CoM-shifted) result - so ticking it after a run first goes
     // back to the clip step, where there's something to click on.
@@ -2161,6 +2205,9 @@ function App() {
             pipelineBusy={pipelineBusy}
             runSettingsChanged={runSettingsChanged}
             onReset={handleReset}
+            onAutoLandmarks={handleAutoLandmarks}
+            autoLandmarking={autoLandmarking}
+            autoLandmarkFlags={autoLandmarks?.flags ?? {}}
             sphereAdjust={sphereAdjust}
             onSphereAdjustChange={handleSphereAdjustChange}
             onConfirmSphere={() => setSphereConfirmed(true)}

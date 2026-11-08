@@ -18,7 +18,7 @@ from fastapi.responses import Response
 from trimesh.resolvers import ZipResolver
 
 from api import repair_worker
-from craniumpy_core import clipping, cohort, pipeline
+from craniumpy_core import autolandmarks, clipping, cohort, pipeline
 from craniumpy_core.asymmetry import calculate_asymmetry
 from craniumpy_core.craniometrics import frontal_bossing, hc_slice_polygon
 from craniumpy_core.io import load_mesh, mesh_to_glb, strip_uninteresting_vertex_colors
@@ -38,6 +38,7 @@ from api.schemas import (
     AlignRequest,
     AnalyzeRequest,
     AsymmetryResponse,
+    AutoLandmarksResponse,
     ClipPreviewResponse,
     ClipRequest,
     ClipUndoResponse,
@@ -319,6 +320,32 @@ def close_session(session_id: str) -> Response:
     doesn't need to track whether it already asked once."""
     store.delete(session_id)
     return Response(status_code=204)
+
+
+@router.post("/{session_id}/auto-landmarks", response_model=AutoLandmarksResponse)
+def auto_landmarks(session_id: str) -> AutoLandmarksResponse:
+    """sellion, tragi and subnasale found on the uploaded scan, whatever its
+    orientation - see craniumpy_core.autolandmarks. a few seconds, so a
+    plain (threadpool) request rather than a background job. the points
+    are only suggestions: the frontend places them as ordinary picks that
+    can still be dragged, and nothing is aligned until "align"."""
+    session = _get_session(session_id)
+    try:
+        found = autolandmarks.detect_landmarks(session.mesh)
+    except Exception as exc:  # a scan with no recognisable head
+        raise HTTPException(status_code=422, detail=f"automated landmarking failed: {exc}")
+
+    def point(p):
+        return LandmarkPoint(x=float(p[0]), y=float(p[1]), z=float(p[2]))
+
+    return AutoLandmarksResponse(
+        sellion=point(found.sellion),
+        left_tragus=point(found.left_tragus),
+        right_tragus=point(found.right_tragus),
+        subnasale=point(found.subnasale),
+        scores={k: float(v) for k, v in found.scores.items()},
+        flags=found.flags,
+    )
 
 
 @router.post("/{session_id}/align", response_model=StatusResponse)

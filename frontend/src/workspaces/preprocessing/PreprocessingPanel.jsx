@@ -43,6 +43,9 @@ export default function PreprocessingPanel({
   pipelineBusy,
   runSettingsChanged,
   onReset,
+  onAutoLandmarks,
+  autoLandmarking,
+  autoLandmarkFlags,
   sphereAdjust,
   onSphereAdjustChange,
   onConfirmSphere,
@@ -128,13 +131,15 @@ export default function PreprocessingPanel({
 
   function renderItem(name) {
     const p = landmarks[name];
+    const flag = p ? autoLandmarkFlags[name] : undefined;
     return (
-      <li key={name} data-name={name} className={p ? "picked" : ""}>
+      <li key={name} data-name={name} className={[p ? "picked" : "", flag ? "flagged" : ""].join(" ").trim()}>
         <span className="landmark-swatch" />
         <span className="landmark-label">{LANDMARK_LABELS[name]}</span>
         <span className="landmark-sep"> | </span>
         <span className="landmark-desc">{LANDMARK_DESCRIPTIONS[name]}</span>
         <span className="landmark-value">{p ? `${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}` : "not picked"}</span>
+        {flag && <span className="landmark-flag">check: {flag}</span>}
       </li>
     );
   }
@@ -172,8 +177,13 @@ export default function PreprocessingPanel({
       </div>
 
       <p className="hint">
-        <strong>ctrl/cmd-click</strong> to place a point, <strong>alt-drag</strong> to move one. Pick in this order:
+        <strong>ctrl/cmd-click</strong> to place a point, <strong>ctrl- or alt-drag</strong> to move one. Pick in this
+        order, or let them be placed automatically:
       </p>
+      <button type="button" onClick={onAutoLandmarks} disabled={pipelineBusy || autoLandmarking || alignSucceeded}>
+        {autoLandmarking ? "finding landmarks..." : "automated landmarking"}
+      </button>
+      {alignSucceeded && <p className="hint">reset to run automated landmarking again</p>}
       <ol id="landmark-list">{names.map(renderItem)}</ol>
       {target === "cranium" && (
         <label className="checkbox">

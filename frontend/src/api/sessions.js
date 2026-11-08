@@ -69,6 +69,15 @@ export async function uploadCustomTemplate(file) {
   return URL.createObjectURL(blob);
 }
 
+// automated landmarking on the uploaded scan - points come back in the
+// scan's own (raw) coordinates, the same frame manual picks are stored in.
+// {sellion, left_tragus, right_tragus, subnasale, scores, flags}
+export async function detectLandmarks(sessionId) {
+  const response = await fetch(`/api/sessions/${sessionId}/auto-landmarks`, { method: "POST" });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json();
+}
+
 // landmarks here is the fixed-order array the API expects ([sellion,
 // left_tragus, right_tragus] as {x,y,z} objects), not the name-keyed dict
 // components work with - callers convert via activeLandmarkNames().map(...).

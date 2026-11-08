@@ -94,6 +94,7 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
   // (cheap - a handful of short line segments, not a heavy mesh op).
   const facialMeasurementLinesRef = useRef(null);
   const draggingNameRef = useRef(null);
+  const draggedRef = useRef(false);
   const onPickRef = useRef(onPick);
   const onDragRef = useRef(onDrag);
   const onFilesDroppedRef = useRef(onFilesDropped);
@@ -206,6 +207,11 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
     function handleClick(event) {
       const sceneBag = sceneBagRef.current;
       if (!sceneBag) return;
+      // the click that ends a ctrl-drag of a marker isn't a new pick
+      if (draggedRef.current) {
+        draggedRef.current = false;
+        return;
+      }
 
       if (!(event.ctrlKey || event.metaKey)) {
         // plain click still orbits - but it also selects a clip region when
@@ -233,13 +239,16 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
     function handleMouseDown(event) {
       // remembered so handleClick can tell a click from the end of an orbit
       pointerDownRef.current = { x: event.clientX, y: event.clientY };
-      if (!event.altKey || event.button !== 0) return;
+      // alt-drag or ctrl/cmd-drag on a marker moves it; ctrl/cmd-click
+      // anywhere else still places the next point (handleClick)
+      if (!(event.altKey || event.ctrlKey || event.metaKey) || event.button !== 0) return;
       const sceneBag = sceneBagRef.current;
       if (!sceneBag || !onDragRef.current) return;
       const ndc = pointerToNdc(event, canvas);
       const name = raycastMarkers(raycasterRef.current, sceneBag.camera, ndc, markersRef.current);
       if (!name) return;
       draggingNameRef.current = name;
+      draggedRef.current = event.ctrlKey || event.metaKey;
       sceneBag.controls.enabled = false;
       event.preventDefault();
     }
