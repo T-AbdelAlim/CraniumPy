@@ -37,7 +37,7 @@ export default function Shell({
   return (
     <div className="shell">
       <header className="shell-topbar">
-        <span className="shell-brand">CraniumPy v2.0</span>
+        <span className="shell-brand">CraniumPy v2.1</span>
         {contextLabel && <span className="shell-context">{contextLabel}</span>}
       </header>
 

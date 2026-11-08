@@ -1414,7 +1414,7 @@ def _report_pdf(
     with PdfPages(buf) as pdf:
         title_page = Figure(figsize=(PAGE_W_IN, PAGE_H_IN))  # A4 portrait
         FigureCanvasAgg(title_page)
-        title_page.text(0.5, 0.92, "CraniumPy v2.0 Analysis Report", ha="center", fontsize=20, weight="bold")
+        title_page.text(0.5, 0.92, "CraniumPy v2.1 Analysis Report", ha="center", fontsize=20, weight="bold")
         title_page.text(
             0.5, 0.885,
             f"{'Cranial' if target == 'cranium' else 'Facial'} analysis - {original_filename}",
@@ -1538,7 +1538,7 @@ def longitudinal_comparison_report_pdf(
     with PdfPages(buf) as pdf:
         title_page = Figure(figsize=(PAGE_W_IN, PAGE_H_IN))
         FigureCanvasAgg(title_page)
-        title_page.text(0.5, 0.92, "CraniumPy v2.0 Longitudinal Comparison Report", ha="center", fontsize=20, weight="bold")
+        title_page.text(0.5, 0.92, "CraniumPy v2.1 Longitudinal Comparison Report", ha="center", fontsize=20, weight="bold")
         title_page.text(
             0.5, 0.885, f"{'Cranial' if target == 'cranium' else 'Facial'} comparison", ha="center", fontsize=11, color="#666666",
         )

@@ -224,7 +224,7 @@ def main() -> None:
     webview.settings["ALLOW_DOWNLOADS"] = True
 
     api = Api()
-    window = webview.create_window("CraniumPy v2.0", f"http://{HOST}:{PORT}", width=1280, height=800, js_api=api)
+    window = webview.create_window("CraniumPy v2.1", f"http://{HOST}:{PORT}", width=1280, height=800, js_api=api)
     api._window = window
     window.events.loaded += lambda: _register_native_drop(window)
     webview.start(icon=str(ICON_PATH) if ICON_PATH.is_file() else None)
