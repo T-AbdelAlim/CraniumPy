@@ -29,6 +29,7 @@ resample_mesh has two methods too:
 
 from __future__ import annotations
 
+import threading
 from typing import Literal
 
 import numpy as np
@@ -36,6 +37,13 @@ import trimesh
 
 RepairMethod = Literal["pymeshfix", "trimesh"]
 ResampleMethod = Literal["quadric", "voronoi"]
+
+# fast_simplification isn't thread-safe: two decimations running at once
+# (the Longitudinal workspace measures every staged timepoint in parallel)
+# can hand back faces that point past the end of the vertex array, and
+# trimesh then fails with an IndexError. one at a time fixes it, and a
+# decimation is quick enough that the wait doesn't matter.
+_decimation_lock = threading.Lock()
 
 
 def repair_mesh(mesh: trimesh.Trimesh, method: RepairMethod = "pymeshfix") -> trimesh.Trimesh:
@@ -398,7 +406,8 @@ def resample_mesh(mesh: trimesh.Trimesh, n_vertices: int, method: ResampleMethod
 
     if method == "quadric":
         target_faces = max(4, n_vertices * 2)
-        return mesh.simplify_quadric_decimation(face_count=target_faces)
+        with _decimation_lock:
+            return mesh.simplify_quadric_decimation(face_count=target_faces)
 
     if method == "voronoi":
         raise NotImplementedError(
