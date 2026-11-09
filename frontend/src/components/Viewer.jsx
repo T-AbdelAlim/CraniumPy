@@ -239,8 +239,10 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
     function handleMouseDown(event) {
       // remembered so handleClick can tell a click from the end of an orbit
       pointerDownRef.current = { x: event.clientX, y: event.clientY };
-      // alt-drag or ctrl/cmd-drag on a marker moves it; ctrl/cmd-click
-      // anywhere else still places the next point (handleClick)
+      // alt-drag or ctrl/cmd-drag on a marker moves it; a ctrl/cmd-click
+      // that doesn't move still places a point there (handleClick), e.g. a
+      // second measurement sharing a point with the first
+      draggedRef.current = false;
       if (!(event.altKey || event.ctrlKey || event.metaKey) || event.button !== 0) return;
       const sceneBag = sceneBagRef.current;
       if (!sceneBag || !onDragRef.current) return;
@@ -248,7 +250,6 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
       const name = raycastMarkers(raycasterRef.current, sceneBag.camera, ndc, markersRef.current);
       if (!name) return;
       draggingNameRef.current = name;
-      draggedRef.current = event.ctrlKey || event.metaKey;
       sceneBag.controls.enabled = false;
       event.preventDefault();
     }
@@ -256,6 +257,11 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
     function handleMouseMove(event) {
       const name = draggingNameRef.current;
       if (!name) return;
+      const down = pointerDownRef.current;
+      if (!draggedRef.current) {
+        if (down && Math.hypot(event.clientX - down.x, event.clientY - down.y) <= 3) return;
+        draggedRef.current = true;
+      }
       const sceneBag = sceneBagRef.current;
       const meshObject = meshStateRef.current.object;
       if (!sceneBag || !meshObject || !onDragRef.current) return;
