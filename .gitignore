@@ -21,3 +21,6 @@ CP_*/
 # stray output from running `uvicorn` straight from the repo root
 /server_stdout.log
 /server_stderr.log
+
+# private notes
+/ROADMAP.md

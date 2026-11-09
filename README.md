@@ -49,7 +49,8 @@ CraniumPy registers and analyzes craniofacial 3D scans (`.ply`, `.obj`, `.stl`):
 
 Runs as a local web app or a standalone desktop app. The legacy PyQt5 version is on the `legacy-craniumpy` branch.
 
-Current capabilities (rigid registration and manual landmarking only, see [Registration and clipping](#registration-and-clipping)):
+Current capabilities (rigid registration, see [Registration and clipping](#registration-and-clipping)):
+* Automated landmarking: one click places sellion, both tragi and (for the 4th point) subnasale, whatever the position and orientation of the scan. Every point can still be dragged by hand, and doubtful ones are flagged for a check.
 * Rigid, landmark-based registration, with an optional secondary frontal landmark (e.g. subnasale) for the displayed/saved mesh - picking a 4th landmark automatically switches to the matching shipped template.
 * Non-rigid template fitting (NICP) as an optional post-processing step, giving every processed patient the same mesh topology for downstream shape analysis - with a live preview while it fits.
 * Template overlay comparison with center-of-gravity offset.
@@ -84,18 +85,22 @@ Upload a mesh, pick 3 landmarks, hit "align", then "run pipeline". `resources/te
 For a textured .obj, select the .obj, its .mtl, and the texture image together. Once a mesh is loaded, a wireframe toggle appears, and a texture toggle if it has a texture.
 
 ### Preprocessing and landmarks
-Click 3 points on the mesh in this order: sellion, left tragus, right tragus, while holding **Ctrl** (**Cmd** on Mac). Alt+drag a landmark to reposition it.
+Click 3 points on the mesh in this order: sellion, left tragus, right tragus, while holding **Ctrl** (**Cmd** on Mac). Ctrl- or Alt-drag a landmark to reposition it.
 
 The sellion is the soft-tissue landmark at the deepest point of the nasal root depression, between the eyes. It approximates the skeletal landmark nasion, which sits underneath it and isn't directly visible on a surface scan. In the 3D photogrammetry literature the two are often used interchangeably, since only sellion is actually clickable on this kind of data.
 
-There is no automatic landmark detection. Landmarks are always picked manually.
+Or press **"automated landmarking"** to have them placed for you. It finds the head in any position or orientation, fits the face and ears of a reference head to it, and then refines each point on the local surface shape. If the 4th landmark is ticked, the subnasale is filled in as well. Takes a few seconds per scan.
+
+Always look at the result before pressing "align". A point the detector is unsure about gets a **"check: ..."** note in the panel (a weak local match, left and right tragus at clearly different distances from the sellion, a shallow nasal root, or an ambiguous head pose). Ctrl- or Alt-drag any point to correct it - the note disappears once you've moved it. **"reset"** removes the automatically placed points too, and is needed to run automated landmarking again once the mesh is aligned.
+
+On 91 trigonocephaly scans (randomly rotated and moved, cross-validated by patient), the median distance to the manual picks was about 1.3 mm for the subnasale and 1.7-2.0 mm for the tragi. Most larger errors are flagged, but not all of them, which is why the check above matters.
 
 For cranial analysis, a checkbox unlocks a 4th, optional landmark (e.g. subnasale). It takes over the registration/clip/display frame for the mesh you see and save, while the actual measurements and the saved 2D figure always stay anchored on sellion. Picking (or clearing) this 4th landmark automatically switches the compare-against template to the matching shipped one - full-head with or without center-of-mass correction to match your own setting.
 
 ### Registration and clipping
 Once your landmarks are picked, press **"align"**. This is purely the rigid landmark-triangle registration - fast, since nothing else happens yet: no repair, no clip, no center-of-mass correction. The viewer shows the aligned mesh.
 
-**"adjust picks"** puts your landmarks back on screen, now on the aligned mesh instead of the raw scan - often an easier pose to judge a click against. **Alt-drag** a marker to move it, then press "align" again to re-register with the adjustment. The app tracks the rigid transform "align" used, so a drag on the aligned mesh gets converted back to the raw scan's own coordinates before it's stored - "run pipeline" and the saved report always end up describing whatever you most recently adjusted, however many times you've adjusted and re-aligned.
+**"adjust picks"** puts your landmarks back on screen, now on the aligned mesh instead of the raw scan - often an easier pose to judge a click against. **Ctrl- or Alt-drag** a marker to move it, then press "align" again to re-register with the adjustment. The app tracks the rigid transform "align" used, so a drag on the aligned mesh gets converted back to the raw scan's own coordinates before it's stored - "run pipeline" and the saved report always end up describing whatever you most recently adjusted, however many times you've adjusted and re-aligned.
 
 After "align", the viewer also draws a **clip preview** on the aligned mesh: the boundary plane and trim spheres that "run pipeline" will cut with, for both regions at once - the selected one in red, the other in faint grey. Click the small disc on a region's boundary plane to select that region. The numbers are taken from the same constants the real clip uses, so the preview shows exactly what will be removed. Under **"adjust clipping sphere"**, sliders move the selected region's trim sphere (left/right, down/up, back/front) and resize it (50-150% of its default radius); press **"confirm sphere"** to clip with the adjusted sphere, or **"reset sphere"** to go back to the default. Only the trim sphere is adjustable - the landmark boundary plane is not.
 
@@ -281,7 +286,7 @@ The standalone Windows .exe is built from this same code via `desktop/craniumpy.
 
 * Mesh volume requires a watertight mesh. Since the final mesh is intentionally left open at the clip boundary, volume is computed from a temporary capped copy. It reports 0 if that copy cannot be made watertight.
 * Resampling uses quadric decimation, not Voronoi/ACVD clustering (see `DEPENDENCIES.md`). Vertex distribution differs from the original app.
-* No automatic landmark detection.
+* Automated landmarking is trained and tested on pediatric trigonocephaly scans only. Expect lower accuracy on other head shapes, adults, or scans with hair, caps or missing ears, and always check the points before aligning. The tragi are the least precise of the four.
 * Every per-side ("left"/"right") label in the forehead-morphology and facial-asymmetry output follows the sign of the frame's own x-axis as implemented (x<0 = left) - the shipped reference triangle places the left tragus at *positive* x, so these labels currently read as the anatomical opposite of what they say. Magnitudes and the overall indices are unaffected; only which side a per-side number is attributed to. Worth fixing in code - flagged here so it isn't silently relied on until then.
 * The forehead-morphology measurements (frontal angle, ridge protrusion/area, temporal hollowing, parabolic deviation index) are reproducible, closed-form definitions with a reference implementation, but have not yet been validated against a clinical severity score or an independent measurement of the same quantity - treat them as internally comparable, not yet clinically interpretable.
 * The "ideal parabola" every forehead deviation-based number is measured against is fit to this same patient's own forehead (the lateral "shoulders", specifically), not to a healthy-population reference - see [Forehead morphology and frontal bossing](#forehead-morphology-and-frontal-bossing). That makes every one of those numbers self-referential: if the condition being measured also affects the shoulders the parabola is fit to, not just the center, the reference inherits that distortion too, and the reported deviation understates it. How much that matters for any given condition - i.e. how confined it actually stays to the center - isn't something this app can answer without real scans to check against.
