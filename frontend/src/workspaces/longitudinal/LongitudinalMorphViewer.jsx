@@ -7,6 +7,7 @@ import { addMeasurementsOverlay, removeMeasurementsOverlay } from "../../three/m
 import { addMetopicOverlay, removeMetopicOverlay } from "../../three/metopicOverlay.js";
 import { addFrontalBossingOverlay, removeFrontalBossingOverlay } from "../../three/frontalBossingOverlay.js";
 import { lerpStageOverlays } from "./lib/overlayMorph.js";
+import { canEncodeFrames, encodeFrames } from "./lib/frameExport.js";
 
 function firstMesh(object3D) {
   let found = null;
@@ -468,6 +469,46 @@ const LongitudinalMorphViewer = forwardRef(function LongitudinalMorphViewer(_pro
         }
         sceneBagRef.current?.renderer.setPixelRatio(state.previousPixelRatio);
         recorderRef.current = null;
+      },
+      // the export's preferred path: renders every t in `times` itself and
+      // encodes the frames with fixed timestamps (see lib/frameExport.js),
+      // instead of recording the live canvas in real time. same capped
+      // resolution bump as startRecording. resolves to an mp4 Blob; throws
+      // when this engine has no WebCodecs H.264 encoder, so the caller can
+      // fall back to recording.
+      canRenderVideo() {
+        return canEncodeFrames();
+      },
+      async renderSweepVideo({ times, fps = 30, pixelRatio = 3, onProgress }) {
+        const sceneBag = sceneBagRef.current;
+        const state = stateRef.current;
+        if (!sceneBag || !state) throw new Error("viewer not ready");
+        if (recorderRef.current) throw new Error("already recording");
+
+        const canvas = sceneBag.renderer.domElement;
+        // not sized yet when its ResizeObserver hasn't had a chance to run
+        // (e.g. the window was hidden since this tab opened)
+        const container = containerRef.current;
+        if ((!canvas.width || !canvas.height) && container) sceneBag.resize(container.clientWidth, container.clientHeight);
+        const cssDimension = Math.max(canvas.clientWidth, canvas.clientHeight, 1);
+        const effectivePixelRatio = Math.min(pixelRatio, Math.max(1, MAX_RECORDING_DIMENSION / cssDimension));
+        const previousPixelRatio = sceneBag.renderer.getPixelRatio();
+        sceneBag.renderer.setPixelRatio(Math.max(previousPixelRatio, effectivePixelRatio));
+        try {
+          return await encodeFrames({
+            source: canvas,
+            times,
+            fps,
+            onProgress,
+            drawFrame: (t) => {
+              state.lastT = t;
+              applyCurrentFrame();
+              sceneBag.renderer.render(sceneBag.scene, sceneBag.camera);
+            },
+          });
+        } finally {
+          sceneBag.renderer.setPixelRatio(previousPixelRatio);
+        }
       },
     };
   });

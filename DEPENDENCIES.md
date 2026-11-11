@@ -91,6 +91,7 @@ FastAPI backend) is for live frontend iteration instead.
 | `react`, `react-dom` | UI | hand-rolled DOM wiring in the old `frontend_legacy/app.js` |
 | `three` | 3D viewer (mesh, landmarks, heatmaps, template overlay) | the old app's own hand-vendored `frontend_legacy/vendor/three/` files - now a real npm dependency, bundled by Vite into the built output, so the standalone exe still works fully offline (no CDN fetch at runtime either way) |
 | `vite`, `@vitejs/plugin-react` | dev server + production build | n/a, new |
+| `mp4-muxer` | wraps the WebCodecs-encoded frames of a 3D Morphing video export into an .mp4 (frame-by-frame export, so the clip can't freeze or drop frames the way a real-time MediaRecorder capture does) | MediaRecorder on the live canvas, still the fallback where WebCodecs isn't available |
 
 workspace switching is plain local state (`App.jsx`'s `appMode`), not a
 router - there's never a URL to deep-link into, so `react-router-dom` isn't

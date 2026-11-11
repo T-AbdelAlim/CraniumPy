@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { triggerDownload } from "../../lib/download.js";
 import { saveVideo } from "../../api/longitudinal.js";
+import { sweepTimes } from "./lib/frameExport.js";
 
 // seconds for one full A -> B sweep - the dropdown's own choices.
 const SWEEP_SECONDS_OPTIONS = [0.5, 1, 2, 4, 8];
@@ -58,9 +59,11 @@ function extensionForMimeType(mimeType) {
 // many legs there are - that's entirely the viewer's own concern.
 //
 // morphViewerRef (optional) additionally enables "export video": one full
-// start -> end -> start sweep at the current speed, captured straight off
-// the viewer's own canvas via the browser's MediaRecorder (see
-// LongitudinalMorphViewer.jsx's startRecording/stopRecording) - no GIF
+// start -> end -> start sweep at the current speed, rendered frame by frame
+// and encoded with WebCodecs (see lib/frameExport.js), or where that isn't
+// available, captured live off the viewer's own canvas via the browser's
+// MediaRecorder (see LongitudinalMorphViewer.jsx's startRecording/
+// stopRecording) - no GIF
 // encoder library, the recording itself needs no server round-trip either.
 // a real video clip rather than a GIF: better quality per byte (no
 // 256-color palette limit, which a smooth heatmap gradient would show as
@@ -220,17 +223,68 @@ export default function MorphControl({ onT, morphViewerRef, fullscreenRef, expor
   // forever with no way out. stopRecording's own timeout now bounds each
   // attempt, and abortRecording cleans up a still-stuck one before moving
   // to the next candidate.
+  async function deliverVideo(blob, extension) {
+    if (exportDestDir) {
+      // desktop, with a destination folder picked (see MorphingTab.jsx's
+      // own folder-picker control) - write the bytes straight to disk
+      // instead of a browser download, same folder-naming convention
+      // the Trends tab's "export results" uses.
+      const savedPath = await saveWithConflictPrompt(blob, extension);
+      setExportStatus(savedPath ? `Saved to ${savedPath}` : "Not saved (file already exists)");
+    } else {
+      const url = URL.createObjectURL(blob);
+      triggerDownload(url, overlaySuffix ? `morph_animation_${overlaySuffix}.${extension}` : `morph_animation.${extension}`);
+      // the download itself is synchronous (the anchor click fires
+      // immediately), but WebView2/some browsers read the blob lazily
+      // right after - revoking too early can turn that into an empty/
+      // corrupt file, so this waits a beat rather than revoking inline.
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      setExportStatus("");
+    }
+  }
+
+  // frame by frame first (see lib/frameExport.js - no frozen start, an even
+  // 30 fps); real-time recording only where this engine can't encode frames
+  // itself, or that path fails.
   async function handleExportVideo() {
     if (!morphViewerRef?.current || exporting) return;
     const viewer = morphViewerRef.current;
-    const candidates = viewer.getSupportedVideoMimeTypes();
-    if (candidates.length === 0) {
-      setExportStatus("export failed: this browser can't record video (MediaRecorder isn't supported here)");
-      return;
-    }
     setPlaying(false);
     setExporting(true);
     let lastError = null;
+    if (viewer.canRenderVideo()) {
+      const forwardOnly = forwardOnlyRef.current;
+      let blob = null;
+      try {
+        setExportStatus("rendering video...");
+        blob = await viewer.renderSweepVideo({
+          times: sweepTimes(sweepSecondsRef.current, forwardOnly, 30),
+          onProgress: (p) => setExportStatus(`rendering video... ${Math.round(p * 100)}%`),
+        });
+      } catch (err) {
+        lastError = err;
+        console.warn("frame-by-frame video export failed, recording the canvas instead:", err);
+      }
+      if (blob) {
+        // the viewer was driven directly - bring the slider back in line
+        // with where the sweep ended
+        tRef.current = forwardOnly ? 1 : 0;
+        setT(tRef.current);
+        try {
+          await deliverVideo(blob, "mp4");
+        } catch (err) {
+          setExportStatus(`export failed: ${err.message}`);
+        }
+        setExporting(false);
+        return;
+      }
+    }
+    const candidates = viewer.getSupportedVideoMimeTypes();
+    if (candidates.length === 0) {
+      setExportStatus(`export failed: ${lastError ? lastError.message : "this browser can't record video (MediaRecorder isn't supported here)"}`);
+      setExporting(false);
+      return;
+    }
     for (let i = 0; i < candidates.length; i++) {
       setExportStatus(i === 0 ? "recording..." : "recording (retrying with a different video format)...");
       try {
@@ -238,24 +292,7 @@ export default function MorphControl({ onT, morphViewerRef, fullscreenRef, expor
         await runRoundTripSweep(sweepSecondsRef.current, setT, forwardOnlyRef.current);
         const { blob, mimeType } = await viewer.stopRecording();
         if (!blob || blob.size === 0) throw new Error("the recording came out empty");
-        const extension = extensionForMimeType(mimeType);
-        if (exportDestDir) {
-          // desktop, with a destination folder picked (see MorphingTab.jsx's
-          // own folder-picker control) - write the bytes straight to disk
-          // instead of a browser download, same folder-naming convention
-          // the Trends tab's "export results" uses.
-          const savedPath = await saveWithConflictPrompt(blob, extension);
-          setExportStatus(savedPath ? `Saved to ${savedPath}` : "Not saved (file already exists)");
-        } else {
-          const url = URL.createObjectURL(blob);
-          triggerDownload(url, overlaySuffix ? `morph_animation_${overlaySuffix}.${extension}` : `morph_animation.${extension}`);
-          // the download itself is synchronous (the anchor click fires
-          // immediately), but WebView2/some browsers read the blob lazily
-          // right after - revoking too early can turn that into an empty/
-          // corrupt file, so this waits a beat rather than revoking inline.
-          setTimeout(() => URL.revokeObjectURL(url), 30_000);
-          setExportStatus("");
-        }
+        await deliverVideo(blob, extensionForMimeType(mimeType));
         lastError = null;
         break;
       } catch (err) {

@@ -40,6 +40,7 @@ from .craniometrics import (
     find_hc_slice_height,
     frontal_bossing,
     hc_slice_polygon,
+    registered_sellion,
 )
 from .io import load_mesh
 from .metopic import MetopicResult, analyze_forehead
@@ -286,7 +287,8 @@ def measure_mean_shape(mesh: trimesh.Trimesh, target: str) -> GroupMeasurements:
     varies slightly per patient and isn't reproduced here - the practical
     effect is a few mm of slice-height uncertainty, not a wrong answer."""
     landmarks = REFERENCE_TRIANGLE if target == "cranium" else FACE_REFERENCE_TRIANGLE
-    sellion = landmarks[0]
+    # this mesh's own sellion, not the reference one - see registered_sellion
+    sellion = registered_sellion(mesh, landmarks[0])
 
     asymmetry = calculate_asymmetry(mesh)
 
@@ -383,7 +385,7 @@ def sagittal_midline_band(mesh_paths: list[Path], target: str, n_samples: int = 
             if target == "cranium"
             else find_hc_slice_height(mesh, landmarks)
         )
-        bossing = frontal_bossing(mesh, sellion, slice_height)
+        bossing = frontal_bossing(mesh, registered_sellion(mesh, sellion), slice_height)
         if bossing is None:
             continue
         arc = _forehead_arc_yz(bossing.profile, bossing.sellion)

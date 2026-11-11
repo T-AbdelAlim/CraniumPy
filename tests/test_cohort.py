@@ -288,6 +288,21 @@ def test_measure_mean_shape_face_target_computes_metopic_and_asymmetry():
     assert np.isfinite(result.slice_height)
 
 
+@pytest.mark.parametrize("template_name,target", [("clipped_template_xy_com", "cranium"), ("template_face", "face")])
+def test_measure_mean_shape_frontal_bossing_follows_a_depth_shift(template_name, target):
+    # the center-of-mass correction moves every visit along z by its own
+    # amount - the sellion has to move with the mesh, and the angle stay put
+    mesh = _demo_mean_mesh(template_name)
+    shifted = mesh.copy()
+    shifted.vertices = shifted.vertices + np.array([0.0, 0.0, 12.0])
+
+    before = measure_mean_shape(mesh, target).frontal_bossing
+    after = measure_mean_shape(shifted, target).frontal_bossing
+
+    assert after.sellion[2] - before.sellion[2] == pytest.approx(12.0, abs=0.5)
+    assert after.angle_deg == pytest.approx(before.angle_deg, abs=0.5)
+
+
 # --- sagittal_midline_band --------------------------------------------------
 # same "exercise the real demo-cohort meshes" reasoning as
 # test_measure_mean_shape_* above - this needs real head-shaped geometry

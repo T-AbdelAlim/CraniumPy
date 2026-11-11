@@ -428,6 +428,41 @@ def _select_forehead_half(arc: np.ndarray, sellion: np.ndarray) -> np.ndarray:
     return front_half if front_dz <= back_dz else back_half
 
 
+def registered_sellion(mesh: trimesh.Trimesh, reference_sellion: np.ndarray) -> np.ndarray:
+    """where the sellion actually is on an already-registered mesh that comes
+    without its own landmarks (a template-fitted visit, a mean shape).
+
+    the reference triangle's sellion is not good enough on its own: the
+    rigid alignment only fixes the DIRECTION from the landmark centroid to
+    sellion, so a bigger head puts its sellion further along that line, and
+    the center-of-mass correction then shifts every mesh along z by its own
+    amount. what survives both is the line itself - x and y of the reference
+    sellion, any z. so the sellion is the most anterior surface point on that
+    line, or, on a cranial clip that cut the nasal root away, the most
+    anterior midline point on the clip's lower edge.
+
+    using the fixed reference point instead left it static (and off the
+    surface) across a follow-up, so the frontal bossing angle drifted with
+    head size alone. falls back to the reference point when the mesh has
+    nothing on the midline."""
+    reference_sellion = np.asarray(reference_sellion, dtype=np.float64)
+    x0, y0 = reference_sellion[0], reference_sellion[1]
+    origin = np.array([[x0, y0, mesh.bounds[1][2] + 10.0]])
+    hits, _, _ = mesh.ray.intersects_location(origin, np.array([[0.0, 0.0, -1.0]]))
+    if len(hits):
+        return hits[np.argmax(hits[:, 2])]
+
+    vertices = np.asarray(mesh.vertices)
+    midline = vertices[np.abs(vertices[:, 0] - x0) < 3.0]
+    front = midline[midline[:, 2] > np.median(vertices[:, 2])]
+    if not len(front):
+        return reference_sellion
+    lowest = front[front[:, 1] < front[:, 1].min() + 2.0]
+    point = lowest[np.argmax(lowest[:, 2])]
+    snapped, _, _ = trimesh.proximity.closest_point(mesh, point[np.newaxis, :])
+    return snapped[0]
+
+
 def frontal_bossing(mesh: trimesh.Trimesh, sellion: np.ndarray, slice_height: float) -> FrontalBossingResult | None:
     """how much the forehead bulges forward, measured in the sagittal
     (midline) plane through sellion: slices the mesh at x = sellion.x,
