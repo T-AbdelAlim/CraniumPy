@@ -1527,6 +1527,34 @@ def test_cohort_load_joins_nicp_mesh_path_from_id_mapping_file(client, tmp_path)
     assert body["rows"][0]["nicp_mesh_path"] == "/mesh/patient_rg_CN.ply"
 
 
+def test_cohort_load_finds_moved_meshes_next_to_the_cohort_file(client, tmp_path):
+    # a cohort folder copied elsewhere: the stored absolute paths point at
+    # the old location, the meshes came along in meshes/ (or loose next to
+    # the cohort file) - and one that's nowhere keeps its stored path
+    cohort_path = tmp_path / "cohort.xlsx"
+    (tmp_path / "meshes").mkdir()
+    (tmp_path / "meshes" / "C00001_rg_CN.ply").write_text("ply")
+    (tmp_path / "C00002_rg_FN.ply").write_text("ply")
+    _write_cohort_xlsx(cohort_path, ["cohort_id"], [["C00001"], ["C00002"], ["C00003"]])
+    _write_cohort_xlsx(
+        _id_mapping_path(cohort_path),
+        ["cohort_id", "nicp_mesh_path"],
+        [
+            ["C00001", r"C:\Elsewhere\cohort\meshes\C00001_rg_CN.ply"],
+            ["C00002", "/old/place/C00002_rg_FN.ply"],
+            ["C00003", r"C:\Elsewhere\cohort\meshes\C00003_rg_CN.ply"],
+        ],
+    )
+
+    response = client.post("/api/cohort/load", json={"path": str(cohort_path)})
+
+    assert response.status_code == 200, response.text
+    paths = [r["nicp_mesh_path"] for r in response.json()["rows"]]
+    assert paths[0] == str(tmp_path / "meshes" / "C00001_rg_CN.ply")
+    assert paths[1] == str(tmp_path / "C00002_rg_FN.ply")
+    assert paths[2] == r"C:\Elsewhere\cohort\meshes\C00003_rg_CN.ply"
+
+
 def test_cohort_load_without_id_mapping_file_has_no_nicp_mesh_path_column(client, tmp_path):
     cohort_path = tmp_path / "cohort.xlsx"
     _write_cohort_xlsx(cohort_path, ["patient_id", "diagnosis"], [["P001", "metopic"]])

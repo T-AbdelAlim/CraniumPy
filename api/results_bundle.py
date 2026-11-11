@@ -1063,6 +1063,25 @@ def list_cohort_patients(cohort_path: Path) -> list[dict[str, str]]:
     return sorted(by_patient.values(), key=lambda p: p["patient_id"])
 
 
+def _locate_cohort_mesh(cohort_path: Path, stored: str) -> str:
+    """the mesh a mapping row points at: the stored absolute path when it's
+    there, otherwise a file with the same name in a meshes folder next to
+    the cohort file, or next to the cohort file itself. the stored path is
+    only right on the machine (and in the folder) the cohort was built in -
+    a cohort folder copied to another laptop or drive, its meshes copied
+    along, would otherwise find none of them. returns the stored path
+    unchanged when neither has it, so the "not found" error still names
+    where it was expected."""
+    if not stored or Path(stored).is_file():
+        return stored
+    # a mapping written on Windows still has backslashes when read elsewhere
+    name = stored.replace("\\", "/").rsplit("/", 1)[-1]
+    for candidate in (cohort_path.parent / "meshes" / name, cohort_path.parent / name):
+        if candidate.is_file():
+            return str(candidate)
+    return stored
+
+
 def attach_nicp_mesh_paths(cohort_path: Path, columns: list[str], rows: list[dict[str, str]]) -> None:
     """desktop-only: joins nicp_mesh_path back onto every already-loaded
     cohort row from the sibling id-mapping file (see _upsert_cohort_xlsx),
@@ -1083,7 +1102,7 @@ def attach_nicp_mesh_paths(cohort_path: Path, columns: list[str], rows: list[dic
     if not mapping_path.exists():
         return
     _, mapping_rows = _read_xlsx_rows(mapping_path)
-    paths_by_id = {r.get("cohort_id", ""): r.get("nicp_mesh_path", "") for r in mapping_rows}
+    paths_by_id = {r.get("cohort_id", ""): _locate_cohort_mesh(cohort_path, r.get("nicp_mesh_path", "")) for r in mapping_rows}
     if "nicp_mesh_path" not in columns:
         columns.append("nicp_mesh_path")
     for row in rows:
