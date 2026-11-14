@@ -264,6 +264,27 @@ class GroupMeasurements:
     slice_height: float
 
 
+def registered_frame(mesh: trimesh.Trimesh) -> str | None:
+    """"cranium" or "face" when the mesh sits in one of the two registered
+    frames, None when it doesn't look registered at all. the cranial frame
+    has sellion at REFERENCE_TRIANGLE[0] (z = +57), so the vault reaches
+    well past z = +60 and nothing hangs far below the sellion plane; the
+    facial frame has sellion at the origin, so the face sits around
+    z <= +25 with the chin far below y = 0."""
+    vertices = np.asarray(mesh.vertices)
+    if len(vertices) == 0:
+        return None
+    lo, hi = vertices.min(axis=0), vertices.max(axis=0)
+    width = hi[0] - lo[0]
+    if not 80 < width < 260 or abs(hi[0] + lo[0]) > 0.25 * width:
+        return None  # not centred on the midsagittal plane, or not head sized
+    if hi[2] > 45 and lo[1] > -20:
+        return "cranium"
+    if hi[2] < 45 and lo[1] < -20:
+        return "face"
+    return None
+
+
 def measure_mean_shape(mesh: trimesh.Trimesh, target: str) -> GroupMeasurements:
     """runs the same measurement suite the single-patient pipeline does
     (see pipeline.measure_cranial/measure_facial) directly on a computed

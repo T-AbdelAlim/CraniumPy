@@ -711,11 +711,13 @@ function App() {
     meshLabel: newMeshLabel,
     filePath: newFilePath,
     selectionHasTexture: newSelectionHasTexture,
+    registeredFrame,
   }) {
     releaseSessionIfUnused(sessionId); // release whatever session this one is replacing, unless Longitudinal still holds it
     setSessionId(newSessionId);
     setMeshLabel(newMeshLabel);
-    setSkipTarget(targetFromMeshName(newMeshLabel) ?? target);
+    // the mesh's own geometry first, its file name as a fallback
+    setSkipTarget(registeredFrame ?? targetFromMeshName(newMeshLabel) ?? target);
     setSelectionHasTexture(newSelectionHasTexture);
     setWireframe(false);
     setDropStatus("");
@@ -781,7 +783,9 @@ function App() {
       const nativePaths = await waitForNativeDropPaths(names);
       const resolvedPaths = nativePaths && names.every((n) => nativePaths[n]) ? names.map((n) => nativePaths[n]) : null;
 
-      const { sessionId: newSessionId } = resolvedPaths ? await openFromPaths(resolvedPaths) : await uploadSession(files);
+      const { sessionId: newSessionId, registeredFrame } = resolvedPaths
+        ? await openFromPaths(resolvedPaths)
+        : await uploadSession(files);
       const primaryName = primaryMeshFile(names);
       const filePath = resolvedPaths && primaryName ? resolvedPaths[names.indexOf(primaryName)] : "";
 
@@ -796,6 +800,7 @@ function App() {
         meshLabel: primaryName ?? "",
         filePath,
         selectionHasTexture: hasTextureFile(names),
+        registeredFrame,
       });
     } catch (err) {
       setDropStatus(`Upload failed: ${err.message}`);

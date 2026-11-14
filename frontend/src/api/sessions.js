@@ -7,7 +7,12 @@ export async function uploadSession(files) {
   const response = await fetch("/api/sessions", { method: "POST", body: formData });
   if (!response.ok) throw new Error(await response.text());
   const data = await response.json();
-  return { sessionId: data.session_id, vertexCount: data.vertex_count, faceCount: data.face_count };
+  return {
+    sessionId: data.session_id,
+    vertexCount: data.vertex_count,
+    faceCount: data.face_count,
+    registeredFrame: data.registered_frame ?? null,
+  };
 }
 
 // desktop: opens straight from real local paths (picked via lib/desktop.js's
@@ -23,7 +28,12 @@ export async function openFromPaths(paths) {
   });
   if (!response.ok) throw new Error(await response.text());
   const data = await response.json();
-  return { sessionId: data.session_id, vertexCount: data.vertex_count, faceCount: data.face_count };
+  return {
+    sessionId: data.session_id,
+    vertexCount: data.vertex_count,
+    faceCount: data.face_count,
+    registeredFrame: data.registered_frame ?? null,
+  };
 }
 
 export function meshUrl(sessionId, stage = "original") {

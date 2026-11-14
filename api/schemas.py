@@ -208,6 +208,10 @@ class UploadResponse(BaseModel):
     session_id: str
     vertex_count: int
     face_count: int
+    # which template frame the mesh already sits in, if it looks registered
+    # (see cohort.registered_frame) - what "preprocessing already
+    # performed" measures it as by default
+    registered_frame: Literal["cranium", "face"] | None = None
 
 
 class OpenFromPathsRequest(BaseModel):

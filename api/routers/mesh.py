@@ -286,7 +286,10 @@ async def upload_mesh(files: list[UploadFile]) -> UploadResponse:
 
     session = store.create(mesh, original_filename=primary_name)
     repair_worker.warm_up()
-    return UploadResponse(session_id=session.id, vertex_count=len(mesh.vertices), face_count=len(mesh.faces))
+    return UploadResponse(
+        session_id=session.id, vertex_count=len(mesh.vertices), face_count=len(mesh.faces),
+        registered_frame=cohort.registered_frame(mesh),
+    )
 
 
 @router.post("/from-paths", response_model=UploadResponse)
@@ -303,7 +306,10 @@ def open_mesh_from_paths(request: OpenFromPathsRequest) -> UploadResponse:
     primary_path = next(p for p in request.paths if Path(p).name == primary_name)
     session = store.create(mesh, original_filename=primary_name, source_dir=Path(primary_path).parent)
     repair_worker.warm_up()
-    return UploadResponse(session_id=session.id, vertex_count=len(mesh.vertices), face_count=len(mesh.faces))
+    return UploadResponse(
+        session_id=session.id, vertex_count=len(mesh.vertices), face_count=len(mesh.faces),
+        registered_frame=cohort.registered_frame(mesh),
+    )
 
 
 @router.delete("/{session_id}", status_code=204)

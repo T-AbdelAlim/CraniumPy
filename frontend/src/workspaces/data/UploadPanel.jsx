@@ -56,9 +56,9 @@ export default function UploadPanel({ onUploaded }) {
     setMeshPath(meshLabel);
     setStatus("Uploading...");
     try {
-      const { sessionId, vertexCount, faceCount } = await doOpen();
+      const { sessionId, vertexCount, faceCount, registeredFrame } = await doOpen();
       setStatus(`${vertexCount} vertices, ${faceCount} faces`);
-      onUploaded({ sessionId, meshLabel, filePath, selectionHasTexture: hasTextureFile(names) });
+      onUploaded({ sessionId, meshLabel, filePath, selectionHasTexture: hasTextureFile(names), registeredFrame });
     } catch (err) {
       setStatus(`Upload failed: ${err.message}`);
     }

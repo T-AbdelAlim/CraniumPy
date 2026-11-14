@@ -703,6 +703,20 @@ def test_results_before_analysis_returns_409(client):
     assert response.status_code == 409
 
 
+@pytest.mark.parametrize(
+    "name, frame",
+    [("clipped_template_xy_com.ply", "cranium"), ("template_face.ply", "face"), ("template_xy_com.ply", None)],
+)
+def test_upload_says_which_registered_frame_the_mesh_is_in(client, name, frame):
+    # what "preprocessing already performed" measures the mesh as by
+    # default - a cranium measured as a face (or the other way round) puts
+    # every overlay off the mesh
+    with open(TEMPLATES_DIR / name, "rb") as f:
+        response = client.post("/api/sessions", files=[("files", (name, f, "application/octet-stream"))])
+    assert response.status_code == 200, response.text
+    assert response.json()["registered_frame"] == frame
+
+
 def test_measure_registered_skips_straight_to_results(client):
     # "preprocessing already performed" - no /align, /clip, or /run at all,
     # just the uploaded mesh treated as already registered.
