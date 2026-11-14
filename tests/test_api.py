@@ -18,6 +18,7 @@ import pytest
 import trimesh
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
+from scipy import stats as scipy_stats
 
 from api.main import app
 from api.results_bundle import _id_mapping_path
@@ -1619,6 +1620,38 @@ def test_cohort_stats_test_three_groups_uses_anova_and_kruskal(client):
     assert body["n_groups"] == 3
     assert body["test_name"] == "One-way ANOVA"
     assert body["alternative_test_name"] == "Kruskal-Wallis H"
+
+
+def test_cohort_stats_test_says_which_groups_differ(client):
+    rng = np.random.default_rng(0)
+    low = rng.normal(100, 2, 15).tolist()
+    also_low = rng.normal(100.5, 2, 15).tolist()
+    high = rng.normal(110, 2, 15).tolist()
+    response = client.post("/api/cohort/stats-test", json={"values": {"a": low, "b": also_low, "c": high}})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["pairwise_test_name"] == "Tukey HSD"
+    assert body["alternative_pairwise_test_name"] == "Dunn (Holm)"
+    pairs = {(p["group_a"], p["group_b"]): p for p in body["pairwise"]}
+    assert set(pairs) == {("a", "b"), ("a", "c"), ("b", "c")}
+    for key in (("a", "c"), ("b", "c")):
+        assert pairs[key]["p_value"] < 0.001 and pairs[key]["alternative_p_value"] < 0.001
+        assert pairs[key]["mean_difference"] > 5
+    assert pairs[("a", "b")]["p_value"] > 0.05 and pairs[("a", "b")]["alternative_p_value"] > 0.05
+    tukey = scipy_stats.tukey_hsd(low, also_low, high)
+    assert pairs[("a", "c")]["p_value"] == pytest.approx(tukey.pvalue[0, 2])
+
+
+def test_cohort_stats_test_two_groups_has_one_pair(client):
+    response = client.post(
+        "/api/cohort/stats-test",
+        json={"values": {"control": [1.0, 2.0, 3.0, 4.0], "metopic": [5.0, 6.0, 7.0, 8.0]}},
+    )
+    body = response.json()
+    assert len(body["pairwise"]) == 1
+    assert body["pairwise"][0]["p_value"] == pytest.approx(body["p_value"])
+    assert body["pairwise"][0]["alternative_p_value"] == pytest.approx(body["alternative_p_value"])
 
 
 def test_cohort_stats_test_requires_at_least_two_groups(client):

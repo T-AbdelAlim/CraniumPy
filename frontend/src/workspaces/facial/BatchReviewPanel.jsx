@@ -4,6 +4,10 @@ import MeasurementLegend from "./MeasurementLegend.jsx";
 import { facialBatchMeshUrl } from "../../api/facial.js";
 import { colorToThreeHex } from "./lib/points.js";
 
+// smaller points than while defining: here they only need to be seen and,
+// now and then, alt-dragged - at full size they hide the surface around them
+const BATCH_MARKER_SCALE = 1.3;
+
 // review, one file at a time - a single active Viewer (never one per file;
 // a batch of 50-200 must never mount more than one full mesh at once, see
 // api/routers/facial.py's own module docstring), prev/next navigation.
@@ -80,6 +84,7 @@ export default function BatchReviewPanel({ viewerRef, batchId, results, activeIn
               textureEnabled={false}
               landmarks={active.landmarkPoints}
               landmarkColors={landmarkColorByPoint}
+              landmarkScale={BATCH_MARKER_SCALE}
               onDrag={(pointId, point) => onCorrect(active.filename, pointId, point)}
             />
             {loadStatus && <p className="hint facial-define-hint">{loadStatus}</p>}

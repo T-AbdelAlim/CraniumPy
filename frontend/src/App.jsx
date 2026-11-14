@@ -91,6 +91,17 @@ function baseName(path) {
   return path.split(/[\\/]/).pop();
 }
 
+// which template an already-preprocessed mesh was registered to, from the
+// name CraniumPy itself gave it (_rg_F / _rg_FN face, _rg_C / _rg_CN
+// cranium, and the demo cohort's _F_rg_N / _C_rg_N); null when the name
+// doesn't say
+function targetFromMeshName(name) {
+  const stem = (name || "").replace(/\.[^.]+$/, "");
+  if (/(_rg_FN?|_F_rg_N)$/i.test(stem)) return "face";
+  if (/(_rg_CN?|_C_rg_N)$/i.test(stem)) return "cranium";
+  return null;
+}
+
 // see displayedMeshKeyRef. target has to be part of this key, not just
 // descriptor - /mesh/{stage} (meshUrl below) doesn't take target in the
 // URL at all, it serves whatever the session's own active_target
@@ -464,6 +475,9 @@ function App() {
   }
 
   const [target, setTarget] = useState("cranium");
+  // what "preprocessing already performed" measures the mesh as: guessed
+  // from the file name on upload, changeable next to that button
+  const [skipTarget, setSkipTarget] = useState("cranium");
   const [useAltFrontal, setUseAltFrontal] = useState(false);
   // the 4th landmark only ever takes part in a cranial registration - kept
   // picked (and the checkbox kept ticked) while the face is selected, just
@@ -701,6 +715,7 @@ function App() {
     releaseSessionIfUnused(sessionId); // release whatever session this one is replacing, unless Longitudinal still holds it
     setSessionId(newSessionId);
     setMeshLabel(newMeshLabel);
+    setSkipTarget(targetFromMeshName(newMeshLabel) ?? target);
     setSelectionHasTexture(newSelectionHasTexture);
     setWireframe(false);
     setDropStatus("");
@@ -1497,7 +1512,11 @@ function App() {
   async function handleSkipPreprocessing() {
     setAnalysisStatus("Measuring...");
     try {
-      const results = await measureRegistered(sessionId, target);
+      // measured as the template it was registered to - a face mesh
+      // measured as a cranium gives a 30 cm head circumference
+      const measureTarget = skipTarget;
+      if (measureTarget !== target) setTarget(measureTarget);
+      const results = await measureRegistered(sessionId, measureTarget);
       setAnalysisResults(results);
       setAnalysisViewMode("metopic");
       setAnalysisStatus("");
@@ -2283,9 +2302,16 @@ function App() {
           <>
             <UploadPanel onUploaded={handleUploaded} />
             {sessionId != null && !pipelineRan && (
-              <button type="button" className="button-subtle" onClick={handleSkipPreprocessing}>
-                Preprocessing already performed - move to analysis
-              </button>
+              <div className="skip-preprocessing">
+                <label htmlFor="skip-target">already preprocessed mesh, registered to</label>
+                <select id="skip-target" value={skipTarget} onChange={(e) => setSkipTarget(e.target.value)}>
+                  <option value="cranium">Cranial Vault</option>
+                  <option value="face">Face &amp; Forehead</option>
+                </select>
+                <button type="button" className="button-subtle" onClick={handleSkipPreprocessing}>
+                  Preprocessing already performed - move to analysis
+                </button>
+              </div>
             )}
             {sessionId != null && (
               <MeshViewToggles

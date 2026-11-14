@@ -46,7 +46,7 @@ const ANALYSIS_DEFAULT_MESH_OPACITY = 0.35;
 // onPick/onDrag are event-shaped callback props - things that *happen* in
 // the viewer, reported outward, same as an onClick. later layers (HC-line,
 // heatmap, template overlay) follow the same split as they're added.
-const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks, landmarkColors, onPick, onDrag, onFilesDropped }, ref) {
+const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks, landmarkColors, landmarkScale = LANDMARK_MARKER_SCALE, onPick, onDrag, onFilesDropped }, ref) {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
   const sceneBagRef = useThreeScene(canvasRef, containerRef);
@@ -194,9 +194,9 @@ const Viewer = forwardRef(function Viewer({ wireframe, textureEnabled, landmarks
     const sceneBag = sceneBagRef.current;
     if (!sceneBag) return;
     syncLandmarkMarkers({
-      sceneBag, markersRef, landmarks, colors: landmarkColors, radius: meshStateRef.current.markerRadius * LANDMARK_MARKER_SCALE,
+      sceneBag, markersRef, landmarks, colors: landmarkColors, radius: meshStateRef.current.markerRadius * landmarkScale,
     });
-  }, [landmarks, landmarkColors]);
+  }, [landmarks, landmarkColors, landmarkScale]);
 
   // ctrl/cmd-click to place, alt-drag to reposition. listeners attach once
   // and read the latest callbacks/mesh/markers through refs (kept fresh by

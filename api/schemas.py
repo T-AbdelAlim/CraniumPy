@@ -488,6 +488,14 @@ class CohortStatsTestRequest(BaseModel):
     values: dict[str, list[float]]
 
 
+class PairwiseComparison(BaseModel):
+    group_a: str
+    group_b: str
+    mean_difference: float  # mean of group_b minus mean of group_a
+    p_value: float
+    alternative_p_value: float
+
+
 class CohortStatsTestResponse(BaseModel):
     """both a parametric and a rank-based (nonparametric) test result
     together, rather than the backend silently picking one - see
@@ -502,6 +510,13 @@ class CohortStatsTestResponse(BaseModel):
     alternative_test_name: str
     alternative_statistic: float
     alternative_p_value: float
+    # which groups differ from which: every pair, with the parametric and
+    # the rank-based p-value (already corrected for the number of pairs
+    # when there are 3+ groups)
+    pairwise_test_name: str = ""
+    alternative_pairwise_test_name: str = ""
+    alpha: float = 0.05
+    pairwise: list[PairwiseComparison] = []
 
 
 class CohortMeanShapeRequest(BaseModel):

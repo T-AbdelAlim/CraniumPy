@@ -6,7 +6,9 @@ import InfoTooltip from "../../../components/InfoTooltip.jsx";
 
 const TEST_EXPLAINER =
   "2 groups: Welch's t-test (doesn't assume equal variance) alongside Mann-Whitney U (rank-based, no " +
-  "normality assumption). 3+ groups: one-way ANOVA alongside Kruskal-Wallis H, the same pairing one level up. " +
+  "normality assumption). 3+ groups: one-way ANOVA alongside Kruskal-Wallis H, the same pairing one level up, " +
+  "followed by every pair compared (Tukey HSD and Dunn's test, corrected for the number of pairs) to show which " +
+  "groups differ from which. " +
   "both come back together deliberately - which to trust depends on sample size and how skewed the data " +
   "actually looks, not something this workspace can decide for you.";
 
@@ -43,6 +45,23 @@ const TEST_INFO = {
     docsUrl: "https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.kruskal.html",
   },
 };
+
+const PAIRWISE_INFO = {
+  "Tukey HSD": {
+    reason:
+      "follows the ANOVA: compares every pair of group means, with p-values corrected so the chance of any false " +
+      "positive over all pairs stays at 5%.",
+    docsUrl: "https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.tukey_hsd.html",
+  },
+  "Dunn (Holm)": {
+    reason:
+      "follows Kruskal-Wallis: compares every pair on the same ranks, without assuming normal data; p-values " +
+      "Holm-corrected for the number of pairs.",
+    docsUrl: "https://doi.org/10.1080/00401706.1964.10490181",
+  },
+};
+
+const formatP = (p) => (p < 0.0001 ? "< 0.0001" : p.toFixed(4));
 
 const TEST_DISCLAIMER =
   "Which test ran was picked automatically from the number of groups alone, not from your data's actual sample " +
@@ -83,6 +102,15 @@ export default function StratifyTab({ rows, columns }) {
   const [exportStatus, setExportStatus] = useState("");
 
   const groupByIsNumeric = groupByColumn && types[groupByColumn] === "numeric";
+
+  // a test result belongs to one comparison: clear it when that changes
+  function changeComparison(setter) {
+    return (value) => {
+      setter(value);
+      setTestResult(null);
+      setTestStatus("");
+    };
+  }
 
   const groups = useMemo(() => {
     if (!metricColumn || !groupByColumn) return {};
@@ -136,6 +164,19 @@ export default function StratifyTab({ rows, columns }) {
             },
           ],
         });
+        if (testResult.pairwise?.length) {
+          sheets.push({
+            title: "pairwise",
+            columns: ["group_a", "group_b", "mean_difference", testResult.pairwise_test_name, testResult.alternative_pairwise_test_name],
+            rows: testResult.pairwise.map((pr) => ({
+              group_a: pr.group_a,
+              group_b: pr.group_b,
+              mean_difference: pr.mean_difference.toFixed(4),
+              [testResult.pairwise_test_name]: pr.p_value.toFixed(4),
+              [testResult.alternative_pairwise_test_name]: pr.alternative_p_value.toFixed(4),
+            })),
+          });
+        }
       }
       await downloadCohortExportXlsx(sheets, `${metricColumn}_by_${groupByColumn}.xlsx`);
       setExportStatus("");
@@ -151,14 +192,14 @@ export default function StratifyTab({ rows, columns }) {
   return (
     <section>
       <label htmlFor="stratify-metric">compare</label>
-      <select id="stratify-metric" value={metricColumn} onChange={(e) => setMetricColumn(e.target.value)}>
+      <select id="stratify-metric" value={metricColumn} onChange={(e) => changeComparison(setMetricColumn)(e.target.value)}>
         {numericColumns.map((c) => (
           <option key={c} value={c}>{c}</option>
         ))}
       </select>
 
       <label htmlFor="stratify-groupby">group by</label>
-      <select id="stratify-groupby" value={groupByColumn} onChange={(e) => setGroupByColumn(e.target.value)}>
+      <select id="stratify-groupby" value={groupByColumn} onChange={(e) => changeComparison(setGroupByColumn)(e.target.value)}>
         {columns.map((c) => (
           <option key={c} value={c}>{c} {types[c] === "numeric" ? "(numeric)" : ""}</option>
         ))}
@@ -173,7 +214,7 @@ export default function StratifyTab({ rows, columns }) {
             min="2"
             max="10"
             value={nBins}
-            onChange={(e) => setNBins(Math.max(2, Math.min(10, Number(e.target.value) || 2)))}
+            onChange={(e) => changeComparison(setNBins)(Math.max(2, Math.min(10, Number(e.target.value) || 2)))}
           />
         </>
       )}
@@ -182,7 +223,7 @@ export default function StratifyTab({ rows, columns }) {
         <p className="hint">Not enough data for this comparison.</p>
       ) : (
         <>
-          <table className="measurements-table cohort-ws-table">
+          <table className="measurements-table cohort-ws-table cohort-ws-stats-table">
             <thead>
               <tr>
                 <th>group</th>
@@ -240,17 +281,68 @@ export default function StratifyTab({ rows, columns }) {
                   </tr>
                 </tbody>
               </table>
-              {[testResult.test_name, testResult.alternative_test_name].map((name) => (
+              {testResult.pairwise?.length > 0 && <PairwiseResult result={testResult} />}
+              {[
+                testResult.test_name,
+                testResult.alternative_test_name,
+              ].map((name) => (
                 <p key={name} className="hint">
                   <strong>{name}</strong>: {TEST_INFO[name]?.reason}{" "}
                   <a href={TEST_INFO[name]?.docsUrl} target="_blank" rel="noreferrer">scipy documentation</a>
                 </p>
               ))}
+              {testResult.n_groups > 2 &&
+                [testResult.pairwise_test_name, testResult.alternative_pairwise_test_name].map((name) => (
+                  <p key={name} className="hint">
+                    <strong>{name}</strong>: {PAIRWISE_INFO[name]?.reason}{" "}
+                    <a href={PAIRWISE_INFO[name]?.docsUrl} target="_blank" rel="noreferrer">reference</a>
+                  </p>
+                ))}
               <p className="hint cohort-ws-test-disclaimer">{TEST_DISCLAIMER}</p>
             </>
           )}
         </>
       )}
     </section>
+  );
+}
+
+// which groups differ from which: every pair, both p-values, the significant
+// ones marked, and a one-line summary above the table
+function PairwiseResult({ result }) {
+  const { alpha, pairwise, pairwise_test_name: name, alternative_pairwise_test_name: altName } = result;
+  const both = pairwise.filter((p) => p.p_value < alpha && p.alternative_p_value < alpha);
+  const onlyOne = pairwise.filter((p) => (p.p_value < alpha) !== (p.alternative_p_value < alpha));
+  const pairText = (p) => `${p.group_a} vs ${p.group_b}`;
+  return (
+    <>
+      <p className="cohort-ws-pairwise-summary">
+        {both.length === 0
+          ? `No pair of groups differs significantly in both tests (p < ${alpha}).`
+          : `Significantly different (p < ${alpha} in both tests): ${both.map(pairText).join(", ")}.`}
+        {onlyOne.length > 0 && ` Significant in one test only: ${onlyOne.map(pairText).join(", ")}.`}
+      </p>
+      <table className="measurements-table cohort-ws-table cohort-ws-stats-table">
+        <thead>
+          <tr>
+            <th>pair</th>
+            <th>difference in means</th>
+            <th>{name} p</th>
+            <th>{altName} p</th>
+          </tr>
+        </thead>
+        <tbody>
+          {pairwise.map((p) => (
+            <tr key={pairText(p)}>
+              <td className="cohort-ws-col-name">{pairText(p)}</td>
+              <td>{p.mean_difference >= 0 ? "+" : ""}{p.mean_difference.toFixed(2)}</td>
+              <td className={p.p_value < alpha ? "cohort-ws-significant" : ""}>{formatP(p.p_value)}</td>
+              <td className={p.alternative_p_value < alpha ? "cohort-ws-significant" : ""}>{formatP(p.alternative_p_value)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="hint">difference in means: second group minus first. Significant p-values (below {alpha}) in bold.</p>
+    </>
   );
 }

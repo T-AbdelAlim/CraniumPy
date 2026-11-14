@@ -1045,6 +1045,27 @@ select {
   text-align: left;
 }
 
+.skip-preprocessing {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.75rem;
+}
+
+/* numbers sit right-aligned in their cells, so their headers do too */
+.cohort-ws-stats-table th:not(:first-child) {
+  text-align: right;
+}
+
+.cohort-ws-significant {
+  font-weight: 700;
+}
+
+.cohort-ws-pairwise-summary {
+  margin: 0.5rem 0 0;
+  color: var(--text-primary);
+}
+
 .cohort-ws-sortable-header {
   cursor: pointer;
   user-select: none;

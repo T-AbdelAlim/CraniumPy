@@ -48,6 +48,7 @@ from api.schemas import (
     CohortSpreadBandResponse,
     CohortStatsTestRequest,
     CohortStatsTestResponse,
+    PairwiseComparison,
     ExcludedMeshOut,
     FacialMeasurementsLoadRequest,
     FacialMeasurementsLoadResponse,
@@ -166,6 +167,31 @@ async def upload_cohort(file: UploadFile) -> CohortDataResponse:
     return CohortDataResponse(columns=columns, rows=rows)
 
 
+def _dunn_holm(arrays: list[np.ndarray], pairs: list[tuple[int, int]]) -> dict[tuple[int, int], float]:
+    """Dunn's test on the ranks Kruskal-Wallis used (ties averaged and
+    corrected for), p-values Holm-adjusted over all pairs."""
+    pooled = np.concatenate(arrays)
+    n_total = len(pooled)
+    ranks = scipy_stats.rankdata(pooled)
+    _, tie_counts = np.unique(pooled, return_counts=True)
+    tie_term = float(np.sum(tie_counts**3 - tie_counts)) / (12.0 * (n_total - 1))
+    bounds = np.cumsum([0] + [len(a) for a in arrays])
+    mean_ranks = [ranks[bounds[k]:bounds[k + 1]].mean() for k in range(len(arrays))]
+    raw = []
+    for i, j in pairs:
+        se = np.sqrt((n_total * (n_total + 1) / 12.0 - tie_term) * (1.0 / len(arrays[i]) + 1.0 / len(arrays[j])))
+        z = abs(mean_ranks[i] - mean_ranks[j]) / se if se > 0 else 0.0
+        raw.append(2.0 * scipy_stats.norm.sf(z))
+    # Holm: smallest p times m, next times m-1, ..., kept monotone
+    order = np.argsort(raw)
+    adjusted = np.empty(len(raw))
+    running = 0.0
+    for rank, k in enumerate(order):
+        running = max(running, min(1.0, (len(raw) - rank) * raw[k]))
+        adjusted[k] = running
+    return {pair: float(adjusted[k]) for k, pair in enumerate(pairs)}
+
+
 def _run_stats_test(groups: dict[str, list[float]]) -> CohortStatsTestResponse:
     """2 groups: Welch's t-test (doesn't assume equal variance) +
     Mann-Whitney U (rank-based, no normality assumption at all). 3+ groups:
@@ -182,16 +208,42 @@ def _run_stats_test(groups: dict[str, list[float]]) -> CohortStatsTestResponse:
             raise HTTPException(status_code=400, detail=f"group {label!r} has fewer than 2 values")
 
     arrays = [np.asarray(groups[label], dtype=float) for label in labels]
+    pairs = [(i, j) for i in range(len(labels)) for j in range(i + 1, len(labels))]
     if len(labels) == 2:
         primary = scipy_stats.ttest_ind(arrays[0], arrays[1], equal_var=False)
         alternative = scipy_stats.mannwhitneyu(arrays[0], arrays[1], alternative="two-sided")
         test_name, alternative_name = "Welch's t-test", "Mann-Whitney U"
+        # one pair: the tests themselves already say which two differ
+        pair_name, alternative_pair_name = test_name, alternative_name
+        pair_p = {(0, 1): float(primary.pvalue)}
+        alternative_pair_p = {(0, 1): float(alternative.pvalue)}
     else:
         primary = scipy_stats.f_oneway(*arrays)
         alternative = scipy_stats.kruskal(*arrays)
         test_name, alternative_name = "One-way ANOVA", "Kruskal-Wallis H"
+        # the usual follow-ups: Tukey's HSD after the ANOVA, Dunn's test
+        # (Holm-corrected) after Kruskal-Wallis - both keep the error rate
+        # over all pairs at alpha
+        pair_name, alternative_pair_name = "Tukey HSD", "Dunn (Holm)"
+        tukey = scipy_stats.tukey_hsd(*arrays)
+        pair_p = {(i, j): float(tukey.pvalue[i, j]) for i, j in pairs}
+        alternative_pair_p = _dunn_holm(arrays, pairs)
+
+    pairwise = [
+        PairwiseComparison(
+            group_a=labels[i],
+            group_b=labels[j],
+            mean_difference=float(arrays[j].mean() - arrays[i].mean()),
+            p_value=pair_p[(i, j)],
+            alternative_p_value=alternative_pair_p[(i, j)],
+        )
+        for i, j in pairs
+    ]
 
     return CohortStatsTestResponse(
+        pairwise_test_name=pair_name,
+        alternative_pairwise_test_name=alternative_pair_name,
+        pairwise=pairwise,
         n_groups=len(labels),
         group_sizes={label: len(groups[label]) for label in labels},
         test_name=test_name,

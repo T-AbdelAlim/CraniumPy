@@ -149,7 +149,9 @@ export function groupNumericByCategory(rows, categoryColumn, metricColumn) {
     if (label === undefined || label === "" || value === null) continue;
     (groups[label] ??= []).push(value);
   }
-  return groups;
+  // categories in natural order (t0, t1, t2, t10), not first-seen order
+  const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+  return Object.fromEntries(Object.keys(groups).sort(collator.compare).map((label) => [label, groups[label]]));
 }
 
 // splits a numeric column into `nBins` equal-width bins spanning its
@@ -167,7 +169,10 @@ export function groupNumericByBins(rows, binningColumn, metricColumn, nBins) {
   const edges = Array.from({ length: nBins + 1 }, (_, i) => lo + i * width);
   const labels = Array.from({ length: nBins }, (_, i) => `${edges[i].toFixed(1)}–${edges[i + 1].toFixed(1)}`);
 
-  const groups = {};
+  // every bin up front, lowest first, so the groups come out in numeric
+  // order rather than in the order the rows happen to hit them (bins left
+  // empty are dropped at the end)
+  const groups = Object.fromEntries(labels.map((label) => [label, []]));
   for (const row of rows) {
     const binVal = toNumber(row[binningColumn]);
     const metricVal = toNumber(row[metricColumn]);
@@ -175,9 +180,9 @@ export function groupNumericByBins(rows, binningColumn, metricColumn, nBins) {
     let idx = Math.floor((binVal - lo) / width);
     if (idx >= nBins) idx = nBins - 1; // the max value itself
     if (idx < 0) idx = 0;
-    (groups[labels[idx]] ??= []).push(metricVal);
+    groups[labels[idx]].push(metricVal);
   }
-  return groups;
+  return Object.fromEntries(Object.entries(groups).filter(([, values]) => values.length > 0));
 }
 
 // equal-width histogram bins for a single numeric column - [{x0, x1,
